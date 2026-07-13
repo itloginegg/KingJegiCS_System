@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build *)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"http 5258: %{http_code}\\\\n\" -X POST http://localhost:5258/api/Customers/login -H \"Content-Type: application/json\" -d '{\"email\":\"x@x.com\",\"password\":\"Aa123456\"}' --max-time 5)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(curl -s -i -X OPTIONS http://localhost:5258/api/Customers/login -H \"Origin: http://localhost:5173\" -H \"Access-Control-Request-Method: POST\" -H \"Access-Control-Request-Headers: content-type\" --max-time 5)",
+      "Bash(curl -s -i -X POST http://localhost:5258/api/Customers/login -H \"Origin: http://localhost:5173\" -H \"Content-Type: application/json\" -d '{\"email\":\"x@x.com\",\"password\":\"Aa123456\"}' --max-time 5)",
+      "Bash(netstat -ano)",
+      "Bash(dotnet package *)",
+      "Bash(dotnet --version)",
+      "Bash(sqllocaldb info *)",
+      "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId;\" -h -1)",
+      "Bash(dotnet ef *)",
+      "Bash(grep -nA12 \"class CreateOwnerDto\" Admindtos.cs)",
+      "Bash(grep -nB1 -A3 \"public string\" Admindtos.cs)",
+      "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT Email, Role FROM Admins;\" -h -1)",
+      "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT 'Customers',COUNT\\(*\\) FROM Customers UNION ALL SELECT 'Bookings',COUNT\\(*\\) FROM Bookings UNION ALL SELECT 'MenuItems',COUNT\\(*\\) FROM MenuItems UNION ALL SELECT 'MenuPackages',COUNT\\(*\\) FROM MenuPackages UNION ALL SELECT 'MenuTrays',COUNT\\(*\\) FROM MenuTrays UNION ALL SELECT 'RentalItems',COUNT\\(*\\) FROM RentalItems UNION ALL SELECT 'ServiceItems',COUNT\\(*\\) FROM ServiceItems UNION ALL SELECT 'Invoices',COUNT\\(*\\) FROM Invoices UNION ALL SELECT 'Payments',COUNT\\(*\\) FROM Payments UNION ALL SELECT 'SystemSettings',COUNT\\(*\\) FROM SystemSettings;\" -h -1)",
+      "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT CONVERT\\(varchar\\(36\\), Id\\) FROM Admins WHERE Role='Owner';\" -h -1)",
+      "Bash(grep -nB2 -A8 \"class RegisterCustomerDto\\\\|class CustomerRegisterDto\\\\|HttpPost\\(\\\\\"register\\\\\"\\)\" Controllers/CustomersController.cs DTOs/Customerdtos.cs)",
+      "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT COUNT\\(*\\) FROM CalendarDays WHERE [Date]='2026-09-15'; SELECT COUNT\\(*\\) FROM Customers WHERE Email LIKE 'smoketest%';\" -h -1)",
+      "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-USER-Desktop-KingJegiCS-System\\\\3cddaf09-f455-4804-b722-e12f9907bb56\\\\scratchpad\\\\kj_smoke.ps1\")",
+      "Bash(sqlcmd -S '\\(localdb\\)\\\\MSSQLLocalDB' -d KingJegiDatabase -Q 'SET NOCOUNT ON; *)",
+      "Bash(sqlcmd -I -S '\\(localdb\\)\\\\MSSQLLocalDB' -d KingJegiDatabase -Q 'SET NOCOUNT ON; *)"
+    ]
+  }
+}

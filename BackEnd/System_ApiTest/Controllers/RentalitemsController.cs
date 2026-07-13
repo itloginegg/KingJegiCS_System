@@ -1,0 +1,131 @@
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System_ApiTest.Data;
+using System_ApiTest.DTOs;
+using System_ApiTest.Models;
+using System_ApiTest.Services;
+
+namespace System_ApiTest.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]   // any logged-in user can read; writes are owner-side (below)
+    public class RentalitemsController : Controller
+    {
+        public IActionResult Index()
+        {
+            return View();
+        }
+
+        private readonly AppDbContext _db;
+        private readonly Rentalservice _rentals;
+        private readonly Auditlogservice _audit;
+
+        public RentalitemsController(AppDbContext db, Rentalservice rentals, Auditlogservice audit)
+        {
+            _db = db;
+            _rentals = rentals;
+            _audit = audit;
+        }
+
+        /// <summary>Catalog list. Admins see everything; customers see only active items.</summary>
+        [HttpGet]
+        public async Task<IActionResult> GetAll()
+        {
+            var query = _db.RentalItems.AsQueryable();
+            if (!IsAdmin()) query = query.Where(i => i.IsActive);
+
+            var items = await query.OrderBy(i => i.ItemName).ToListAsync();
+
+            // One grouped query for all items' outgoing quantities (no N+1).
+            var outgoing = await _db.Rentals
+                .Where(r => (r.Booking.Status == BookingStatus.Confirmed ||
+                             r.Booking.Status == BookingStatus.Completed)
+                            && r.DeliveryStatus != DeliveryStatus.Returned)
+                .GroupBy(r => r.RentalItemId)
+                .Select(g => new { g.Key, Qty = g.Sum(r => r.Quantity) })
+                .ToDictionaryAsync(x => x.Key, x => x.Qty);
+
+            return Ok(items.Select(i => ToDto(i, outgoing.GetValueOrDefault(i.Id))));
+        }
+
+        [HttpGet("{id:guid}")]
+        public async Task<IActionResult> GetById(Guid id)
+        {
+            var item = await _db.RentalItems.FindAsync(id);
+            if (item is null) return NotFound();
+            if (!IsAdmin() && !item.IsActive) return NotFound(); // hide inactive from customers
+            return Ok(ToDto(item, await OutgoingAsync(id)));
+        }
+
+        /// <summary>Live availability for an item (total / outgoing / available).</summary>
+        [HttpGet("{id:guid}/availability")]
+        public async Task<IActionResult> Availability(Guid id)
+        {
+            try
+            {
+                var a = await _rentals.GetAvailabilityAsync(id);
+                var item = await _db.RentalItems.FindAsync(id);
+                return Ok(new RentalItemAvailabilityDto(id, item!.ItemName, a.Total, a.Outgoing, a.Available));
+            }
+            catch (BookingRuleException ex) { return NotFound(new { message = ex.Message }); }
+        }
+
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost]
+        public async Task<IActionResult> Create([FromBody] RentalItemCreateDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var item = new Rentalitem
+            {
+                ItemName = dto.ItemName.Trim(),
+                Category = dto.Category,
+                TotalQuantity = dto.TotalQuantity,
+                UnitPrice = dto.UnitPrice
+            };
+            _db.RentalItems.Add(item);
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync(User, AuditAction.CREATE, "RENTAL_ITEM", item.Id.ToString(), null, ToDto(item, 0));
+            return CreatedAtAction(nameof(GetById), new { id = item.Id }, ToDto(item, 0));
+        }
+
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPut("{id:guid}")]
+        public async Task<IActionResult> Update(Guid id, [FromBody] RentalItemUpdateDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var item = await _db.RentalItems.FindAsync(id);
+            if (item is null) return NotFound();
+            var itemOut = await OutgoingAsync(id);
+            var old = ToDto(item, itemOut);
+
+            item.ItemName = dto.ItemName.Trim();
+            item.Category = dto.Category;
+            item.TotalQuantity = dto.TotalQuantity;
+            item.UnitPrice = dto.UnitPrice;
+            item.IsActive = dto.IsActive;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync(User, AuditAction.UPDATE, "RENTAL_ITEM", item.Id.ToString(), old, ToDto(item, itemOut));
+            return Ok(ToDto(item, itemOut));
+        }
+
+        private bool IsAdmin() => User.IsInRole("Owner") || User.IsInRole("Assistant");
+
+        /// <summary>Confirmed outgoing for one item (Confirmed/Completed bookings, not yet Returned).</summary>
+        private async Task<int> OutgoingAsync(Guid rentalItemId) =>
+            await _db.Rentals
+                .Where(r => r.RentalItemId == rentalItemId
+                            && (r.Booking.Status == BookingStatus.Confirmed ||
+                                r.Booking.Status == BookingStatus.Completed)
+                            && r.DeliveryStatus != DeliveryStatus.Returned)
+                .SumAsync(r => (int?)r.Quantity) ?? 0;
+
+        private static RentalItemResponseDto ToDto(Rentalitem i, int quantityOut) =>
+            new(i.Id, i.ItemName, i.Category.ToString(), i.TotalQuantity,
+                quantityOut, i.TotalQuantity - quantityOut, i.UnitPrice, i.IsActive);
+    }
+}
+ 

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Force -Recurse -Depth 2 | Select-Object FullName | Format-Table -AutoSize; Write-Output \"Count:\"; \\(Get-ChildItem -Force -Recurse | Measure-Object\\).Count)"
+    ]
+  }
+}
