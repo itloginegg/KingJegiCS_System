@@ -48,6 +48,9 @@ namespace System_ApiTest.Data
         public DbSet<Invoice> Invoices => Set<Invoice>();
         public DbSet<Payment> Payments => Set<Payment>();
 
+        //Testimonial
+        public DbSet<Testimonial> Testimonials { get; set; }
+
         protected override void OnModelCreating(ModelBuilder b)
         {
             base.OnModelCreating(b);
