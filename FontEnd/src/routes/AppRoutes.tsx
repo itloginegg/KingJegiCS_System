@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { ProtectedRoute } from './ProtectedRoute';
 import { LoginPage } from '../pages/LoginPage';
+import { LandingPage } from '../pages/LandingPage';
 import { useAuth } from '../hooks/useAuth';
 
 // --- Placeholder dashboards so the routing is runnable end-to-end. ---
@@ -49,8 +50,8 @@ export function AppRoutes() {
             />
           </Route>
 
-          <Route path="/" element={<Navigate to="/login" replace />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
+          <Route path="/" element={<LandingPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

@@ -1,0 +1,2165 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useTheme } from '../hooks/useTheme';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Static content — design reference only, no backend calls.
+───────────────────────────────────────────────────────────────────────── */
+
+const HERO_SLIDES = [
+  'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=2000&q=80',
+  'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=2000&q=80',
+  'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=2000&q=80',
+];
+
+const PKG_BG =
+  'https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=2000&q=80';
+const RESERVE_BG =
+  'https://images.unsplash.com/photo-1464366400600-7168b8af9bc3?auto=format&fit=crop&w=2000&q=80';
+
+const NAV_LINKS = [
+  { label: 'Home', href: '#home' },
+  { label: 'Packages', href: '#packages' },
+  { label: 'Menus', href: '#menus' },
+  { label: 'Rentals', href: '#services' },
+  { label: 'Quotation', href: '#availability' },
+];
+
+const SERVICES = [
+  {
+    icon: '🍽️',
+    title: 'Catering Services',
+    description:
+      'Full-service Filipino catering for any occasion — buffet, plated, or family-style. Fresh ingredients, professional staff, memorable flavors.',
+    href: '#menus',
+    cta: 'Explore Menu',
+  },
+  {
+    icon: '📦',
+    title: 'Catering Packages',
+    description:
+      'Curated all-in-one packages covering food, setup, and service staff. Choose Starter, Classic, or Premium to fit your guest count and budget.',
+    href: '#packages',
+    cta: 'View Packages',
+  },
+  {
+    icon: '🎪',
+    title: 'Party Rentals',
+    description:
+      'Tables, chairs, tents, sound systems, and décor — everything you need to transform any space into a beautiful event venue.',
+    href: '#services',
+    cta: 'Browse Rentals',
+  },
+];
+
+const PACKAGES = [
+  {
+    id: 1,
+    name: 'Birthday Package',
+    price: '₱65,000',
+    description:
+      'A complete birthday celebration — themed décor, buffet for 100 guests, sound system, and dedicated service staff.',
+  },
+  {
+    id: 2,
+    name: 'Wedding Package',
+    price: '₱80,000',
+    description:
+      'Our signature wedding setup with elegant floral styling, plated or buffet dining, and full coordination on the day.',
+  },
+  {
+    id: 3,
+    name: 'Custom Package',
+    price: 'Custom',
+    description:
+      'Have something unique in mind? Build your dream event from the ground up — tailored to your vision, budget, and guest count.',
+  },
+];
+
+const MENUS = [
+  {
+    id: 1,
+    tier: 'Chicken Dish',
+    price: '₱250/head',
+    image:
+      'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?auto=format&fit=crop&w=800&q=80',
+  },
+  {
+    id: 2,
+    tier: 'Beef Dish',
+    price: '₱320/head',
+    image:
+      'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=800&q=80',
+  },
+  {
+    id: 3,
+    tier: 'Pork Dish',
+    price: '₱280/head',
+    image:
+      'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=800&q=80',
+  },
+];
+
+const TESTIMONIALS = [
+  {
+    id: 1,
+    name: 'Maria Santos',
+    event: 'Wedding · 150 guests',
+    quote:
+      'King Jegi made our wedding feast unforgettable. Guests are still talking about the lechon months later!',
+    initials: 'MS',
+  },
+  {
+    id: 2,
+    name: 'Jerome dela Cruz',
+    event: 'Corporate Event · 80 guests',
+    quote:
+      'Professional from quotation to cleanup. The buffet setup looked stunning and everything was served on time.',
+    initials: 'JD',
+  },
+  {
+    id: 3,
+    name: 'Ana Reyes',
+    event: 'Birthday · 60 guests',
+    quote:
+      "Farm-fresh talaga ang lasa! The team handled everything so I could actually enjoy my daughter's party.",
+    initials: 'AR',
+  },
+];
+
+/* Demo-only reserved dates so the calendar has something to show. */
+const BOOKED_DATES = ['2026-07-18', '2026-07-25', '2026-07-30', '2026-08-08', '2026-08-15'];
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Tiny helpers
+───────────────────────────────────────────────────────────────────────── */
+
+function SectionHeader({
+  eyebrow,
+  title,
+  accent,
+  italic = false,
+}: {
+  eyebrow: string;
+  title: string;
+  accent: string;
+  italic?: boolean;
+}) {
+  return (
+    <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.75rem',
+          background: 'var(--accent-muted)',
+          border: '1px solid var(--border-accent)',
+          padding: '0.35rem 1rem',
+          marginBottom: '1.25rem',
+        }}
+      >
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: 'var(--primary)',
+            display: 'inline-block',
+          }}
+        />
+        <span
+          style={{
+            fontFamily: 'var(--font-body)',
+            fontSize: '0.6rem',
+            letterSpacing: '0.28em',
+            textTransform: 'uppercase',
+            color: 'var(--primary)',
+            fontWeight: 500,
+          }}
+        >
+          {eyebrow}
+        </span>
+      </div>
+      <h2
+        style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: 'clamp(2rem, 4vw, 3rem)',
+          fontWeight: 400,
+          color: 'var(--text-primary)',
+          lineHeight: 1.15,
+        }}
+      >
+        {title}{' '}
+        {italic ? (
+          <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>{accent}</em>
+        ) : (
+          <span style={{ color: 'var(--primary)' }}>{accent}</span>
+        )}
+      </h2>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Calendar helpers
+───────────────────────────────────────────────────────────────────────── */
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+const DAY_ABBR = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+function getFirstDayOfMonth(year: number, month: number) {
+  return new Date(year, month, 1).getDay();
+}
+function toISO(year: number, month: number, day: number) {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Colliding blobs canvas — Services & Menu section background
+───────────────────────────────────────────────────────────────────────── */
+
+function CollidingBlobsCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d')!;
+
+    const setSize = () => {
+      const rect = canvas.parentElement!.getBoundingClientRect();
+      canvas.width = rect.width || window.innerWidth;
+      canvas.height = rect.height || 500;
+    };
+
+    const sizeTimer = setTimeout(setSize, 50);
+    window.addEventListener('resize', setSize);
+
+    const isDark = () => document.documentElement.classList.contains('dark');
+
+    const getCSSVar = (name: string) =>
+      getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    const toRgba = (color: string, alpha: number): string => {
+      if (color.startsWith('rgb')) {
+        const parts = color.replace(/rgba?\(/, '').replace(')', '').split(',').slice(0, 3).join(',');
+        return `rgba(${parts}, ${alpha})`;
+      }
+      if (color.startsWith('#')) {
+        const h = color.replace('#', '');
+        const r = parseInt(h.slice(0, 2), 16);
+        const g = parseInt(h.slice(2, 4), 16);
+        const b = parseInt(h.slice(4, 6), 16);
+        return `rgba(${r},${g},${b},${alpha})`;
+      }
+      return `rgba(128,128,128,${alpha})`;
+    };
+
+    const buildPalette = () => {
+      const primary = getCSSVar('--primary') || '#0f766e';
+      const accent = getCSSVar('--accent') || '#b07d2b';
+      const hover = getCSSVar('--primary-hover') || primary;
+      return [primary, accent, primary, hover, accent, primary];
+    };
+
+    let COLORS = buildPalette();
+
+    const themeObserver = new MutationObserver(() => {
+      COLORS = buildPalette();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+
+    type Particle = {
+      x: number; y: number;
+      vx: number; vy: number;
+      alpha: number; radius: number; color: string;
+      decay: number;
+    };
+
+    type Blob = {
+      x: number; y: number;
+      vx: number; vy: number;
+      radius: number;
+      color: string;
+      alive: boolean;
+      respawnTimer: number;
+    };
+
+    const particles: Particle[] = [];
+    let blobs: Blob[] = [];
+
+    const spawnBlob = (): Blob => {
+      const w = canvas.width || 800;
+      const h = canvas.height || 500;
+      const side = Math.floor(Math.random() * 4);
+      const r = 55 + Math.random() * 35;
+      const speed = 0.9 + Math.random() * 0.8;
+
+      const tx = w * 0.3 + Math.random() * w * 0.4;
+      const ty = h * 0.3 + Math.random() * h * 0.4;
+
+      let x = 0, y = 0;
+      if (side === 0) { x = Math.random() * w; y = -r; }
+      else if (side === 1) { x = Math.random() * w; y = h + r; }
+      else if (side === 2) { x = -r; y = Math.random() * h; }
+      else { x = w + r; y = Math.random() * h; }
+
+      const angle = Math.atan2(ty - y, tx - x);
+      return {
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        radius: r,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        alive: true,
+        respawnTimer: 0,
+      };
+    };
+
+    const explode = (x: number, y: number, color: string) => {
+      const count = 50 + Math.floor(Math.random() * 30);
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count + Math.random() * 0.4;
+        const speed = 2 + Math.random() * 5;
+        particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          alpha: 1,
+          radius: 2.5 + Math.random() * 4,
+          color,
+          decay: 0.01 + Math.random() * 0.015,
+        });
+      }
+    };
+
+    const blobTimer = setTimeout(() => {
+      blobs = Array.from({ length: 8 }, spawnBlob);
+    }, 60);
+
+    let animId: number;
+
+    const draw = () => {
+      animId = requestAnimationFrame(draw);
+
+      if (!canvas.width || !canvas.height) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const dark = isDark();
+
+      for (let i = 0; i < blobs.length; i++) {
+        const b = blobs[i];
+
+        if (!b.alive) {
+          b.respawnTimer--;
+          if (b.respawnTimer <= 0) Object.assign(b, spawnBlob());
+          continue;
+        }
+
+        b.x += b.vx;
+        b.y += b.vy;
+
+        if (b.x - b.radius < 0) { b.x = b.radius; b.vx *= -1; }
+        if (b.x + b.radius > canvas.width) { b.x = canvas.width - b.radius; b.vx *= -1; }
+        if (b.y - b.radius < 0) { b.y = b.radius; b.vy *= -1; }
+        if (b.y + b.radius > canvas.height) { b.y = canvas.height - b.radius; b.vy *= -1; }
+
+        for (let j = i + 1; j < blobs.length; j++) {
+          const b2 = blobs[j];
+          if (!b2.alive) continue;
+          const dx = b2.x - b.x;
+          const dy = b2.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < b.radius + b2.radius) {
+            explode((b.x + b2.x) / 2, (b.y + b2.y) / 2, b.color);
+            explode((b.x + b2.x) / 2, (b.y + b2.y) / 2, b2.color);
+            b.alive = false;
+            b2.alive = false;
+            b.respawnTimer = 80 + Math.floor(Math.random() * 60);
+            b2.respawnTimer = 80 + Math.floor(Math.random() * 60);
+          }
+        }
+
+        if (!b.alive) continue;
+
+        const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.radius);
+        g.addColorStop(0, toRgba(b.color, dark ? 0.86 : 1.0));
+        g.addColorStop(0.4, toRgba(b.color, dark ? 0.6 : 0.73));
+        g.addColorStop(1, toRgba(b.color, 0));
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fillStyle = g;
+        ctx.shadowBlur = 25;
+        ctx.shadowColor = b.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.96;
+        p.vy *= 0.96;
+        p.vy += 0.05;
+        p.alpha -= p.decay;
+        if (p.alpha <= 0) { particles.splice(i, 1); continue; }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius * p.alpha, 0, Math.PI * 2);
+        ctx.fillStyle = toRgba(p.color, p.alpha);
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = p.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    };
+
+    draw();
+
+    return () => {
+      cancelAnimationFrame(animId);
+      clearTimeout(sizeTimer);
+      clearTimeout(blobTimer);
+      window.removeEventListener('resize', setSize);
+      themeObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 3,
+        opacity: 0.45,
+        display: 'block',
+      }}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Raining canvas — Testimonials section background
+───────────────────────────────────────────────────────────────────────── */
+
+function RainingCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animRef = useRef<number>(0);
+  const isDarkRef = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const setSize = () => {
+      const rect = canvas.parentElement!.getBoundingClientRect();
+      canvas.width = rect.width || window.innerWidth;
+      canvas.height = rect.height || 500;
+    };
+    const sizeTimer = setTimeout(setSize, 50);
+    window.addEventListener('resize', setSize);
+
+    const checkDark = () => document.documentElement.classList.contains('dark');
+
+    isDarkRef.current = checkDark();
+    const themeObserver = new MutationObserver(() => {
+      isDarkRef.current = checkDark();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+
+    type Drop = { x: number; y: number; len: number; speed: number; opacity: number; width: number };
+    type Splash = { x: number; y: number; r: number; opacity: number };
+
+    const DROPS = 140;
+    const drops: Drop[] = [];
+    const splashes: Splash[] = [];
+    const angle = 0.18;
+
+    const initDrops = () => {
+      drops.length = 0;
+      const w = canvas.width || window.innerWidth;
+      const h = canvas.height || 500;
+      for (let i = 0; i < DROPS; i++) {
+        drops.push({
+          x: Math.random() * w,
+          y: Math.random() * h - h,
+          len: 14 + Math.random() * 24,
+          speed: 9 + Math.random() * 12,
+          opacity: 0.35 + Math.random() * 0.45,
+          width: 0.8 + Math.random() * 0.9,
+        });
+      }
+    };
+
+    const dropsTimer = setTimeout(initDrops, 80);
+
+    const tick = () => {
+      const w = canvas.width;
+      const h = canvas.height;
+      if (!w || !h) {
+        animRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const dark = isDarkRef.current;
+      const dropColor = dark ? 'rgba(180, 215, 255,' : 'rgba(60, 100, 160,';
+
+      ctx.clearRect(0, 0, w, h);
+
+      drops.forEach((d) => {
+        ctx.beginPath();
+        ctx.moveTo(d.x, d.y);
+        ctx.lineTo(d.x + angle * d.len, d.y + d.len);
+        ctx.strokeStyle = `${dropColor}${d.opacity})`;
+        ctx.lineWidth = d.width;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        d.x += angle * d.speed * 0.5;
+        d.y += d.speed;
+
+        if (d.y > h) {
+          splashes.push({ x: d.x, y: h - 2, r: 0, opacity: Math.min(d.opacity * 1.6, 0.85) });
+          d.x = Math.random() * w;
+          d.y = -d.len - Math.random() * 100;
+        }
+      });
+
+      for (let i = splashes.length - 1; i >= 0; i--) {
+        const s = splashes[i];
+        ctx.beginPath();
+        ctx.ellipse(s.x, s.y, s.r * 2, s.r * 0.6, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = `${dropColor}${s.opacity})`;
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        s.r += 1.2;
+        s.opacity -= 0.05;
+        if (s.opacity <= 0) splashes.splice(i, 1);
+      }
+
+      animRef.current = requestAnimationFrame(tick);
+    };
+
+    animRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      clearTimeout(sizeTimer);
+      clearTimeout(dropsTimer);
+      window.removeEventListener('resize', setSize);
+      themeObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 0,
+        display: 'block',
+      }}
+    />
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Icons
+───────────────────────────────────────────────────────────────────────── */
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="18" height="18" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
+function CartIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+      <circle cx="9" cy="21" r="1" />
+      <circle cx="20" cy="21" r="1" />
+      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Navbar — brand, anchors, cart, theme toggle, sign in, book now
+───────────────────────────────────────────────────────────────────────── */
+
+function Navbar() {
+  const { theme, toggleTheme } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const iconBtn: React.CSSProperties = {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    width: 36,
+    height: 36,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'var(--r-full)',
+  };
+
+  return (
+    <header
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 20,
+      }}
+    >
+      <nav
+        aria-label="Main navigation"
+        style={{
+          maxWidth: 1200,
+          margin: '0 auto',
+          padding: '1.4rem 2.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1.5rem',
+        }}
+      >
+        <a
+          href="#home"
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: '1.45rem',
+            fontWeight: 600,
+            letterSpacing: '0.22em',
+            color: 'var(--accent)',
+            textDecoration: 'none',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          KING JEGI
+        </a>
+
+        <ul className="nav-links" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+          {NAV_LINKS.map((link) => (
+            <li key={link.label}>
+              <a href={link.href} className="nav-link">
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <button type="button" aria-label="View cart" style={iconBtn}>
+            <CartIcon />
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            style={{ ...iconBtn, color: 'var(--accent)' }}
+          >
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+          </button>
+
+          <Link to="/login" className="nav-link nav-signin">
+            Sign In
+          </Link>
+
+          <a href="#availability" className="btn-hero-primary" style={{ padding: '0.7rem 1.5rem' }}>
+            Book Now
+          </a>
+
+          <button
+            type="button"
+            className="nav-burger"
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            style={iconBtn}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="20" height="20" aria-hidden="true">
+              {menuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
+            </svg>
+          </button>
+        </div>
+      </nav>
+
+      {menuOpen && (
+        <ul
+          className="nav-mobile-panel"
+          style={{
+            listStyle: 'none',
+            margin: '0 1.25rem',
+            padding: '0.75rem',
+            background: 'var(--surface-glass)',
+            border: '1px solid var(--border-glass)',
+            borderRadius: 'var(--r-lg)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            boxShadow: 'var(--shadow-glass)',
+          }}
+        >
+          {NAV_LINKS.map((link) => (
+            <li key={link.label}>
+              <a
+                href={link.href}
+                className="nav-link"
+                style={{ display: 'block', padding: '0.7rem 0.75rem' }}
+                onClick={() => setMenuOpen(false)}
+              >
+                {link.label}
+              </a>
+            </li>
+          ))}
+          <li>
+            <Link to="/login" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
+              Sign In
+            </Link>
+          </li>
+        </ul>
+      )}
+    </header>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat widget — static, design only
+───────────────────────────────────────────────────────────────────────── */
+
+function ChatWidget() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      {open && (
+        <div
+          style={{
+            position: 'fixed',
+            right: '1.5rem',
+            bottom: '5.5rem',
+            zIndex: 40,
+            width: 260,
+            background: 'var(--surface)',
+            border: '1px solid var(--border-accent)',
+            borderRadius: 'var(--r-xl)',
+            padding: '1.25rem',
+            boxShadow: 'var(--shadow-lg)',
+          }}
+        >
+          <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
+            Kumusta! 👋
+          </p>
+          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, fontWeight: 300 }}>
+            Planning an event? Message us and we'll help you pick the perfect package.
+          </p>
+          <a
+            href="#availability"
+            className="btn-hero-primary"
+            style={{ padding: '0.6rem 1.25rem', marginTop: '0.9rem' }}
+            onClick={() => setOpen(false)}
+          >
+            Start Booking
+          </a>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={open ? 'Close chat' : 'Chat with support'}
+        style={{
+          position: 'fixed',
+          right: '1.5rem',
+          bottom: '1.5rem',
+          zIndex: 40,
+          width: 54,
+          height: 54,
+          borderRadius: '50%',
+          border: 'none',
+          cursor: 'pointer',
+          background: 'var(--accent)',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: 'var(--shadow-gold)',
+          transition: 'transform 0.2s',
+        }}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" aria-hidden="true">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        </svg>
+      </button>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Main component
+───────────────────────────────────────────────────────────────────────── */
+
+export function LandingPage() {
+  /* hero slideshow */
+  const [slideIndex, setSlideIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSlideIndex((i) => (i + 1) % HERO_SLIDES.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /* calendar UI */
+  const today = new Date();
+  const [calYear, setCalYear] = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth());
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  const prevMonth = useCallback(() => {
+    setCalMonth((m) => {
+      if (m === 0) { setCalYear((y) => y - 1); return 11; }
+      return m - 1;
+    });
+  }, []);
+  const nextMonth = useCallback(() => {
+    setCalMonth((m) => {
+      if (m === 11) { setCalYear((y) => y + 1); return 0; }
+      return m + 1;
+    });
+  }, []);
+
+  const daysInMonth = getDaysInMonth(calYear, calMonth);
+  const firstWeekday = getFirstDayOfMonth(calYear, calMonth);
+  const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
+
+  return (
+    <>
+      <style>{`
+        /* ── hero slideshow ── */
+        .hero-slide {
+          position: absolute;
+          inset: 0;
+          background-size: cover;
+          background-position: center;
+          transition: opacity 1.2s ease-in-out;
+          opacity: 0;
+          will-change: opacity;
+        }
+        .hero-slide.active { opacity: 1; }
+
+        .hero-overlay {
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(
+            105deg,
+            rgba(255, 252, 245, 0.85) 0%,
+            rgba(255, 252, 245, 0.55) 55%,
+            rgba(255, 252, 245, 0.12) 100%
+          );
+        }
+        .dark .hero-overlay {
+          background: linear-gradient(
+            105deg,
+            rgba(0, 0, 0, 0.72) 0%,
+            rgba(0, 0, 0, 0.45) 55%,
+            rgba(0, 0, 0, 0.18) 100%
+          );
+        }
+
+        /* over the photo, dark mode brightens the copy to pure white
+           (!important: these must beat the inline token styles) */
+        .dark .hero-has-bg h1 { color: #fff !important; }
+        .dark .hero-has-bg h1 em { color: var(--accent) !important; }
+        .dark .hero-has-bg .hero-body-text { color: rgba(255,255,255,0.78) !important; }
+        .dark .hero-has-bg .hero-stat-value { color: #fff !important; }
+        .dark .hero-has-bg .hero-stat-label { color: rgba(255,255,255,0.5) !important; }
+        .dark .hero-has-bg .hero-stat-divider { border-color: rgba(255,255,255,0.15) !important; }
+        .dark .hero-has-bg .hero-eyebrow-tag { background: rgba(255,255,255,0.12) !important; border-color: rgba(255,255,255,0.25) !important; }
+        .dark .hero-has-bg .hero-eyebrow-text { color: #fff !important; }
+        .dark .hero-has-bg .hero-eyebrow-dot { background: #fff !important; }
+
+        .slide-dots {
+          position: absolute;
+          bottom: 2rem;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          gap: 0.5rem;
+          z-index: 10;
+        }
+        .slide-dot {
+          width: 6px; height: 6px;
+          border-radius: 50%;
+          background: rgba(120, 110, 95, 0.45);
+          border: none;
+          cursor: pointer;
+          padding: 0;
+          transition: background 0.3s, transform 0.3s;
+        }
+        .slide-dot.active {
+          background: var(--text-primary);
+          transform: scale(1.4);
+        }
+        .dark .slide-dot { background: rgba(255,255,255,0.35); }
+        .dark .slide-dot.active { background: #fff; }
+
+        /* blobs */
+        .blob {
+          position: absolute; border-radius: 50%;
+          filter: blur(80px); opacity: 0.18; pointer-events: none;
+          animation: blobDrift 18s ease-in-out infinite alternate;
+        }
+        .blob-primary      { background: var(--primary); }
+        .blob-accent       { background: var(--accent); }
+        .blob-primary-soft { background: var(--primary); opacity: 0.10; }
+        .blob-accent-soft  { background: var(--accent);  opacity: 0.10; }
+        @keyframes blobDrift {
+          0%   { transform: translate(0px, 0px) scale(1); }
+          50%  { transform: translate(30px, -20px) scale(1.08); }
+          100% { transform: translate(-20px, 15px) scale(0.95); }
+        }
+
+        /* navbar */
+        .nav-links {
+          display: flex;
+          align-items: center;
+          gap: 2rem;
+        }
+        .nav-link {
+          font-family: var(--font-body);
+          font-size: 0.66rem;
+          letter-spacing: 0.22em;
+          text-transform: uppercase;
+          font-weight: 500;
+          color: var(--text-secondary);
+          text-decoration: none;
+          transition: color 0.2s;
+          white-space: nowrap;
+        }
+        .nav-link:hover { color: var(--primary); }
+        .dark .hero-has-bg .nav-link { color: rgba(255,255,255,0.75); }
+        .dark .hero-has-bg .nav-link:hover { color: #fff; }
+        .nav-signin { padding: 0 0.75rem; }
+        .nav-burger { display: none !important; }
+        @media (max-width: 1020px) {
+          .nav-links { display: none; }
+          .nav-burger { display: flex !important; }
+          .nav-signin { display: none; }
+        }
+        @media (min-width: 1021px) {
+          .nav-mobile-panel { display: none; }
+        }
+
+        /* hero grid */
+        .hero-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 4rem;
+          align-items: center;
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 0 2.5rem;
+        }
+        @media (max-width: 900px) {
+          .hero-grid { grid-template-columns: 1fr; }
+          .hero-composition { display: none; }
+        }
+
+        .hero-composition {
+          position: relative;
+          height: 480px;
+        }
+        .hero-card-center {
+          position: absolute;
+          inset: 20px 0 0 20px;
+          background: var(--primary);
+          border-radius: 20px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          padding: 2rem;
+        }
+        .hero-float-card {
+          position: absolute;
+          background: var(--surface);
+          border: 1px solid var(--border-accent);
+          border-radius: 12px;
+          padding: 1rem 1.25rem;
+          box-shadow: var(--shadow-lg);
+          backdrop-filter: blur(10px);
+        }
+        .hero-float-left  { top: 2rem;    left: -1rem; }
+        .hero-float-right { bottom: 2rem; right: -1rem; }
+
+        /* buttons */
+        .btn-hero-primary {
+          background: var(--primary);
+          color: var(--primary-text);
+          border: none;
+          padding: 1rem 2.5rem;
+          font-family: var(--font-body);
+          font-size: 0.72rem;
+          font-weight: 500;
+          letter-spacing: 0.22em;
+          text-transform: uppercase;
+          cursor: pointer;
+          border-radius: var(--r-full);
+          transition: background 0.25s, transform 0.2s, box-shadow 0.2s;
+          text-decoration: none;
+          display: inline-block;
+        }
+        .btn-hero-primary:hover {
+          background: var(--primary-hover);
+          transform: translateY(-2px);
+          box-shadow: var(--shadow-green);
+        }
+        .btn-hero-outline {
+          background: transparent;
+          color: var(--text-primary);
+          border: 1px solid var(--border-strong);
+          padding: 1rem 2.5rem;
+          font-family: var(--font-body);
+          font-size: 0.72rem;
+          font-weight: 400;
+          letter-spacing: 0.22em;
+          text-transform: uppercase;
+          cursor: pointer;
+          border-radius: var(--r-full);
+          transition: background 0.25s, border-color 0.25s, transform 0.2s;
+          text-decoration: none;
+          display: inline-block;
+        }
+        .btn-hero-outline:hover {
+          background: var(--secondary-muted);
+          border-color: var(--secondary);
+          transform: translateY(-2px);
+        }
+        .dark .hero-has-bg .btn-hero-outline {
+          color: #fff;
+          border-color: rgba(255,255,255,0.4);
+        }
+        .dark .hero-has-bg .btn-hero-outline:hover {
+          border-color: #fff;
+          background: rgba(255,255,255,0.08);
+        }
+
+        /* service cards */
+        .service-card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: var(--r-xl);
+          padding: 2rem;
+          transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
+          cursor: default;
+        }
+        .service-card:hover {
+          box-shadow: var(--shadow-lg);
+          transform: translateY(-4px);
+          border-color: var(--border-accent);
+        }
+
+        /* package section overlay + glass cards */
+        .pkg-bg-overlay {
+          background: linear-gradient(
+            160deg,
+            rgba(255, 252, 245, 0.82) 0%,
+            rgba(245, 238, 225, 0.75) 50%,
+            rgba(255, 252, 245, 0.82) 100%
+          );
+        }
+        .dark .pkg-bg-overlay {
+          background: linear-gradient(
+            160deg,
+            rgba(12, 10, 8, 0.88) 0%,
+            rgba(20, 16, 12, 0.82) 50%,
+            rgba(12, 10, 8, 0.88) 100%
+          );
+        }
+
+        .pkg-card {
+          border-radius: var(--r-xl);
+          padding: 2rem;
+        }
+        .pkg-card--glass {
+          backdrop-filter: blur(14px) saturate(160%);
+          -webkit-backdrop-filter: blur(14px) saturate(160%);
+          background: rgba(255, 255, 255, 0.55);
+          border: 1px solid rgba(255, 255, 255, 0.4);
+          box-shadow:
+            0 8px 32px rgba(0, 0, 0, 0.08),
+            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+          transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .pkg-card--glass:hover {
+          transform: translateY(-4px);
+          box-shadow:
+            0 16px 48px rgba(0, 0, 0, 0.14),
+            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+        .dark .pkg-card--glass {
+          background: rgba(20, 16, 12, 0.55);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow:
+            0 8px 32px rgba(0, 0, 0, 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        }
+        .pkg-card--glass.featured {
+          background: rgba(255, 255, 255, 0.72);
+          border-color: rgba(255, 255, 255, 0.6);
+        }
+        .dark .pkg-card--glass.featured {
+          background: rgba(30, 24, 18, 0.72);
+          border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        /* photo-section overlays (calendar) */
+        .bg-overlay {
+          background: linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.82) 0%,
+            rgba(255, 255, 255, 0.60) 100%
+          );
+        }
+        .dark .bg-overlay {
+          background: linear-gradient(
+            135deg,
+            rgba(0, 0, 0, 0.72) 0%,
+            rgba(10, 10, 20, 0.55) 100%
+          );
+        }
+
+        /* calendar */
+        .cal-day {
+          aspect-ratio: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: var(--r-sm);
+          font-family: var(--font-body);
+          font-size: 0.78rem;
+          font-weight: 400;
+          cursor: pointer;
+          transition: background 0.15s, color 0.15s;
+          color: var(--text-secondary);
+          position: relative;
+        }
+        .cal-day:hover:not(.cal-booked):not(.cal-past):not(.cal-today) {
+          background: var(--primary-muted);
+          color: var(--primary);
+        }
+        .cal-today    { background: var(--primary); color: var(--primary-text) !important; font-weight: 600; }
+        .cal-booked   { background: var(--danger-muted); color: var(--danger); cursor: not-allowed; }
+        .cal-booked::after {
+          content: '';
+          position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+          width: 4px; height: 4px; border-radius: 50%; background: var(--danger);
+        }
+        .cal-past { opacity: 0.35; cursor: not-allowed; }
+        .cal-nav-btn {
+          width: 32px; height: 32px;
+          background: transparent;
+          border: 1px solid var(--border);
+          border-radius: var(--r-sm);
+          color: var(--text-muted);
+          cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 0.9rem;
+          transition: background 0.2s, border-color 0.2s, color 0.2s;
+        }
+        .cal-nav-btn:hover {
+          background: var(--primary-muted);
+          border-color: var(--primary);
+          color: var(--primary);
+        }
+
+        /* testimonial cards */
+        .testi-card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: var(--r-xl);
+          padding: 2rem 2rem 1.75rem;
+          transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
+        }
+        .testi-card:hover {
+          box-shadow: var(--shadow-md);
+          transform: translateY(-3px);
+          border-color: var(--border-accent);
+        }
+
+        /* menu cards */
+        .menu-card {
+          border-radius: 1rem;
+          overflow: hidden;
+          background: var(--bg-card);
+          border: 1px solid color-mix(in srgb, var(--primary) 14%, transparent);
+          box-shadow: 0 2px 14px rgba(0, 0, 0, 0.07);
+          transition:
+            transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+            box-shadow 0.4s ease,
+            border-color 0.4s ease;
+          cursor: pointer;
+        }
+        .menu-card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12);
+          border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+        }
+        .dark .menu-card { box-shadow: 0 2px 18px rgba(0, 0, 0, 0.35); }
+        .dark .menu-card:hover { box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
+
+        .menu-card:hover .menu-card-img { transform: scale(1.05); }
+
+        .menu-card-grain {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0.06;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+          background-size: 220px 220px;
+          mix-blend-mode: overlay;
+        }
+        .dark .menu-card-grain { opacity: 0.09; }
+
+        .menu-card-cta {
+          opacity: 0;
+          transform: translateY(5px);
+          transition: opacity 0.35s ease, transform 0.35s ease;
+        }
+        .menu-card:hover .menu-card-cta {
+          opacity: 1;
+          transform: translateY(0);
+        }
+
+        /* responsive grids */
+        .grid-3 {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.5rem;
+        }
+        .split-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 4rem;
+          align-items: center;
+        }
+        @media (max-width: 1024px) {
+          .grid-3 { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 900px) {
+          .split-grid { grid-template-columns: 1fr; gap: 2.5rem; }
+        }
+        @media (max-width: 640px) {
+          .grid-3 { grid-template-columns: 1fr; }
+        }
+
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-up { animation: fadeUp 0.7s ease both; }
+      `}</style>
+
+      <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
+
+        {/* ═══════════════════════ HERO ═══════════════════════ */}
+        <section
+          id="home"
+          className="hero-has-bg"
+          style={{
+            ...sectionPad,
+            paddingTop: 'calc(6rem + 80px)',
+            paddingBottom: '6rem',
+            overflow: 'hidden',
+            backgroundColor: 'var(--bg)',
+          }}
+        >
+          {HERO_SLIDES.map((src, i) => (
+            <div
+              key={src}
+              className={`hero-slide${i === slideIndex ? ' active' : ''}`}
+              style={{ backgroundImage: `url(${src})` }}
+            />
+          ))}
+          <div className="hero-overlay" />
+
+          <Navbar />
+
+          <div className="slide-dots">
+            {HERO_SLIDES.map((_, i) => (
+              <button
+                key={i}
+                className={`slide-dot${i === slideIndex ? ' active' : ''}`}
+                onClick={() => setSlideIndex(i)}
+                aria-label={`Slide ${i + 1}`}
+              />
+            ))}
+          </div>
+
+          <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
+          <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
+
+          <div className="hero-grid fade-up" style={{ position: 'relative', zIndex: 1 }}>
+            <div>
+              <div
+                className="hero-eyebrow-tag"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                  background: 'var(--accent-muted)', border: '1px solid var(--border-accent)',
+                  padding: '0.35rem 1rem', marginBottom: '1.5rem',
+                }}
+              >
+                <span className="hero-eyebrow-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
+                <span
+                  className="hero-eyebrow-text"
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: '0.58rem',
+                    letterSpacing: '0.3em', textTransform: 'uppercase',
+                    color: 'var(--primary)', fontWeight: 500,
+                  }}
+                >
+                  Events &amp; Catering · Calamba
+                </span>
+              </div>
+
+              <h1
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 'clamp(2.8rem, 5.5vw, 4.5rem)',
+                  fontWeight: 400, lineHeight: 1.08,
+                  color: 'var(--text-primary)',
+                  marginBottom: '1.5rem',
+                }}
+              >
+                Fresh Flavors for{' '}
+                <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Every</em>
+                <br />Celebration
+              </h1>
+
+              <p
+                className="hero-body-text"
+                style={{
+                  fontFamily: 'var(--font-body)', fontSize: '1rem',
+                  color: 'var(--text-muted)', lineHeight: 1.75,
+                  maxWidth: 480, marginBottom: '2.5rem', fontWeight: 300,
+                }}
+              >
+                King Jegi delivers farm-fresh Filipino catering — from intimate
+                family dinners to grand events. Let us handle the food while you
+                create the memories.
+              </p>
+
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                <a href="#availability" className="btn-hero-primary">
+                  Book Your Event
+                </a>
+                <a href="#menus" className="btn-hero-outline">
+                  Explore Our Menu
+                </a>
+              </div>
+
+              <div
+                className="hero-stat-divider"
+                style={{
+                  display: 'flex', gap: '2.5rem', marginTop: '3rem',
+                  paddingTop: '2rem', borderTop: '1px solid var(--border)',
+                }}
+              >
+                {[
+                  { value: '500+', label: 'Events Served' },
+                  { value: '12 yrs', label: 'Experience' },
+                  { value: '4.9 ★', label: 'Client Rating' },
+                ].map((s) => (
+                  <div key={s.label}>
+                    <p
+                      className="hero-stat-value"
+                      style={{
+                        fontFamily: 'var(--font-display)', fontSize: '1.8rem',
+                        fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1,
+                      }}
+                    >
+                      {s.value}
+                    </p>
+                    <p
+                      className="hero-stat-label"
+                      style={{
+                        fontFamily: 'var(--font-body)', fontSize: '0.6rem',
+                        letterSpacing: '0.22em', textTransform: 'uppercase',
+                        color: 'var(--text-dim)', marginTop: '0.35rem',
+                      }}
+                    >
+                      {s.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="hero-composition">
+              <div className="hero-card-center">
+                <div
+                  style={{
+                    position: 'absolute', top: 0, right: 0, width: 220, height: 220,
+                    background: 'rgba(255,255,255,0.06)', borderRadius: '50%',
+                    transform: 'translate(30%, -30%)',
+                  }}
+                />
+                <span
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: '0.55rem',
+                    letterSpacing: '0.3em', textTransform: 'uppercase',
+                    color: 'rgba(255,255,255,0.55)', display: 'block', marginBottom: '0.5rem',
+                  }}
+                >
+                  Today's Feature
+                </span>
+                <h3
+                  style={{
+                    fontFamily: 'var(--font-display)', fontSize: '2rem',
+                    fontWeight: 500, color: '#fff', marginBottom: '0.4rem',
+                  }}
+                >
+                  Lechon de Leche
+                </h3>
+                <p
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: '0.8rem',
+                    color: 'rgba(255,255,255,0.65)', fontWeight: 300, lineHeight: 1.6,
+                  }}
+                >
+                  Heritage-breed · Slow-roasted 6 hrs
+                </p>
+                <div style={{ marginTop: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: '#fff' }}>
+                    ₱350
+                    <span style={{ fontSize: '0.9rem', fontWeight: 300, color: 'rgba(255,255,255,0.6)' }}>/head</span>
+                  </span>
+                  <a
+                    href="#menus"
+                    style={{
+                      background: 'rgba(255,255,255,0.15)',
+                      color: '#fff', padding: '0.5rem 1.25rem',
+                      fontFamily: 'var(--font-body)', fontSize: '0.65rem',
+                      letterSpacing: '0.18em', textTransform: 'uppercase',
+                      textDecoration: 'none', borderRadius: 'var(--r-full)',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      transition: 'background 0.2s',
+                    }}
+                  >
+                    View Menu
+                  </a>
+                </div>
+              </div>
+
+              <div className="hero-float-card hero-float-left">
+                <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 600, color: 'var(--accent)', lineHeight: 1 }}>
+                  4.9/5
+                </p>
+                <p style={{ color: 'var(--accent)', fontSize: '0.8rem', margin: '0.2rem 0 0.1rem' }}>★★★★★</p>
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.1em' }}>
+                  200+ reviews
+                </p>
+              </div>
+
+              <div className="hero-float-card hero-float-right">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div
+                    style={{
+                      width: 36, height: 36, borderRadius: '50%',
+                      background: 'var(--primary-muted)', border: '1px solid var(--border-accent)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '1.1rem',
+                    }}
+                  >
+                    🎉
+                  </div>
+                  <div>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                      New booking!
+                    </p>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: '0.1rem' }}>
+                      Maria S. — 150 guests · Classic
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ SERVICES ═══════════════════════ */}
+        <section
+          id="services"
+          style={{
+            ...sectionPad,
+            overflow: 'hidden',
+            background: `
+              radial-gradient(ellipse 80% 60% at 15% 20%,  color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 70%),
+              radial-gradient(ellipse 60% 50% at 85% 75%,  color-mix(in srgb, var(--accent)  18%, transparent) 0%, transparent 65%),
+              radial-gradient(ellipse 50% 40% at 50% 110%, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 60%),
+              linear-gradient(160deg, var(--bg) 0%, var(--bg-subtle) 50%, color-mix(in srgb, var(--bg) 85%, var(--primary)) 100%)
+            `,
+          }}
+        >
+          <CollidingBlobsCanvas />
+
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 1,
+              opacity: 0.032,
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+              backgroundSize: '220px 220px',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 2,
+              backdropFilter: 'blur(24px) saturate(1.4) brightness(1.04)',
+              WebkitBackdropFilter: 'blur(24px) saturate(1.4) brightness(1.04)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0,
+              height: '38%', zIndex: 4,
+              background: 'linear-gradient(to bottom, color-mix(in srgb, var(--primary) 7%, transparent) 0%, transparent 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              height: '30%', zIndex: 4,
+              background: 'linear-gradient(to top, color-mix(in srgb, var(--accent) 6%, var(--bg)) 0%, transparent 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 4,
+              background: 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 45%, color-mix(in srgb, var(--bg) 55%, transparent) 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 5 }}>
+            <SectionHeader eyebrow="What We Offer" title="Everything You Need for" accent="a Perfect Event" />
+            <div className="grid-3">
+              {SERVICES.map((svc) => (
+                <div key={svc.title} className="service-card">
+                  <div
+                    style={{
+                      width: 52, height: 52, borderRadius: 'var(--r-lg)',
+                      background: 'var(--primary-muted)', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center',
+                      fontSize: '1.4rem', marginBottom: '1.25rem',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    {svc.icon}
+                  </div>
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
+                    {svc.title}
+                  </h3>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.7, fontWeight: 300, marginBottom: '1.5rem' }}>
+                    {svc.description}
+                  </p>
+                  <a
+                    href={svc.href}
+                    style={{
+                      fontFamily: 'var(--font-body)', fontSize: '0.62rem',
+                      letterSpacing: '0.2em', textTransform: 'uppercase',
+                      color: 'var(--primary)', textDecoration: 'none',
+                      fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                    }}
+                  >
+                    {svc.cta} →
+                  </a>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ FEATURED PACKAGES ═══════════════════════ */}
+        <section
+          id="packages"
+          style={{
+            ...sectionPad,
+            overflow: 'hidden',
+            backgroundImage: `url(${PKG_BG})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+          }}
+        >
+          <div className="pkg-bg-overlay" style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }} />
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 1, opacity: 0.04,
+              backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'repeat', backgroundSize: '128px', pointerEvents: 'none',
+            }}
+          />
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 2 }}>
+            <SectionHeader eyebrow="Catering Packages" title="Find Your" accent="Perfect Package" />
+            <div className="grid-3">
+              {PACKAGES.map((pkg, i) => (
+                <div
+                  key={pkg.id}
+                  className={`pkg-card pkg-card--glass${i === 1 ? ' featured' : ''}`}
+                  style={{ display: 'flex', flexDirection: 'column' }}
+                >
+                  {i === 1 && (
+                    <div
+                      style={{
+                        alignSelf: 'flex-start',
+                        background: 'var(--accent-muted)',
+                        border: '1px solid var(--border-accent)',
+                        padding: '0.25rem 0.75rem',
+                        fontFamily: 'var(--font-body)', fontSize: '0.55rem',
+                        letterSpacing: '0.22em', textTransform: 'uppercase',
+                        color: 'var(--accent)', fontWeight: 500,
+                        marginBottom: '1rem',
+                      }}
+                    >
+                      Most Popular
+                    </div>
+                  )}
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                    {pkg.name}
+                  </h3>
+                  <p style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', fontWeight: 600, color: 'var(--primary)', marginBottom: '1rem' }}>
+                    {pkg.price}
+                  </p>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, fontWeight: 300, marginBottom: '1.5rem' }}>
+                    {pkg.description}
+                  </p>
+                  <a
+                    href="#availability"
+                    style={{
+                      marginTop: 'auto',
+                      display: 'block', textAlign: 'center',
+                      padding: '0.85rem',
+                      background: i === 1 ? 'var(--primary)' : 'transparent',
+                      color: i === 1 ? 'var(--primary-text)' : 'var(--primary)',
+                      border: `1px solid ${i === 1 ? 'var(--primary)' : 'var(--border-accent)'}`,
+                      fontFamily: 'var(--font-body)', fontSize: '0.65rem',
+                      letterSpacing: '0.18em', textTransform: 'uppercase',
+                      fontWeight: 500, textDecoration: 'none',
+                      borderRadius: 'var(--r-full)',
+                      transition: 'background 0.2s, box-shadow 0.2s',
+                    }}
+                  >
+                    Learn More
+                  </a>
+                </div>
+              ))}
+            </div>
+            <div style={{ textAlign: 'center', marginTop: '2.5rem' }}>
+              <a
+                href="#packages"
+                style={{
+                  fontFamily: 'var(--font-body)', fontSize: '0.65rem',
+                  letterSpacing: '0.22em', textTransform: 'uppercase',
+                  color: 'var(--text-dim)', textDecoration: 'none',
+                  borderBottom: '1px solid var(--border)', paddingBottom: 2,
+                }}
+              >
+                View All Packages →
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ MENU PREVIEW ═══════════════════════ */}
+        <section
+          id="menus"
+          style={{
+            ...sectionPad,
+            overflow: 'hidden',
+            background: `
+              radial-gradient(ellipse 80% 60% at 15% 20%,  color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 70%),
+              radial-gradient(ellipse 60% 50% at 85% 75%,  color-mix(in srgb, var(--accent)  18%, transparent) 0%, transparent 65%),
+              radial-gradient(ellipse 50% 40% at 50% 110%, color-mix(in srgb, var(--primary) 12%, transparent) 0%, transparent 60%),
+              linear-gradient(160deg, var(--bg) 0%, var(--bg-subtle) 50%, color-mix(in srgb, var(--bg) 85%, var(--primary)) 100%)
+            `,
+          }}
+        >
+          <CollidingBlobsCanvas />
+
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 1,
+              opacity: 0.032,
+              backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='340'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
+              backgroundSize: '220px 220px',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 2,
+              backdropFilter: 'blur(24px) saturate(1.4) brightness(1.04)',
+              WebkitBackdropFilter: 'blur(24px) saturate(1.4) brightness(1.04)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0,
+              height: '38%', zIndex: 4,
+              background: 'linear-gradient(to bottom, color-mix(in srgb, var(--primary) 7%, transparent) 0%, transparent 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              height: '30%', zIndex: 4,
+              background: 'linear-gradient(to top, color-mix(in srgb, var(--accent) 6%, var(--bg)) 0%, transparent 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+          <div
+            style={{
+              position: 'absolute', inset: 0, zIndex: 4,
+              background: 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 45%, color-mix(in srgb, var(--bg) 55%, transparent) 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 5 }}>
+            <SectionHeader eyebrow="From Our Kitchen" title="A Taste of What" accent="Awaits You" italic />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 260px))',
+                gap: '1.5rem',
+                justifyContent: 'center',
+                alignItems: 'stretch',
+              }}
+            >
+              {MENUS.map((menu) => (
+                <div key={menu.id} className="menu-card" style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                  <div style={{ height: 200, position: 'relative', overflow: 'hidden', background: 'var(--primary-muted)', flexShrink: 0 }}>
+                    <img
+                      src={menu.image}
+                      alt={menu.tier}
+                      className="menu-card-img"
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        objectPosition: 'center',
+                        transition: 'transform 0.9s cubic-bezier(0.33, 1, 0.68, 1)',
+                        filter: 'var(--menu-img-filter)',
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute', inset: 0,
+                        background: 'radial-gradient(ellipse at center, transparent 42%, var(--menu-vignette) 100%)',
+                        zIndex: 1, pointerEvents: 'none',
+                      }}
+                    />
+                    <div className="menu-card-grain" style={{ zIndex: 3 }} />
+                    <div
+                      style={{
+                        position: 'absolute', top: '0.75rem', left: '0.75rem', zIndex: 4,
+                        background: 'var(--menu-chip-bg)',
+                        backdropFilter: 'blur(10px) saturate(1.4)',
+                        WebkitBackdropFilter: 'blur(10px) saturate(1.4)',
+                        border: '1px solid var(--menu-chip-border)',
+                        borderRadius: '999px', padding: '0.22rem 0.7rem',
+                      }}
+                    >
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.5rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 600, margin: 0 }}>
+                        Menu Package
+                      </p>
+                    </div>
+                    <div
+                      style={{
+                        position: 'absolute', top: '0.75rem', right: '0.75rem', zIndex: 4,
+                        background: 'var(--menu-chip-bg)',
+                        backdropFilter: 'blur(10px) saturate(1.4)',
+                        WebkitBackdropFilter: 'blur(10px) saturate(1.4)',
+                        border: '1px solid var(--menu-chip-border)',
+                        borderRadius: '999px', padding: '0.22rem 0.7rem',
+                      }}
+                    >
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 600, margin: 0 }}>
+                        {menu.price}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: '1.1rem 1.25rem 1.35rem',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center',
+                      textAlign: 'center', gap: '0.5rem', flex: 1, position: 'relative',
+                    }}
+                  >
+                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0, letterSpacing: '0.01em' }}>
+                      {menu.tier}
+                    </h4>
+                    <div style={{ width: '2rem', height: 1, background: 'color-mix(in srgb, var(--primary) 40%, transparent)', borderRadius: 999 }} />
+                    <div className="menu-card-cta">
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 600 }}>
+                        View Details →
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ textAlign: 'center', marginTop: '2.75rem' }}>
+              <a href="#menus" className="btn-hero-primary">
+                Full Menu →
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ AVAILABILITY CALENDAR ═══════════════════════ */}
+        <section
+          id="availability"
+          style={{
+            ...sectionPad,
+            overflow: 'hidden',
+            backgroundImage: `url(${RESERVE_BG})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+          }}
+        >
+          <div className="bg-overlay" style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
+
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 2 }}>
+            <div className="split-grid">
+              <div>
+                <div
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                    background: 'var(--accent-muted)', border: '1px solid var(--border-accent)',
+                    padding: '0.35rem 1rem', marginBottom: '1.25rem',
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-body)', fontSize: '0.58rem',
+                      letterSpacing: '0.3em', textTransform: 'uppercase',
+                      color: 'var(--primary)', fontWeight: 500,
+                    }}
+                  >
+                    Check Availability
+                  </span>
+                </div>
+                <h2
+                  style={{
+                    fontFamily: 'var(--font-display)', fontSize: 'clamp(2rem, 4vw, 3rem)',
+                    fontWeight: 400, color: 'var(--text-on-bg)',
+                    lineHeight: 1.15, marginBottom: '1.25rem',
+                    textShadow: 'var(--text-shadow-on-bg)',
+                  }}
+                >
+                  Is Your Date{' '}
+                  <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Available?</em>
+                </h2>
+                <p
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: '0.9rem',
+                    color: 'var(--text-on-bg-muted)', lineHeight: 1.75,
+                    fontWeight: 300, marginBottom: '2rem', maxWidth: 400,
+                    textShadow: 'var(--text-shadow-on-bg)',
+                  }}
+                >
+                  Check real-time availability before you book. Highlighted
+                  dates are already reserved — grab yours while it's open.
+                </p>
+                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+                  {[
+                    { color: 'var(--primary)', label: 'Today' },
+                    { color: 'var(--danger)', label: 'Booked' },
+                    { color: 'var(--border-strong)', label: 'Available' },
+                  ].map((l) => (
+                    <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: l.color, display: 'inline-block' }} />
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-on-bg-muted)' }}>
+                        {l.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <a href="#availability" className="btn-hero-primary" style={{ display: 'inline-block' }}>
+                  Reserve This Date
+                </a>
+              </div>
+
+              <div
+                style={{
+                  background: 'var(--surface-glass)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--r-xl)',
+                  padding: '1.75rem',
+                  boxShadow: 'var(--shadow-glass)',
+                  backdropFilter: 'blur(16px)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+                  <button className="cal-nav-btn" onClick={prevMonth} aria-label="Previous month">‹</button>
+                  <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                    {MONTH_NAMES[calMonth]} {calYear}
+                  </p>
+                  <button className="cal-nav-btn" onClick={nextMonth} aria-label="Next month">›</button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: '0.5rem' }}>
+                  {DAY_ABBR.map((d) => (
+                    <div
+                      key={d}
+                      style={{
+                        textAlign: 'center',
+                        fontFamily: 'var(--font-body)', fontSize: '0.6rem',
+                        letterSpacing: '0.12em', textTransform: 'uppercase',
+                        color: 'var(--text-dim)', padding: '0.4rem 0',
+                      }}
+                    >
+                      {d}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+                  {Array.from({ length: firstWeekday }).map((_, i) => (
+                    <div key={`e-${i}`} />
+                  ))}
+                  {Array.from({ length: daysInMonth }).map((_, i) => {
+                    const day = i + 1;
+                    const iso = toISO(calYear, calMonth, day);
+                    const isToday = iso === todayISO;
+                    const isBooked = BOOKED_DATES.includes(iso);
+                    const isPast = iso < todayISO && !isToday;
+                    return (
+                      <div
+                        key={day}
+                        className={['cal-day', isToday ? 'cal-today' : '', isBooked ? 'cal-booked' : '', isPast ? 'cal-past' : ''].join(' ')}
+                        onMouseEnter={() => setHovered(day)}
+                        onMouseLeave={() => setHovered(null)}
+                        title={isBooked ? 'Already booked' : `Book ${iso}`}
+                      >
+                        <span>{day}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {hovered && (
+                  <p style={{ textAlign: 'center', marginTop: '1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    {MONTH_NAMES[calMonth]} {hovered}, {calYear}
+                    {BOOKED_DATES.includes(toISO(calYear, calMonth, hovered))
+                      ? ' — Already reserved'
+                      : toISO(calYear, calMonth, hovered) < todayISO
+                        ? ' — Past date'
+                        : ' — Available to book'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ TESTIMONIALS ═══════════════════════ */}
+        <section style={{ ...sectionPad, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
+          <RainingCanvas />
+
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 1 }}>
+            <SectionHeader eyebrow="Client Stories" title="What Our" accent="Clients Say" italic />
+            <div className="grid-3">
+              {TESTIMONIALS.map((t) => (
+                <div key={t.id} className="testi-card">
+                  <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem' }}>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <span key={i} style={{ color: 'var(--accent)', fontSize: '0.9rem' }}>★</span>
+                    ))}
+                  </div>
+                  <p
+                    style={{
+                      fontFamily: 'var(--font-display)', fontSize: '1.05rem',
+                      fontStyle: 'italic', color: 'var(--text-secondary)',
+                      lineHeight: 1.65, marginBottom: '1.5rem', fontWeight: 400,
+                    }}
+                  >
+                    "{t.quote}"
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border)' }}>
+                    <div
+                      style={{
+                        width: 38, height: 38, borderRadius: '50%',
+                        background: 'var(--primary-muted)',
+                        border: '1px solid var(--border-accent)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontFamily: 'var(--font-display)', fontSize: '0.9rem',
+                        color: 'var(--primary)', fontWeight: 600, flexShrink: 0,
+                      }}
+                    >
+                      {t.initials}
+                    </div>
+                    <div>
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                        {t.name}
+                      </p>
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>
+                        {t.event}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ FINAL CTA ═══════════════════════ */}
+        <section style={{ ...sectionPad, background: 'var(--primary)', overflow: 'hidden' }}>
+          <div className="blob blob-primary-soft" style={{ width: 500, height: 500, top: '-150px', right: '-100px' }} />
+          <div className="blob blob-accent-soft" style={{ width: 350, height: 350, bottom: '-80px', left: '-60px', animationDelay: '8s' }} />
+
+          <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center', position: 'relative' }}>
+            <div
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                background: 'rgba(255,255,255,0.15)',
+                padding: '0.35rem 1rem', marginBottom: '1.5rem',
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff', display: 'inline-block' }} />
+              <span
+                style={{
+                  fontFamily: 'var(--font-body)', fontSize: '0.58rem',
+                  letterSpacing: '0.3em', textTransform: 'uppercase',
+                  color: 'rgba(255,255,255,0.8)', fontWeight: 500,
+                }}
+              >
+                Ready to Book?
+              </span>
+            </div>
+
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', fontWeight: 400, color: '#fff', lineHeight: 1.1, marginBottom: '1.25rem' }}>
+              Let's Make Your Event{' '}
+              <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Unforgettable</em>
+            </h2>
+
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.75, fontWeight: 300, marginBottom: '2.5rem' }}>
+              Join over 500 families and businesses who trusted King Jegi
+              to feed their most important moments. Reserve your date now.
+            </p>
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <a
+                href="#availability"
+                style={{
+                  background: '#fff', color: 'var(--primary)',
+                  padding: '1rem 2.5rem',
+                  fontFamily: 'var(--font-body)', fontSize: '0.72rem',
+                  fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase',
+                  textDecoration: 'none', borderRadius: 'var(--r-full)',
+                  transition: 'transform 0.2s, box-shadow 0.2s',
+                }}
+              >
+                Reserve Your Event
+              </a>
+              <a
+                href="#packages"
+                style={{
+                  background: 'transparent', color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.4)',
+                  padding: '1rem 2.5rem',
+                  fontFamily: 'var(--font-body)', fontSize: '0.72rem',
+                  fontWeight: 400, letterSpacing: '0.22em', textTransform: 'uppercase',
+                  textDecoration: 'none', borderRadius: 'var(--r-full)',
+                  transition: 'border-color 0.2s, background 0.2s',
+                }}
+              >
+                View Packages
+              </a>
+            </div>
+
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'rgba(255,255,255,0.35)', marginTop: '1.5rem', letterSpacing: '0.1em' }}>
+              No payment required to reserve · Confirmation within 24 hours
+            </p>
+          </div>
+        </section>
+
+        {/* ═══════════════════════ FOOTER ═══════════════════════ */}
+        <footer
+          style={{
+            background: 'var(--bg-subtle)',
+            borderTop: '1px solid var(--border)',
+            padding: '3rem 2.5rem',
+            textAlign: 'center',
+          }}
+        >
+          <p
+            style={{
+              fontFamily: 'var(--font-body)', fontSize: '0.65rem',
+              letterSpacing: '0.2em', textTransform: 'uppercase',
+              color: 'var(--text-dim)',
+            }}
+          >
+            © {new Date().getFullYear()} King Jegi Party Need and Catering Services · Calamba, Laguna
+          </p>
+        </footer>
+      </main>
+
+      <ChatWidget />
+    </>
+  );
+}

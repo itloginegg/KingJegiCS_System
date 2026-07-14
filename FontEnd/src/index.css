@@ -1,1 +1,118 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400&family=Jost:ital,wght@0,200;0,300;0,400;0,500;0,600;1,300;1,400&family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
+
+/* Class-based dark mode (Tailwind v4): `dark:` utilities apply when `.dark` is on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   King Jegi design tokens — light is the base, `.dark` overrides.
+   Consumed by the landing page (and any page that opts into the system).
+─────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg: #faf6ee;
+  --bg-subtle: #f3ede0;
+  --bg-card: #fffdf8;
+  --surface: #ffffff;
+
+  --text-primary: #211a13;
+  --text-secondary: #40382e;
+  --text-muted: #6b6254;
+  --text-dim: #a39a8a;
+
+  --primary: #0f766e;
+  --primary-hover: #115e59;
+  --primary-text: #ffffff;
+  --primary-muted: rgba(15, 118, 110, 0.10);
+
+  --secondary: #0f766e;
+  --secondary-muted: rgba(15, 118, 110, 0.07);
+
+  --accent: #b07d2b;
+  --accent-muted: rgba(176, 125, 43, 0.10);
+
+  --border: rgba(33, 26, 19, 0.12);
+  --border-strong: rgba(33, 26, 19, 0.30);
+  --border-accent: rgba(176, 125, 43, 0.35);
+
+  --danger: #dc2626;
+  --danger-muted: rgba(220, 38, 38, 0.12);
+
+  --shadow-md: 0 8px 24px rgba(33, 26, 19, 0.10);
+  --shadow-lg: 0 16px 44px rgba(33, 26, 19, 0.14);
+  --shadow-green: 0 10px 30px rgba(15, 118, 110, 0.30);
+  --shadow-gold: 0 10px 34px rgba(176, 125, 43, 0.22);
+
+  --r-sm: 8px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-full: 999px;
+
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-body: "Jost", system-ui, sans-serif;
+
+  /* text placed over photographic backgrounds */
+  --text-on-bg: var(--text-primary);
+  --text-on-bg-muted: var(--text-muted);
+  --text-shadow-on-bg: none;
+  --surface-glass: rgba(255, 255, 255, 0.70);
+  --border-glass: rgba(255, 255, 255, 0.50);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.10);
+
+  /* menu card imagery */
+  --menu-img-filter: brightness(1.04) contrast(1.06) saturate(1.12);
+  --menu-vignette: rgba(30, 20, 10, 0.28);
+  --menu-chip-bg: rgba(255, 252, 248, 0.62);
+  --menu-chip-border: rgba(255, 255, 255, 0.75);
+}
+
+.dark {
+  --bg: #0c0a08;
+  --bg-subtle: #141009;
+  --bg-card: #17120c;
+  --surface: #1a1510;
+
+  --text-primary: #f5f0eb;
+  --text-secondary: #d9d2c7;
+  --text-muted: #a89f92;
+  --text-dim: #7a7163;
+
+  --primary: #14b8a6;
+  --primary-hover: #2dd4bf;
+  --primary-text: #052e2b;
+  --primary-muted: rgba(20, 184, 166, 0.12);
+
+  --secondary: #14b8a6;
+  --secondary-muted: rgba(20, 184, 166, 0.08);
+
+  --accent: #e2b857;
+  --accent-muted: rgba(226, 184, 87, 0.12);
+
+  --border: rgba(245, 240, 235, 0.12);
+  --border-strong: rgba(245, 240, 235, 0.30);
+  --border-accent: rgba(226, 184, 87, 0.35);
+
+  --danger: #f87171;
+  --danger-muted: rgba(248, 113, 113, 0.14);
+
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);
+  --shadow-green: 0 10px 30px rgba(20, 184, 166, 0.25);
+  --shadow-gold: 0 10px 34px rgba(226, 184, 87, 0.18);
+
+  --text-on-bg: #f5f0eb;
+  --text-on-bg-muted: rgba(245, 240, 235, 0.75);
+  --text-shadow-on-bg: 0 1px 6px rgba(0, 0, 0, 0.55);
+  --surface-glass: rgba(15, 15, 25, 0.60);
+  --border-glass: rgba(255, 255, 255, 0.10);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.40);
+
+  --menu-img-filter: brightness(0.88) contrast(1.08) saturate(1.05);
+  --menu-vignette: rgba(10, 6, 2, 0.52);
+  --menu-chip-bg: rgba(18, 14, 10, 0.62);
+  --menu-chip-border: rgba(255, 255, 255, 0.1);
+}
