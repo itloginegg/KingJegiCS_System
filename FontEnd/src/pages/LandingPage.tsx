@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 const HERO_SLIDES = [
   'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=2000&q=80',
   'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=2000&q=80',
   'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=2000&q=80',
 ];
-
+ 
 const PKG_BG =
   'https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=2000&q=80';
 const RESERVE_BG =
   'https://images.unsplash.com/photo-1464366400600-7168b8af9bc3?auto=format&fit=crop&w=2000&q=80';
-
+ 
 const NAV_LINKS = [
   { label: 'Home', href: '#home' },
   { label: 'Packages', href: '#packages' },
@@ -24,7 +24,7 @@ const NAV_LINKS = [
   { label: 'Rentals', href: '#services' },
   { label: 'Quotation', href: '#availability' },
 ];
-
+ 
 const SERVICES = [
   {
     icon: '🍽️',
@@ -51,7 +51,7 @@ const SERVICES = [
     cta: 'Browse Rentals',
   },
 ];
-
+ 
 const PACKAGES = [
   {
     id: 1,
@@ -75,7 +75,7 @@ const PACKAGES = [
       'Have something unique in mind? Build your dream event from the ground up — tailored to your vision, budget, and guest count.',
   },
 ];
-
+ 
 const MENUS = [
   {
     id: 1,
@@ -99,7 +99,7 @@ const MENUS = [
       'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=800&q=80',
   },
 ];
-
+ 
 const TESTIMONIALS = [
   {
     id: 1,
@@ -126,27 +126,41 @@ const TESTIMONIALS = [
     initials: 'AR',
   },
 ];
-
+ 
 /* Demo-only reserved dates so the calendar has something to show. */
 const BOOKED_DATES = ['2026-07-18', '2026-07-25', '2026-07-30', '2026-08-08', '2026-08-15'];
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Tiny helpers
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function SectionHeader({
   eyebrow,
   title,
   accent,
   italic = false,
+  align = 'center',
+  flush = false,
 }: {
   eyebrow: string;
   title: string;
   accent: string;
   italic?: boolean;
+  /** structural alignment only — 'left' | 'right' offsets the header off-axis */
+  align?: 'center' | 'left' | 'right';
+  /** drop the bottom margin when the header is positioned by a parent grid */
+  flush?: boolean;
 }) {
   return (
-    <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+    <div
+      style={{
+        textAlign: align,
+        marginBottom: flush ? 0 : '3.5rem',
+        maxWidth: align === 'center' ? undefined : 560,
+        marginLeft: align === 'right' ? 'auto' : undefined,
+        marginRight: align === 'left' ? 'auto' : undefined,
+      }}
+    >
       <div
         style={{
           display: 'inline-flex',
@@ -199,17 +213,17 @@ function SectionHeader({
     </div>
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Calendar helpers
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const DAY_ABBR = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-
+ 
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate();
 }
@@ -219,33 +233,33 @@ function getFirstDayOfMonth(year: number, month: number) {
 function toISO(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Colliding blobs canvas — Services & Menu section background
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function CollidingBlobsCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
+ 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
-
+ 
     const setSize = () => {
       const rect = canvas.parentElement!.getBoundingClientRect();
       canvas.width = rect.width || window.innerWidth;
       canvas.height = rect.height || 500;
     };
-
+ 
     const sizeTimer = setTimeout(setSize, 50);
     window.addEventListener('resize', setSize);
-
+ 
     const isDark = () => document.documentElement.classList.contains('dark');
-
+ 
     const getCSSVar = (name: string) =>
       getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
+ 
     const toRgba = (color: string, alpha: number): string => {
       if (color.startsWith('rgb')) {
         const parts = color.replace(/rgba?\(/, '').replace(')', '').split(',').slice(0, 3).join(',');
@@ -260,16 +274,16 @@ function CollidingBlobsCanvas() {
       }
       return `rgba(128,128,128,${alpha})`;
     };
-
+ 
     const buildPalette = () => {
       const primary = getCSSVar('--primary') || '#0f766e';
       const accent = getCSSVar('--accent') || '#b07d2b';
       const hover = getCSSVar('--primary-hover') || primary;
       return [primary, accent, primary, hover, accent, primary];
     };
-
+ 
     let COLORS = buildPalette();
-
+ 
     const themeObserver = new MutationObserver(() => {
       COLORS = buildPalette();
     });
@@ -277,14 +291,14 @@ function CollidingBlobsCanvas() {
       attributes: true,
       attributeFilter: ['class'],
     });
-
+ 
     type Particle = {
       x: number; y: number;
       vx: number; vy: number;
       alpha: number; radius: number; color: string;
       decay: number;
     };
-
+ 
     type Blob = {
       x: number; y: number;
       vx: number; vy: number;
@@ -293,26 +307,26 @@ function CollidingBlobsCanvas() {
       alive: boolean;
       respawnTimer: number;
     };
-
+ 
     const particles: Particle[] = [];
     let blobs: Blob[] = [];
-
+ 
     const spawnBlob = (): Blob => {
       const w = canvas.width || 800;
       const h = canvas.height || 500;
       const side = Math.floor(Math.random() * 4);
       const r = 55 + Math.random() * 35;
       const speed = 0.9 + Math.random() * 0.8;
-
+ 
       const tx = w * 0.3 + Math.random() * w * 0.4;
       const ty = h * 0.3 + Math.random() * h * 0.4;
-
+ 
       let x = 0, y = 0;
       if (side === 0) { x = Math.random() * w; y = -r; }
       else if (side === 1) { x = Math.random() * w; y = h + r; }
       else if (side === 2) { x = -r; y = Math.random() * h; }
       else { x = w + r; y = Math.random() * h; }
-
+ 
       const angle = Math.atan2(ty - y, tx - x);
       return {
         x, y,
@@ -324,7 +338,7 @@ function CollidingBlobsCanvas() {
         respawnTimer: 0,
       };
     };
-
+ 
     const explode = (x: number, y: number, color: string) => {
       const count = 50 + Math.floor(Math.random() * 30);
       for (let i = 0; i < count; i++) {
@@ -341,38 +355,38 @@ function CollidingBlobsCanvas() {
         });
       }
     };
-
+ 
     const blobTimer = setTimeout(() => {
       blobs = Array.from({ length: 8 }, spawnBlob);
     }, 60);
-
+ 
     let animId: number;
-
+ 
     const draw = () => {
       animId = requestAnimationFrame(draw);
-
+ 
       if (!canvas.width || !canvas.height) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
+ 
       const dark = isDark();
-
+ 
       for (let i = 0; i < blobs.length; i++) {
         const b = blobs[i];
-
+ 
         if (!b.alive) {
           b.respawnTimer--;
           if (b.respawnTimer <= 0) Object.assign(b, spawnBlob());
           continue;
         }
-
+ 
         b.x += b.vx;
         b.y += b.vy;
-
+ 
         if (b.x - b.radius < 0) { b.x = b.radius; b.vx *= -1; }
         if (b.x + b.radius > canvas.width) { b.x = canvas.width - b.radius; b.vx *= -1; }
         if (b.y - b.radius < 0) { b.y = b.radius; b.vy *= -1; }
         if (b.y + b.radius > canvas.height) { b.y = canvas.height - b.radius; b.vy *= -1; }
-
+ 
         for (let j = i + 1; j < blobs.length; j++) {
           const b2 = blobs[j];
           if (!b2.alive) continue;
@@ -388,9 +402,9 @@ function CollidingBlobsCanvas() {
             b2.respawnTimer = 80 + Math.floor(Math.random() * 60);
           }
         }
-
+ 
         if (!b.alive) continue;
-
+ 
         const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.radius);
         g.addColorStop(0, toRgba(b.color, dark ? 0.86 : 1.0));
         g.addColorStop(0.4, toRgba(b.color, dark ? 0.6 : 0.73));
@@ -403,7 +417,7 @@ function CollidingBlobsCanvas() {
         ctx.fill();
         ctx.shadowBlur = 0;
       }
-
+ 
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.x += p.vx;
@@ -413,7 +427,7 @@ function CollidingBlobsCanvas() {
         p.vy += 0.05;
         p.alpha -= p.decay;
         if (p.alpha <= 0) { particles.splice(i, 1); continue; }
-
+ 
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius * p.alpha, 0, Math.PI * 2);
         ctx.fillStyle = toRgba(p.color, p.alpha);
@@ -423,9 +437,9 @@ function CollidingBlobsCanvas() {
         ctx.shadowBlur = 0;
       }
     };
-
+ 
     draw();
-
+ 
     return () => {
       cancelAnimationFrame(animId);
       clearTimeout(sizeTimer);
@@ -434,7 +448,7 @@ function CollidingBlobsCanvas() {
       themeObserver.disconnect();
     };
   }, []);
-
+ 
   return (
     <canvas
       ref={canvasRef}
@@ -451,22 +465,22 @@ function CollidingBlobsCanvas() {
     />
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Raining canvas — Testimonials section background
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function RainingCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const isDarkRef = useRef(false);
-
+ 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
+ 
     const setSize = () => {
       const rect = canvas.parentElement!.getBoundingClientRect();
       canvas.width = rect.width || window.innerWidth;
@@ -474,9 +488,9 @@ function RainingCanvas() {
     };
     const sizeTimer = setTimeout(setSize, 50);
     window.addEventListener('resize', setSize);
-
+ 
     const checkDark = () => document.documentElement.classList.contains('dark');
-
+ 
     isDarkRef.current = checkDark();
     const themeObserver = new MutationObserver(() => {
       isDarkRef.current = checkDark();
@@ -485,15 +499,15 @@ function RainingCanvas() {
       attributes: true,
       attributeFilter: ['class'],
     });
-
+ 
     type Drop = { x: number; y: number; len: number; speed: number; opacity: number; width: number };
     type Splash = { x: number; y: number; r: number; opacity: number };
-
+ 
     const DROPS = 140;
     const drops: Drop[] = [];
     const splashes: Splash[] = [];
     const angle = 0.18;
-
+ 
     const initDrops = () => {
       drops.length = 0;
       const w = canvas.width || window.innerWidth;
@@ -509,9 +523,9 @@ function RainingCanvas() {
         });
       }
     };
-
+ 
     const dropsTimer = setTimeout(initDrops, 80);
-
+ 
     const tick = () => {
       const w = canvas.width;
       const h = canvas.height;
@@ -519,12 +533,12 @@ function RainingCanvas() {
         animRef.current = requestAnimationFrame(tick);
         return;
       }
-
+ 
       const dark = isDarkRef.current;
       const dropColor = dark ? 'rgba(180, 215, 255,' : 'rgba(60, 100, 160,';
-
+ 
       ctx.clearRect(0, 0, w, h);
-
+ 
       drops.forEach((d) => {
         ctx.beginPath();
         ctx.moveTo(d.x, d.y);
@@ -533,17 +547,17 @@ function RainingCanvas() {
         ctx.lineWidth = d.width;
         ctx.lineCap = 'round';
         ctx.stroke();
-
+ 
         d.x += angle * d.speed * 0.5;
         d.y += d.speed;
-
+ 
         if (d.y > h) {
           splashes.push({ x: d.x, y: h - 2, r: 0, opacity: Math.min(d.opacity * 1.6, 0.85) });
           d.x = Math.random() * w;
           d.y = -d.len - Math.random() * 100;
         }
       });
-
+ 
       for (let i = splashes.length - 1; i >= 0; i--) {
         const s = splashes[i];
         ctx.beginPath();
@@ -555,12 +569,12 @@ function RainingCanvas() {
         s.opacity -= 0.05;
         if (s.opacity <= 0) splashes.splice(i, 1);
       }
-
+ 
       animRef.current = requestAnimationFrame(tick);
     };
-
+ 
     animRef.current = requestAnimationFrame(tick);
-
+ 
     return () => {
       cancelAnimationFrame(animRef.current);
       clearTimeout(sizeTimer);
@@ -569,7 +583,7 @@ function RainingCanvas() {
       themeObserver.disconnect();
     };
   }, []);
-
+ 
   return (
     <canvas
       ref={canvasRef}
@@ -585,11 +599,11 @@ function RainingCanvas() {
     />
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Icons
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function SunIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="18" height="18" aria-hidden="true">
@@ -598,7 +612,7 @@ function SunIcon() {
     </svg>
   );
 }
-
+ 
 function MoonIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
@@ -606,7 +620,7 @@ function MoonIcon() {
     </svg>
   );
 }
-
+ 
 function CartIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
@@ -616,15 +630,15 @@ function CartIcon() {
     </svg>
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Navbar — brand, anchors, cart, theme toggle, sign in, book now
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function Navbar() {
   const { theme, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
-
+ 
   const iconBtn: React.CSSProperties = {
     background: 'transparent',
     border: 'none',
@@ -637,7 +651,7 @@ function Navbar() {
     justifyContent: 'center',
     borderRadius: 'var(--r-full)',
   };
-
+ 
   return (
     <header
       style={{
@@ -674,7 +688,7 @@ function Navbar() {
         >
           KING JEGI
         </a>
-
+ 
         <ul className="nav-links" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           {NAV_LINKS.map((link) => (
             <li key={link.label}>
@@ -684,12 +698,12 @@ function Navbar() {
             </li>
           ))}
         </ul>
-
+ 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <button type="button" aria-label="View cart" style={iconBtn}>
             <CartIcon />
           </button>
-
+ 
           <button
             type="button"
             onClick={toggleTheme}
@@ -698,15 +712,15 @@ function Navbar() {
           >
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
-
+ 
           <Link to="/login" className="nav-link nav-signin">
             Sign In
           </Link>
-
+ 
           <a href="#availability" className="btn-hero-primary" style={{ padding: '0.7rem 1.5rem' }}>
             Book Now
           </a>
-
+ 
           <button
             type="button"
             className="nav-burger"
@@ -721,7 +735,7 @@ function Navbar() {
           </button>
         </div>
       </nav>
-
+ 
       {menuOpen && (
         <ul
           className="nav-mobile-panel"
@@ -759,14 +773,14 @@ function Navbar() {
     </header>
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Chat widget — static, design only
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 function ChatWidget() {
   const [open, setOpen] = useState(false);
-
+ 
   return (
     <>
       {open && (
@@ -830,28 +844,28 @@ function ChatWidget() {
     </>
   );
 }
-
+ 
 /* ─────────────────────────────────────────────────────────────────────────
    Main component
 ───────────────────────────────────────────────────────────────────────── */
-
+ 
 export function LandingPage() {
   /* hero slideshow */
   const [slideIndex, setSlideIndex] = useState(0);
-
+ 
   useEffect(() => {
     const timer = setInterval(() => {
       setSlideIndex((i) => (i + 1) % HERO_SLIDES.length);
     }, 5000);
     return () => clearInterval(timer);
   }, []);
-
+ 
   /* calendar UI */
   const today = new Date();
   const [calYear, setCalYear] = useState(today.getFullYear());
   const [calMonth, setCalMonth] = useState(today.getMonth());
   const [hovered, setHovered] = useState<number | null>(null);
-
+ 
   const prevMonth = useCallback(() => {
     setCalMonth((m) => {
       if (m === 0) { setCalYear((y) => y - 1); return 11; }
@@ -864,13 +878,13 @@ export function LandingPage() {
       return m + 1;
     });
   }, []);
-
+ 
   const daysInMonth = getDaysInMonth(calYear, calMonth);
   const firstWeekday = getFirstDayOfMonth(calYear, calMonth);
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
-
+ 
   const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
-
+ 
   return (
     <>
       <style>{`
@@ -885,7 +899,7 @@ export function LandingPage() {
           will-change: opacity;
         }
         .hero-slide.active { opacity: 1; }
-
+ 
         .hero-overlay {
           position: absolute;
           inset: 0;
@@ -904,7 +918,7 @@ export function LandingPage() {
             rgba(0, 0, 0, 0.18) 100%
           );
         }
-
+ 
         /* over the photo, dark mode brightens the copy to pure white
            (!important: these must beat the inline token styles) */
         .dark .hero-has-bg h1 { color: #fff !important; }
@@ -916,7 +930,7 @@ export function LandingPage() {
         .dark .hero-has-bg .hero-eyebrow-tag { background: rgba(255,255,255,0.12) !important; border-color: rgba(255,255,255,0.25) !important; }
         .dark .hero-has-bg .hero-eyebrow-text { color: #fff !important; }
         .dark .hero-has-bg .hero-eyebrow-dot { background: #fff !important; }
-
+ 
         .slide-dots {
           position: absolute;
           bottom: 2rem;
@@ -941,7 +955,7 @@ export function LandingPage() {
         }
         .dark .slide-dot { background: rgba(255,255,255,0.35); }
         .dark .slide-dot.active { background: #fff; }
-
+ 
         /* blobs */
         .blob {
           position: absolute; border-radius: 50%;
@@ -957,7 +971,7 @@ export function LandingPage() {
           50%  { transform: translate(30px, -20px) scale(1.08); }
           100% { transform: translate(-20px, 15px) scale(0.95); }
         }
-
+ 
         /* navbar */
         .nav-links {
           display: flex;
@@ -988,7 +1002,7 @@ export function LandingPage() {
         @media (min-width: 1021px) {
           .nav-mobile-panel { display: none; }
         }
-
+ 
         /* hero grid */
         .hero-grid {
           display: grid;
@@ -1003,7 +1017,7 @@ export function LandingPage() {
           .hero-grid { grid-template-columns: 1fr; }
           .hero-composition { display: none; }
         }
-
+ 
         .hero-composition {
           position: relative;
           height: 480px;
@@ -1030,7 +1044,7 @@ export function LandingPage() {
         }
         .hero-float-left  { top: 2rem;    left: -1rem; }
         .hero-float-right { bottom: 2rem; right: -1rem; }
-
+ 
         /* buttons */
         .btn-hero-primary {
           background: var(--primary);
@@ -1082,22 +1096,39 @@ export function LandingPage() {
           border-color: #fff;
           background: rgba(255,255,255,0.08);
         }
-
-        /* service cards */
+ 
+        /* service cards
+           flex column + bottom-anchored CTA: every card's link sits on
+           the same baseline no matter how long the description runs */
         .service-card {
           background: var(--surface);
           border: 1px solid var(--border);
           border-radius: var(--r-xl);
           padding: 2rem;
+          display: flex;
+          flex-direction: column;
           transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
           cursor: default;
+        }
+        .service-card > a {
+          margin-top: auto;
+          align-self: flex-start;
         }
         .service-card:hover {
           box-shadow: var(--shadow-lg);
           transform: translateY(-4px);
           border-color: var(--border-accent);
         }
-
+ 
+        /* Services-only padding override — scoped to cards inside the
+           .services-cards cluster, so tightening here never touches the
+           base .service-card padding. This is the single dial for how
+           compact the Services cards read: lower it for tighter cards,
+           raise it toward 2rem to match the default. */
+        .services-cards .service-card {
+          padding: 1.5rem;
+        }
+ 
         /* package section overlay + glass cards */
         .pkg-bg-overlay {
           background: linear-gradient(
@@ -1115,7 +1146,7 @@ export function LandingPage() {
             rgba(12, 10, 8, 0.88) 100%
           );
         }
-
+ 
         .pkg-card {
           border-radius: var(--r-xl);
           padding: 2rem;
@@ -1151,7 +1182,7 @@ export function LandingPage() {
           background: rgba(30, 24, 18, 0.72);
           border-color: rgba(255, 255, 255, 0.12);
         }
-
+ 
         /* photo-section overlays (calendar) */
         .bg-overlay {
           background: linear-gradient(
@@ -1167,7 +1198,7 @@ export function LandingPage() {
             rgba(10, 10, 20, 0.55) 100%
           );
         }
-
+ 
         /* calendar */
         .cal-day {
           aspect-ratio: 1;
@@ -1211,21 +1242,28 @@ export function LandingPage() {
           border-color: var(--primary);
           color: var(--primary);
         }
-
-        /* testimonial cards */
+ 
+        /* testimonial cards
+           flex column + bottom-anchored author row: star rows align at
+           the top, author rows align at the bottom across the grid */
         .testi-card {
           background: var(--surface);
           border: 1px solid var(--border);
           border-radius: var(--r-xl);
           padding: 2rem 2rem 1.75rem;
+          display: flex;
+          flex-direction: column;
           transition: box-shadow 0.3s, transform 0.3s, border-color 0.3s;
+        }
+        .testi-card > div:last-child {
+          margin-top: auto;
         }
         .testi-card:hover {
           box-shadow: var(--shadow-md);
           transform: translateY(-3px);
           border-color: var(--border-accent);
         }
-
+ 
         /* menu cards */
         .menu-card {
           border-radius: 1rem;
@@ -1246,9 +1284,9 @@ export function LandingPage() {
         }
         .dark .menu-card { box-shadow: 0 2px 18px rgba(0, 0, 0, 0.35); }
         .dark .menu-card:hover { box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
-
+ 
         .menu-card:hover .menu-card-img { transform: scale(1.05); }
-
+ 
         .menu-card-grain {
           position: absolute;
           inset: 0;
@@ -1259,7 +1297,7 @@ export function LandingPage() {
           mix-blend-mode: overlay;
         }
         .dark .menu-card-grain { opacity: 0.09; }
-
+ 
         .menu-card-cta {
           opacity: 0;
           transform: translateY(5px);
@@ -1269,7 +1307,7 @@ export function LandingPage() {
           opacity: 1;
           transform: translateY(0);
         }
-
+ 
         /* responsive grids */
         .grid-3 {
           display: grid;
@@ -1291,16 +1329,211 @@ export function LandingPage() {
         @media (max-width: 640px) {
           .grid-3 { grid-template-columns: 1fr; }
         }
-
+ 
+        /* ── asymmetrical section grids ──
+           Structural only: uneven column widths + staggered offsets via
+           nth-child margins (no transforms, so card hover animations are
+           untouched).
+ 
+           The system:
+           · column ratios carry the size hierarchy per section
+           · ONE shared stagger scale everywhere — step 1 = 2.25rem,
+             step 2 = 4.5rem (an exact 1:2 rhythm) — so every section's
+             cascade reads as the same deliberate beat
+           · items stretch, so all cards in a row share a single flush
+             baseline; the stagger reads on the top edge instead of
+             leaving ragged bottoms
+           · card innards are bottom-anchored (service CTAs, package
+             buttons, testimonial author rows), so the extra height from
+             stretching distributes into the card body cleanly */
+ 
+        .pkg-grid,
+        .menu-grid,
+        .testi-grid {
+          display: grid;
+          column-gap: 2rem;
+          row-gap: 1.5rem;
+          align-items: stretch;
+        }
+ 
+        /* Packages: featured center card rides high, side cards drop
+           at uneven depths */
+        .pkg-grid {
+          grid-template-columns: 1fr 1.25fr 1fr;
+        }
+        .pkg-grid > :nth-child(1) { margin-top: 2.25rem; }
+        .pkg-grid > :nth-child(3) { margin-top: 4.5rem; }
+ 
+        /* Menus: wide lead card, diagonal descent */
+        .menu-grid {
+          grid-template-columns: minmax(240px, 1.3fr) minmax(220px, 1fr) minmax(220px, 1fr);
+        }
+        .menu-grid > :nth-child(2) { margin-top: 2.25rem; }
+        .menu-grid > :nth-child(3) { margin-top: 4.5rem; }
+ 
+        /* Testimonials: broken-column masonry feel */
+        .testi-grid {
+          grid-template-columns: 1.2fr 0.95fr 1.05fr;
+        }
+        .testi-grid > :nth-child(1) { margin-top: 2.25rem; }
+        .testi-grid > :nth-child(3) { margin-top: 4.5rem; }
+ 
+        /* ── Services: split-screen ──
+           Cards occupy the right column as a self-contained triangle
+           cluster; the header sits vertically centered in the left
+           column. The right column is a nested 2-column grid: two cards
+           sit side by side on the top row, and the third spans the full
+           width beneath them (grid-column: 1 / -1) — a solid pyramid
+           whose base equals the two top cards plus their gap. The header
+           leads in source order (so it stacks on top once collapsed) but
+           is pinned to column 1 on desktop via explicit grid placement,
+           keeping the sides fixed regardless of DOM order. */
+        .services-split {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          column-gap: 4rem;
+          align-items: center;
+        }
+        .services-header-col {
+          grid-column: 1;
+          grid-row: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        .services-cards {
+          grid-column: 2;
+          grid-row: 1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          column-gap: 1.5rem;
+          row-gap: 1.5rem;
+        }
+        .services-cards > * { position: relative; }
+        .services-cards > *:hover { z-index: 3; }
+        /* triangle: two cards side by side on top, one full-width card
+           spanning the base. grid-column: 1 / -1 makes the base card's
+           width equal the two top cards plus the gap between them, so the
+           cluster reads as a solid pyramid. The two top cards size to
+           their content (and stretch to match each other on the row), so
+           they stay compact instead of growing with the column width. */
+        .services-cards > :nth-child(1) { grid-column: 1; grid-row: 1; }
+        .services-cards > :nth-child(2) { grid-column: 2; grid-row: 1; }
+        .services-cards > :nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
+ 
+        /* ── depth: structural overlap ──
+           The lead card of each multi-column section physically rides
+           over its neighbor(s): a negative horizontal margin swallows the
+           2rem column gap plus a small overhang (0.5–0.75rem), and
+           z-index layers the lead on top. The overhang never exceeds the
+           neighbor's 2rem inner padding, so no content is ever covered.
+           z-index + margins only — no transforms — so the existing hover
+           animations are untouched. Hovering any card lifts it to the
+           top layer. */
+ 
+        .pkg-grid > *,
+        .menu-grid > *,
+        .testi-grid > * {
+          position: relative;
+        }
+        .pkg-grid > *:hover,
+        .menu-grid > *:hover,
+        .testi-grid > *:hover {
+          z-index: 3;
+        }
+ 
+        /* Packages: the featured glass card rides over both sides —
+           its backdrop blur samples the cards beneath it */
+        .pkg-grid > :nth-child(2) {
+          margin-left: -2.75rem;
+          margin-right: -2.75rem;
+          z-index: 2;
+        }
+        /* Menus: the wide lead plate laps onto the second (kept to
+           0.5rem so the neighbor's corner chips stay clear) */
+        .menu-grid > :nth-child(1) {
+          margin-right: -2.5rem;
+          z-index: 2;
+        }
+        /* Testimonials: the center quote pins over both neighbors */
+        .testi-grid > :nth-child(2) {
+          margin-left: -2.5rem;
+          margin-right: -2.5rem;
+          z-index: 2;
+        }
+ 
+        @media (max-width: 1024px) {
+          .pkg-grid, .menu-grid, .testi-grid {
+            grid-template-columns: 1fr 1fr;
+            column-gap: 1.5rem;
+          }
+          .pkg-grid > :nth-child(n),
+          .menu-grid > :nth-child(n),
+          .testi-grid > :nth-child(n) { margin: 0; z-index: auto; }
+          /* keep a lighter alternating stagger on tablets */
+          .pkg-grid > :nth-child(even),
+          .menu-grid > :nth-child(even),
+          .testi-grid > :nth-child(even) { margin-top: 2rem; }
+          /* a lone third card spans the row instead of leaving a hole */
+          .pkg-grid > :nth-child(3):last-child,
+          .menu-grid > :nth-child(3):last-child,
+          .testi-grid > :nth-child(3):last-child { grid-column: 1 / -1; }
+ 
+          /* Services split: even columns, slightly tighter gap */
+          .services-split {
+            grid-template-columns: 1fr 1fr;
+            column-gap: 2.5rem;
+          }
+        }
+ 
+        /* Services collapses to one column earlier than the 3-up grids,
+           since a side-by-side header + cluster gets cramped sooner.
+           Header leads in source order, so it lands on top; the triangle
+           cluster keeps its own nested grid at full width below. */
+        @media (max-width: 860px) {
+          .services-split {
+            grid-template-columns: 1fr;
+            row-gap: 2.5rem;
+          }
+          .services-header-col,
+          .services-cards { grid-column: 1; }
+          .services-header-col { grid-row: 1; }
+          .services-cards { grid-row: 2; }
+        }
+ 
+        @media (max-width: 640px) {
+          .pkg-grid, .menu-grid, .testi-grid {
+            grid-template-columns: 1fr;
+            row-gap: 1.25rem;
+          }
+          .pkg-grid > *,
+          .menu-grid > *,
+          .testi-grid > * {
+            margin: 0 !important;
+            grid-column: auto !important;
+          }
+          /* collapse the pyramid into a single clean column */
+          .services-cards {
+            grid-template-columns: 1fr;
+            row-gap: 1.25rem;
+          }
+          .services-cards > :nth-child(1),
+          .services-cards > :nth-child(2),
+          .services-cards > :nth-child(3) {
+            grid-column: 1;
+            grid-row: auto;
+          }
+        }
+ 
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(20px); }
           to   { opacity: 1; transform: translateY(0); }
         }
         .fade-up { animation: fadeUp 0.7s ease both; }
       `}</style>
-
+ 
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
-
+ 
         {/* ═══════════════════════ HERO ═══════════════════════ */}
         <section
           id="home"
@@ -1321,9 +1554,9 @@ export function LandingPage() {
             />
           ))}
           <div className="hero-overlay" />
-
+ 
           <Navbar />
-
+ 
           <div className="slide-dots">
             {HERO_SLIDES.map((_, i) => (
               <button
@@ -1334,10 +1567,10 @@ export function LandingPage() {
               />
             ))}
           </div>
-
+ 
           <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
           <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
-
+ 
           <div className="hero-grid fade-up" style={{ position: 'relative', zIndex: 1 }}>
             <div>
               <div
@@ -1360,7 +1593,7 @@ export function LandingPage() {
                   Events &amp; Catering · Calamba
                 </span>
               </div>
-
+ 
               <h1
                 style={{
                   fontFamily: 'var(--font-display)',
@@ -1374,7 +1607,7 @@ export function LandingPage() {
                 <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Every</em>
                 <br />Celebration
               </h1>
-
+ 
               <p
                 className="hero-body-text"
                 style={{
@@ -1387,7 +1620,7 @@ export function LandingPage() {
                 family dinners to grand events. Let us handle the food while you
                 create the memories.
               </p>
-
+ 
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                 <a href="#availability" className="btn-hero-primary">
                   Book Your Event
@@ -1396,7 +1629,7 @@ export function LandingPage() {
                   Explore Our Menu
                 </a>
               </div>
-
+ 
               <div
                 className="hero-stat-divider"
                 style={{
@@ -1433,7 +1666,7 @@ export function LandingPage() {
                 ))}
               </div>
             </div>
-
+ 
             <div className="hero-composition">
               <div className="hero-card-center">
                 <div
@@ -1489,7 +1722,7 @@ export function LandingPage() {
                   </a>
                 </div>
               </div>
-
+ 
               <div className="hero-float-card hero-float-left">
                 <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 600, color: 'var(--accent)', lineHeight: 1 }}>
                   4.9/5
@@ -1499,7 +1732,7 @@ export function LandingPage() {
                   200+ reviews
                 </p>
               </div>
-
+ 
               <div className="hero-float-card hero-float-right">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <div
@@ -1525,7 +1758,7 @@ export function LandingPage() {
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ SERVICES ═══════════════════════ */}
         <section
           id="services"
@@ -1541,7 +1774,7 @@ export function LandingPage() {
           }}
         >
           <CollidingBlobsCanvas />
-
+ 
           <div
             style={{
               position: 'absolute', inset: 0, zIndex: 1,
@@ -1582,51 +1815,59 @@ export function LandingPage() {
               pointerEvents: 'none',
             }}
           />
-
+ 
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 5 }}>
-            <SectionHeader eyebrow="What We Offer" title="Everything You Need for" accent="a Perfect Event" />
-            <div className="grid-3">
-              {SERVICES.map((svc) => (
-                <div key={svc.title} className="service-card">
-                  <div
-                    style={{
-                      width: 52, height: 52, borderRadius: 'var(--r-lg)',
-                      background: 'var(--primary-muted)', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center',
-                      fontSize: '1.4rem', marginBottom: '1.25rem',
-                      border: '1px solid var(--border)',
-                    }}
-                  >
-                    {svc.icon}
+            <div className="services-split">
+              <div className="services-header-col">
+                <SectionHeader eyebrow="What We Offer" title="Everything You Need for" accent="a Perfect Event" align="left" flush />
+              </div>
+              <div className="services-cards">
+                {SERVICES.map((svc) => (
+                  <div key={svc.title} className="service-card">
+                    <div
+                      style={{
+                        width: 52, height: 52, borderRadius: 'var(--r-lg)',
+                        background: 'var(--primary-muted)', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        fontSize: '1.4rem', marginBottom: '1.25rem',
+                        border: '1px solid var(--border)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {svc.icon}
+                    </div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
+                      {svc.title}
+                    </h3>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.7, fontWeight: 300, marginBottom: '1.5rem' }}>
+                      {svc.description}
+                    </p>
+                    <a
+                      href={svc.href}
+                      style={{
+                        fontFamily: 'var(--font-body)', fontSize: '0.62rem',
+                        letterSpacing: '0.2em', textTransform: 'uppercase',
+                        color: 'var(--primary)', textDecoration: 'none',
+                        fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                      }}
+                    >
+                      {svc.cta} →
+                    </a>
                   </div>
-                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
-                    {svc.title}
-                  </h3>
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.7, fontWeight: 300, marginBottom: '1.5rem' }}>
-                    {svc.description}
-                  </p>
-                  <a
-                    href={svc.href}
-                    style={{
-                      fontFamily: 'var(--font-body)', fontSize: '0.62rem',
-                      letterSpacing: '0.2em', textTransform: 'uppercase',
-                      color: 'var(--primary)', textDecoration: 'none',
-                      fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                    }}
-                  >
-                    {svc.cta} →
-                  </a>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ FEATURED PACKAGES ═══════════════════════ */}
         <section
           id="packages"
           style={{
             ...sectionPad,
+            /* tightened seam: Packages hands off to Menu Preview with a
+               4.5rem + 4.5rem gap instead of a full 6rem + 6rem stop */
+            paddingBottom: '4.5rem',
             overflow: 'hidden',
             backgroundImage: `url(${PKG_BG})`,
             backgroundSize: 'cover',
@@ -1643,8 +1884,8 @@ export function LandingPage() {
             }}
           />
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 2 }}>
-            <SectionHeader eyebrow="Catering Packages" title="Find Your" accent="Perfect Package" />
-            <div className="grid-3">
+            <SectionHeader eyebrow="Catering Packages" title="Find Your" accent="Perfect Package" align="right" />
+            <div className="pkg-grid">
               {PACKAGES.map((pkg, i) => (
                 <div
                   key={pkg.id}
@@ -1697,7 +1938,7 @@ export function LandingPage() {
                 </div>
               ))}
             </div>
-            <div style={{ textAlign: 'center', marginTop: '2.5rem' }}>
+            <div style={{ textAlign: 'center', marginTop: '3rem' }}>
               <a
                 href="#packages"
                 style={{
@@ -1712,12 +1953,13 @@ export function LandingPage() {
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ MENU PREVIEW ═══════════════════════ */}
         <section
           id="menus"
           style={{
             ...sectionPad,
+            paddingTop: '4.5rem',
             overflow: 'hidden',
             background: `
               radial-gradient(ellipse 80% 60% at 15% 20%,  color-mix(in srgb, var(--primary) 22%, transparent) 0%, transparent 70%),
@@ -1728,7 +1970,7 @@ export function LandingPage() {
           }}
         >
           <CollidingBlobsCanvas />
-
+ 
           <div
             style={{
               position: 'absolute', inset: 0, zIndex: 1,
@@ -1769,21 +2011,13 @@ export function LandingPage() {
               pointerEvents: 'none',
             }}
           />
-
+ 
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 5 }}>
-            <SectionHeader eyebrow="From Our Kitchen" title="A Taste of What" accent="Awaits You" italic />
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 260px))',
-                gap: '1.5rem',
-                justifyContent: 'center',
-                alignItems: 'stretch',
-              }}
-            >
+            <SectionHeader eyebrow="From Our Kitchen" title="A Taste of What" accent="Awaits You" italic align="left" />
+            <div className="menu-grid">
               {MENUS.map((menu) => (
                 <div key={menu.id} className="menu-card" style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                  <div style={{ height: 200, position: 'relative', overflow: 'hidden', background: 'var(--primary-muted)', flexShrink: 0 }}>
+                  <div style={{ height: 210, position: 'relative', overflow: 'hidden', background: 'var(--primary-muted)', flexShrink: 0 }}>
                     <img
                       src={menu.image}
                       alt={menu.tier}
@@ -1836,13 +2070,20 @@ export function LandingPage() {
                       </p>
                     </div>
                   </div>
-
+ 
+                  {/* body panel rises over the photo's bottom edge — the
+                      rounded shoulders let the image peek through at the
+                      corners, reading as a plate set on the picture */}
                   <div
                     style={{
-                      padding: '1.1rem 1.25rem 1.35rem',
+                      padding: '1.25rem 1.25rem 1.35rem',
                       display: 'flex', flexDirection: 'column',
                       alignItems: 'center', justifyContent: 'center',
-                      textAlign: 'center', gap: '0.5rem', flex: 1, position: 'relative',
+                      textAlign: 'center', gap: '0.5rem', flex: 1,
+                      position: 'relative', zIndex: 2,
+                      marginTop: '-1.25rem',
+                      background: 'var(--bg-card)',
+                      borderRadius: '1rem 1rem 0 0',
                     }}
                   >
                     <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0, letterSpacing: '0.01em' }}>
@@ -1858,14 +2099,14 @@ export function LandingPage() {
                 </div>
               ))}
             </div>
-            <div style={{ textAlign: 'center', marginTop: '2.75rem' }}>
+            <div style={{ textAlign: 'center', marginTop: '3rem' }}>
               <a href="#menus" className="btn-hero-primary">
                 Full Menu →
               </a>
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ AVAILABILITY CALENDAR ═══════════════════════ */}
         <section
           id="availability"
@@ -1879,7 +2120,7 @@ export function LandingPage() {
           }}
         >
           <div className="bg-overlay" style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
-
+ 
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 2 }}>
             <div className="split-grid">
               <div>
@@ -1941,7 +2182,7 @@ export function LandingPage() {
                   Reserve This Date
                 </a>
               </div>
-
+ 
               <div
                 style={{
                   background: 'var(--surface-glass)',
@@ -1960,7 +2201,7 @@ export function LandingPage() {
                   </p>
                   <button className="cal-nav-btn" onClick={nextMonth} aria-label="Next month">›</button>
                 </div>
-
+ 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: '0.5rem' }}>
                   {DAY_ABBR.map((d) => (
                     <div
@@ -1976,7 +2217,7 @@ export function LandingPage() {
                     </div>
                   ))}
                 </div>
-
+ 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
                   {Array.from({ length: firstWeekday }).map((_, i) => (
                     <div key={`e-${i}`} />
@@ -2000,7 +2241,7 @@ export function LandingPage() {
                     );
                   })}
                 </div>
-
+ 
                 {hovered && (
                   <p style={{ textAlign: 'center', marginTop: '1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                     {MONTH_NAMES[calMonth]} {hovered}, {calYear}
@@ -2015,14 +2256,14 @@ export function LandingPage() {
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ TESTIMONIALS ═══════════════════════ */}
         <section style={{ ...sectionPad, background: 'var(--bg-subtle)', overflow: 'hidden' }}>
           <RainingCanvas />
-
+ 
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 1 }}>
-            <SectionHeader eyebrow="Client Stories" title="What Our" accent="Clients Say" italic />
-            <div className="grid-3">
+            <SectionHeader eyebrow="Client Stories" title="What Our" accent="Clients Say" italic align="right" />
+            <div className="testi-grid">
               {TESTIMONIALS.map((t) => (
                 <div key={t.id} className="testi-card">
                   <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem' }}>
@@ -2066,12 +2307,12 @@ export function LandingPage() {
             </div>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ FINAL CTA ═══════════════════════ */}
         <section style={{ ...sectionPad, background: 'var(--primary)', overflow: 'hidden' }}>
           <div className="blob blob-primary-soft" style={{ width: 500, height: 500, top: '-150px', right: '-100px' }} />
           <div className="blob blob-accent-soft" style={{ width: 350, height: 350, bottom: '-80px', left: '-60px', animationDelay: '8s' }} />
-
+ 
           <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center', position: 'relative' }}>
             <div
               style={{
@@ -2091,17 +2332,17 @@ export function LandingPage() {
                 Ready to Book?
               </span>
             </div>
-
+ 
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.2rem, 5vw, 3.5rem)', fontWeight: 400, color: '#fff', lineHeight: 1.1, marginBottom: '1.25rem' }}>
               Let's Make Your Event{' '}
               <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Unforgettable</em>
             </h2>
-
+ 
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.75, fontWeight: 300, marginBottom: '2.5rem' }}>
               Join over 500 families and businesses who trusted King Jegi
               to feed their most important moments. Reserve your date now.
             </p>
-
+ 
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
               <a
                 href="#availability"
@@ -2131,13 +2372,13 @@ export function LandingPage() {
                 View Packages
               </a>
             </div>
-
+ 
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'rgba(255,255,255,0.35)', marginTop: '1.5rem', letterSpacing: '0.1em' }}>
               No payment required to reserve · Confirmation within 24 hours
             </p>
           </div>
         </section>
-
+ 
         {/* ═══════════════════════ FOOTER ═══════════════════════ */}
         <footer
           style={{
@@ -2158,8 +2399,11 @@ export function LandingPage() {
           </p>
         </footer>
       </main>
-
+ 
       <ChatWidget />
     </>
   );
 }
+ 
+
+
