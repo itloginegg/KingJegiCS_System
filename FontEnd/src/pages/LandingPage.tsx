@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useTheme } from '../hooks/useTheme';
+import { Navbar } from '../components/landing/Navbar';
+import { ChatWidget } from '../components/landing/ChatWidget';
  
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
@@ -17,13 +17,6 @@ const PKG_BG =
 const RESERVE_BG =
   'https://images.unsplash.com/photo-1464366400600-7168b8af9bc3?auto=format&fit=crop&w=2000&q=80';
  
-const NAV_LINKS = [
-  { label: 'Home', href: '#home' },
-  { label: 'Packages', href: '#packages' },
-  { label: 'Menus', href: '#menus' },
-  { label: 'Rentals', href: '#services' },
-  { label: 'Quotation', href: '#availability' },
-];
  
 const SERVICES = [
   {
@@ -601,251 +594,6 @@ function RainingCanvas() {
 }
  
 /* ─────────────────────────────────────────────────────────────────────────
-   Icons
-───────────────────────────────────────────────────────────────────────── */
- 
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="18" height="18" aria-hidden="true">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-    </svg>
-  );
-}
- 
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
- 
-function CartIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <circle cx="9" cy="21" r="1" />
-      <circle cx="20" cy="21" r="1" />
-      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-    </svg>
-  );
-}
- 
-/* ─────────────────────────────────────────────────────────────────────────
-   Navbar — brand, anchors, cart, theme toggle, sign in, book now
-───────────────────────────────────────────────────────────────────────── */
- 
-function Navbar() {
-  const { theme, toggleTheme } = useTheme();
-  const [menuOpen, setMenuOpen] = useState(false);
- 
-  const iconBtn: React.CSSProperties = {
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    width: 36,
-    height: 36,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 'var(--r-full)',
-  };
- 
-  return (
-    <header
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 20,
-      }}
-    >
-      <nav
-        aria-label="Main navigation"
-        style={{
-          maxWidth: 1200,
-          margin: '0 auto',
-          padding: '1.4rem 2.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '1.5rem',
-        }}
-      >
-        <a
-          href="#home"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: '1.45rem',
-            fontWeight: 600,
-            letterSpacing: '0.22em',
-            color: 'var(--accent)',
-            textDecoration: 'none',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          KING JEGI
-        </a>
- 
-        <ul className="nav-links" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {NAV_LINKS.map((link) => (
-            <li key={link.label}>
-              <a href={link.href} className="nav-link">
-                {link.label}
-              </a>
-            </li>
-          ))}
-        </ul>
- 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <button type="button" aria-label="View cart" style={iconBtn}>
-            <CartIcon />
-          </button>
- 
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            style={{ ...iconBtn, color: 'var(--accent)' }}
-          >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </button>
- 
-          <Link to="/login" className="nav-link nav-signin">
-            Sign In
-          </Link>
- 
-          <a href="#availability" className="btn-hero-primary" style={{ padding: '0.7rem 1.5rem' }}>
-            Book Now
-          </a>
- 
-          <button
-            type="button"
-            className="nav-burger"
-            onClick={() => setMenuOpen((o) => !o)}
-            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={menuOpen}
-            style={iconBtn}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="20" height="20" aria-hidden="true">
-              {menuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
-            </svg>
-          </button>
-        </div>
-      </nav>
- 
-      {menuOpen && (
-        <ul
-          className="nav-mobile-panel"
-          style={{
-            listStyle: 'none',
-            margin: '0 1.25rem',
-            padding: '0.75rem',
-            background: 'var(--surface-glass)',
-            border: '1px solid var(--border-glass)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(14px)',
-            WebkitBackdropFilter: 'blur(14px)',
-            boxShadow: 'var(--shadow-glass)',
-          }}
-        >
-          {NAV_LINKS.map((link) => (
-            <li key={link.label}>
-              <a
-                href={link.href}
-                className="nav-link"
-                style={{ display: 'block', padding: '0.7rem 0.75rem' }}
-                onClick={() => setMenuOpen(false)}
-              >
-                {link.label}
-              </a>
-            </li>
-          ))}
-          <li>
-            <Link to="/login" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
-              Sign In
-            </Link>
-          </li>
-        </ul>
-      )}
-    </header>
-  );
-}
- 
-/* ─────────────────────────────────────────────────────────────────────────
-   Chat widget — static, design only
-───────────────────────────────────────────────────────────────────────── */
- 
-function ChatWidget() {
-  const [open, setOpen] = useState(false);
- 
-  return (
-    <>
-      {open && (
-        <div
-          style={{
-            position: 'fixed',
-            right: '1.5rem',
-            bottom: '5.5rem',
-            zIndex: 40,
-            width: 260,
-            background: 'var(--surface)',
-            border: '1px solid var(--border-accent)',
-            borderRadius: 'var(--r-xl)',
-            padding: '1.25rem',
-            boxShadow: 'var(--shadow-lg)',
-          }}
-        >
-          <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
-            Kumusta! 👋
-          </p>
-          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6, fontWeight: 300 }}>
-            Planning an event? Message us and we'll help you pick the perfect package.
-          </p>
-          <a
-            href="#availability"
-            className="btn-hero-primary"
-            style={{ padding: '0.6rem 1.25rem', marginTop: '0.9rem' }}
-            onClick={() => setOpen(false)}
-          >
-            Start Booking
-          </a>
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close chat' : 'Chat with support'}
-        style={{
-          position: 'fixed',
-          right: '1.5rem',
-          bottom: '1.5rem',
-          zIndex: 40,
-          width: 54,
-          height: 54,
-          borderRadius: '50%',
-          border: 'none',
-          cursor: 'pointer',
-          background: 'var(--accent)',
-          color: '#fff',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: 'var(--shadow-gold)',
-          transition: 'transform 0.2s',
-        }}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" aria-hidden="true">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </svg>
-      </button>
-    </>
-  );
-}
- 
-/* ─────────────────────────────────────────────────────────────────────────
    Main component
 ───────────────────────────────────────────────────────────────────────── */
  
@@ -972,36 +720,10 @@ export function LandingPage() {
           100% { transform: translate(-20px, 15px) scale(0.95); }
         }
  
-        /* navbar */
-        .nav-links {
-          display: flex;
-          align-items: center;
-          gap: 2rem;
-        }
-        .nav-link {
-          font-family: var(--font-body);
-          font-size: 0.66rem;
-          letter-spacing: 0.22em;
-          text-transform: uppercase;
-          font-weight: 500;
-          color: var(--text-secondary);
-          text-decoration: none;
-          transition: color 0.2s;
-          white-space: nowrap;
-        }
-        .nav-link:hover { color: var(--primary); }
+        /* navbar sits over the hero photo — brighten links in dark mode
+           (base .nav-link styles live in the shared Navbar component) */
         .dark .hero-has-bg .nav-link { color: rgba(255,255,255,0.75); }
         .dark .hero-has-bg .nav-link:hover { color: #fff; }
-        .nav-signin { padding: 0 0.75rem; }
-        .nav-burger { display: none !important; }
-        @media (max-width: 1020px) {
-          .nav-links { display: none; }
-          .nav-burger { display: flex !important; }
-          .nav-signin { display: none; }
-        }
-        @media (min-width: 1021px) {
-          .nav-mobile-panel { display: none; }
-        }
  
         /* hero grid */
         .hero-grid {

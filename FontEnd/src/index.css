@@ -70,6 +70,38 @@
   --menu-chip-border: rgba(255, 255, 255, 0.75);
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+   Center-focus slider utilities (used by /packages).
+   The track holds two identical halves; a Framer Motion value drives its
+   translateX and wraps at exactly half the track width for a seamless
+   infinite loop. Motion also handles drag, pause, and the per-card
+   center-distance scaling — this CSS is structure only.
+─────────────────────────────────────────────────────────────────────── */
+.center-slider {
+  overflow: hidden;
+  /* soft edge fade so cards materialize instead of popping in */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%);
+}
+.slider-track {
+  display: flex;
+  width: max-content;
+  position: relative; /* offsetParent for the per-card center math */
+  cursor: grab;
+  will-change: transform;
+}
+.slider-track:active { cursor: grabbing; }
+.slider-half {
+  display: flex;
+  align-items: stretch; /* equal heights — one straight, clean row */
+  gap: 2rem;
+  padding-right: 2rem;  /* trailing gap so the -50% loop point is seamless */
+}
+.slider-item {
+  flex-shrink: 0;
+  display: flex; /* child card stretches to the shared row height */
+}
+
 .dark {
   --bg: #0c0a08;
   --bg-subtle: #141009;

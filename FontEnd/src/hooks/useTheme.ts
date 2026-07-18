@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useState } from 'react';
 
 export type Theme = 'light' | 'dark';
 
@@ -19,7 +19,9 @@ function getInitialTheme(): Theme {
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  useEffect(() => {
+  // Layout effect: the class must be on <html> before first paint, otherwise
+  // dark-mode users see a flash of the light theme on every page load.
+  useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);

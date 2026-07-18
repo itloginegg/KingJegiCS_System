@@ -3,6 +3,12 @@ import { AuthProvider } from '../context/AuthContext';
 import { ProtectedRoute } from './ProtectedRoute';
 import { LoginPage } from '../pages/LoginPage';
 import { LandingPage } from '../pages/LandingPage';
+import { PackagePage } from '../pages/PackagePage';
+import { MenuPage } from '../pages/MenuPage';
+import { RentalsPage } from '../pages/RentalsPage';
+import { CustomerDashboardPage } from '../pages/CustomerDashboardPage';
+import { AdminDashboardPage } from '../pages/AdminDashboardPage';
+import { BookingPage } from '../pages/BookingPage';
 import { useAuth } from '../hooks/useAuth';
 
 // --- Placeholder dashboards so the routing is runnable end-to-end. ---
@@ -51,6 +57,12 @@ export function AppRoutes() {
           </Route>
 
           <Route path="/" element={<LandingPage />} />
+          <Route path="/packages" element={<PackagePage />} />
+          <Route path="/menus" element={<MenuPage />} />
+          <Route path="/rentals" element={<RentalsPage />} />
+          <Route path="/dashboard" element={<CustomerDashboardPage />} />
+          <Route path="/admin" element={<AdminDashboardPage />} />
+          <Route path="/book" element={<BookingPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
