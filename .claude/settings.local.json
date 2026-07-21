@@ -28,7 +28,9 @@
       "Bash(node -e \"console.log\\(require\\('./node_modules/framer-motion/package.json'\\).version\\)\")",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5199/dashboard)",
       "Bash(npx vite *)",
-      "Bash(node .ssr-check-out/ssr-check.js)"
+      "Bash(node .ssr-check-out/ssr-check.js)",
+      "Bash(dotnet run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST http://localhost:5258/api/Admins/login -H \"Content-Type: application/json\" -d '{\"email\":\"probe@example.com\",\"password\":\"probe\"}')"
     ]
   }
 }

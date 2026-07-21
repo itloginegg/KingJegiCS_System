@@ -7,7 +7,7 @@ const NAV_LINKS = [
   { label: 'Packages', href: '/packages' },
   { label: 'Menus', href: '/menus' },
   { label: 'Rentals', href: '/rentals' },
-  { label: 'Quotation', href: '/book' },
+  { label: 'Book Now', href: '/book' },
 ];
 
 function SunIcon() {

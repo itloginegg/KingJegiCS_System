@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
+import { useAuth } from '../hooks/useAuth';
 import { ChatWidget } from '../components/landing/ChatWidget';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
 ───────────────────────────────────────────────────────────────────────── */
 
-const USER = { name: 'Maria Santos', email: 'maria.santos@example.com' };
+/* Fallback persona for the booking data below; the signed-in account's name
+   and email (from AuthContext) take precedence everywhere they're shown. */
+const FALLBACK_USER = { name: 'Maria Santos', email: 'maria.santos@example.com' };
 
 type BookingStatus = 'pending' | 'pending_fee' | 'secured' | 'cancelled';
 type OrderStatus = 'pending_dp' | 'dp_paid' | 'fully_paid';
@@ -226,7 +229,7 @@ function FieldLabel({ text }: { text: string }) {
   );
 }
 
-const PIPELINE_STEPS = ['Reserved', 'Secured', 'Down Payment', 'Fully Paid'];
+const PIPELINE_STEPS = ['Unpaid', 'Reserved', 'Partial', 'Paid'];
 
 function pipelineStep(booking: Booking, order?: Order) {
   if (order?.status === 'fully_paid') return 3;
@@ -326,7 +329,15 @@ function BookingDetailModal({ booking, onClose }: { booking: Booking; onClose: (
   );
 }
 
-function InvoiceModal({ order, onClose }: { order: Order; onClose: () => void }) {
+function InvoiceModal({
+  order,
+  customer,
+  onClose,
+}: {
+  order: Order;
+  customer: { name: string; email: string };
+  onClose: () => void;
+}) {
   const st = ORDER_STATUS[order.status];
   const total = orderTotal(order);
   const paid = orderPaid(order);
@@ -357,9 +368,9 @@ function InvoiceModal({ order, onClose }: { order: Order; onClose: () => void })
               fontFamily: 'var(--font-body)', fontSize: '0.78rem',
             }}
           >
-            <span style={{ color: 'var(--text-dim)' }}>Client: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{USER.name}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Client: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer.name}</strong></span>
             <span style={{ color: 'var(--text-dim)' }}>Event date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(order.eventDate)}</strong></span>
-            <span style={{ color: 'var(--text-dim)' }}>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{USER.email}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer.email}</strong></span>
             <span style={{ color: 'var(--text-dim)' }}>Issued: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(order.createdAt)}</strong></span>
           </div>
 
@@ -431,6 +442,13 @@ const NAV_ITEMS: { id: Tab; label: string; icon: string }[] = [
 
 export function CustomerDashboardPage() {
   const { theme, toggleTheme } = useTheme();
+  const { user: authUser, logout } = useAuth();
+
+  /* the signed-in account; static persona only as a dev fallback */
+  const account = {
+    name: authUser?.name ?? FALLBACK_USER.name,
+    email: authUser?.email ?? FALLBACK_USER.email,
+  };
 
   const [tab, setTab] = useState<Tab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -863,13 +881,13 @@ export function CustomerDashboardPage() {
 
           <div className="cds-sidebar-foot">
             <div className="cds-userchip">
-              <div className="cds-avatar">{USER.name.charAt(0)}</div>
+              <div className="cds-avatar">{account.name.charAt(0)}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {USER.name}
+                  {account.name}
                 </div>
                 <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {USER.email}
+                  {account.email}
                 </div>
               </div>
             </div>
@@ -877,6 +895,10 @@ export function CustomerDashboardPage() {
               <span className="cds-nav-icon">←</span>
               Back to Site
             </Link>
+            <button type="button" className="cds-nav-item" onClick={() => void logout()}>
+              <span className="cds-nav-icon">⎋</span>
+              Sign Out
+            </button>
           </div>
         </aside>
 
@@ -912,7 +934,7 @@ export function CustomerDashboardPage() {
                 </svg>
               )}
             </button>
-            <div className="cds-avatar" title={USER.name}>{USER.name.charAt(0)}</div>
+            <div className="cds-avatar" title={account.name}>{account.name.charAt(0)}</div>
           </div>
 
           {/* content */}
@@ -922,7 +944,7 @@ export function CustomerDashboardPage() {
             <div className="fade-up" style={{ marginBottom: '2rem' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.7rem, 3vw, 2.4rem)', fontWeight: 400, lineHeight: 1.15, color: 'var(--text-primary)' }}>
                 Welcome back,{' '}
-                <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>{USER.name.split(' ')[0]}</em>
+                <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>{account.name.split(' ')[0]}</em>
               </h1>
               <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.86rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.35rem' }}>
                 Here's where your celebrations stand today.
@@ -1323,7 +1345,7 @@ export function CustomerDashboardPage() {
 
       {/* modals */}
       {detailBooking && <BookingDetailModal booking={detailBooking} onClose={() => setDetailBooking(null)} />}
-      {invoiceOrder && <InvoiceModal order={invoiceOrder} onClose={() => setInvoiceOrder(null)} />}
+      {invoiceOrder && <InvoiceModal order={invoiceOrder} customer={account} onClose={() => setInvoiceOrder(null)} />}
 
       {/* cancel confirmation */}
       {confirmCancel && (

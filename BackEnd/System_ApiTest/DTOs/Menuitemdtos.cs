@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Http;
 
 namespace System_ApiTest.DTOs
 {
@@ -32,6 +33,9 @@ namespace System_ApiTest.DTOs
 
         public Guid? MenuPackageId { get; set; }
 
+        /// <summary>Optional photo upload for the menu item.</summary>
+        public IFormFile? ImageFile { get; set; }
+
         public IEnumerable<ValidationResult> Validate(ValidationContext _)
         {
             // Standalone (no package) items must carry a price.
@@ -52,7 +56,8 @@ namespace System_ApiTest.DTOs
         decimal? PricePerTray,
         int ServesPerTray,
         Guid? MenuPackageId,
-        bool IsActive);
+        bool IsActive,
+        string? ImageUrl);
 
     /// <summary>Compact item projection used inside packages, trays, and templates.</summary>
     public record MenuItemBriefDto(

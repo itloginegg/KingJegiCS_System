@@ -18,15 +18,17 @@ namespace System_ApiTest.Controllers
     {
         private readonly AppDbContext _db;
         private readonly JwtTokenService _tokenService;
+        private readonly OtpService _otp;
 
         // PasswordHasher<T> ships with ASP.NET Core Identity (Microsoft.Extensions.Identity.Core).
         // It uses PBKDF2 with a per-password salt. If you prefer BCrypt, swap in BCrypt.Net-Next.
         private readonly PasswordHasher<Customer> _passwordHasher = new();
 
-        public CustomersController(AppDbContext db, JwtTokenService tokenService)
+        public CustomersController(AppDbContext db, JwtTokenService tokenService, OtpService otp)
         {
             _db = db;
             _tokenService = tokenService;
+            _otp = otp;
         }
 
         [HttpPost("register")]
@@ -38,6 +40,10 @@ namespace System_ApiTest.Controllers
                 return BadRequest(ModelState);
 
             var email = dto.Email.Trim().ToLowerInvariant();
+
+            // Customers register with a Gmail address only (business rule).
+            if (!email.EndsWith("@gmail.com"))
+                return BadRequest(new { message = "Please register with a Gmail address (@gmail.com)." });
 
             // 2. Friendly uniqueness check (the DB index is still the real guarantee).
             if (await _db.Customers.AnyAsync(c => c.Email == email))
@@ -67,15 +73,71 @@ namespace System_ApiTest.Controllers
                 return Conflict(new { message = "An account with this email already exists." });
             }
 
-            // Never return the hash. Shape a response DTO in real code.
+            // Email verification: the account exists but can't log in until the
+            // emailed code is confirmed. If sending fails, the resend endpoint recovers.
+            string verifyNote;
+            try
+            {
+                await _otp.IssueAsync("Customer", customer.Id, customer.Email, OtpPurpose.EmailVerify);
+                verifyNote = "A 6-digit verification code was sent to your Gmail. Confirm it at /api/customers/verify-email before logging in.";
+            }
+            catch (EmailSendException)
+            {
+                verifyNote = "Your account was created, but the verification email could not be sent. Use /api/customers/resend-verification to try again.";
+            }
+
             return CreatedAtAction(nameof(Register), new { id = customer.Id }, new
             {
                 customer.Id,
                 customer.FullName,
                 customer.Email,
                 customer.PhoneNumber,
-                customer.CreatedAt
+                customer.CreatedAt,
+                message = verifyNote
             });
+        }
+
+        /// <summary>Confirms the registration code -> the account becomes verified and can log in.</summary>
+        [AllowAnonymous]
+        [HttpPost("verify-email")]
+        public async Task<IActionResult> VerifyEmail([FromBody] VerifyCodeDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var email = dto.Email.Trim().ToLowerInvariant();
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer is null)
+                return BadRequest(new { message = "Invalid email or code." });
+            if (customer.IsEmailVerified)
+                return Ok(new { message = "This email is already verified — you can log in." });
+
+            if (!await _otp.VerifyAsync("Customer", customer.Id, OtpPurpose.EmailVerify, dto.Code))
+                return BadRequest(new { message = "Invalid or expired code." });
+
+            customer.IsEmailVerified = true;
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "Email verified. You can now log in." });
+        }
+
+        /// <summary>Resends the registration verification code (60-second cooldown).</summary>
+        [AllowAnonymous]
+        [HttpPost("resend-verification")]
+        public async Task<IActionResult> ResendVerification([FromBody] ResendCodeDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var email = dto.Email.Trim().ToLowerInvariant();
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            // Don't reveal whether an account exists.
+            if (customer is null || customer.IsEmailVerified)
+                return Ok(new { message = "If that account needs verification, a code has been sent." });
+
+            try
+            {
+                await _otp.IssueAsync("Customer", customer.Id, customer.Email, OtpPurpose.EmailVerify);
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (EmailSendException) { return StatusCode(502, new { message = "Could not send the email. Try again shortly." }); }
+
+            return Ok(new { message = "If that account needs verification, a code has been sent." });
         }
 
         /// <summary>
@@ -111,6 +173,42 @@ namespace System_ApiTest.Controllers
                 customer.PasswordHash = _passwordHasher.HashPassword(customer, dto.Password);
                 await _db.SaveChangesAsync();
             }
+
+            // Registration must be completed first.
+            if (!customer.IsEmailVerified)
+                return Unauthorized(new { message = "Please verify your email first (check your Gmail, or use /resend-verification)." });
+
+            // Two-factor: password OK -> email a login code; the token is issued at
+            // /login/verify-otp. (Disabled via Otp:Enabled=false for development.)
+            if (_otp.Enabled)
+            {
+                try
+                {
+                    await _otp.IssueAsync("Customer", customer.Id, customer.Email, OtpPurpose.Login);
+                }
+                catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+                catch (EmailSendException) { return StatusCode(502, new { message = "Could not send the login code. Try again shortly." }); }
+
+                return Ok(new { otpRequired = true, message = "A 6-digit login code was sent to your Gmail. Confirm it at /api/customers/login/verify-otp." });
+            }
+
+            var (token, expiresAt) = _tokenService.Generate(customer.Id, customer.Email, "Customer");
+            return Ok(new AuthResponseDto(token, expiresAt, customer.Id, customer.Email, "Customer"));
+        }
+
+        /// <summary>Login step 2: confirms the emailed code and issues the JWT.</summary>
+        [AllowAnonymous]
+        [HttpPost("login/verify-otp")]
+        public async Task<IActionResult> VerifyLoginOtp([FromBody] VerifyCodeDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var email = dto.Email.Trim().ToLowerInvariant();
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer is null || !customer.IsActive)
+                return Unauthorized(new { message = "Invalid email or code." });
+
+            if (!await _otp.VerifyAsync("Customer", customer.Id, OtpPurpose.Login, dto.Code))
+                return Unauthorized(new { message = "Invalid or expired code." });
 
             var (token, expiresAt) = _tokenService.Generate(customer.Id, customer.Email, "Customer");
             return Ok(new AuthResponseDto(token, expiresAt, customer.Id, customer.Email, "Customer"));

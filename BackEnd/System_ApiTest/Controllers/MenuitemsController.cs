@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System_ApiTest.Data;
@@ -20,10 +20,13 @@ namespace System_ApiTest.Controllers
 
         private readonly AppDbContext _db;
         private readonly Auditlogservice _audit;
-        public MenuitemsController(AppDbContext db, Auditlogservice audit)
+        private readonly IWebHostEnvironment _env;
+
+        public MenuitemsController(AppDbContext db, Auditlogservice audit, IWebHostEnvironment env)
         {
             _db = db;
             _audit = audit;
+            _env = env;
         }
 
         /// <summary>List dishes. Customers see only active ones; optional package filter.</summary>
@@ -49,9 +52,18 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] MenuItemCreateDto dto)
+        public async Task<IActionResult> Create([FromForm] MenuItemCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
+
+            string? imageUrl = null;
+            if (dto.ImageFile is not null)
+            {
+                imageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "menu");
+            }
 
             var m = new Menuitem
             {
@@ -62,7 +74,8 @@ namespace System_ApiTest.Controllers
                 DietaryTags = dto.DietaryTags,
                 PricePerTray = dto.PricePerTray,
                 ServesPerTray = dto.ServesPerTray,
-                MenuPackageId = dto.MenuPackageId
+                MenuPackageId = dto.MenuPackageId,
+                ImageUrl = imageUrl
             };
             _db.MenuItems.Add(m);
             try
@@ -71,6 +84,7 @@ namespace System_ApiTest.Controllers
             }
             catch (DbUpdateException)
             {
+                if (imageUrl is not null) ImageUploadHelper.DeleteImage(_env, imageUrl);
                 return Conflict(new { message = "A menu item with this name already exists." });
             }
             await _audit.LogAsync(User, AuditAction.CREATE, "MENU_ITEM", m.Id.ToString(), null, ToDto(m));
@@ -79,9 +93,12 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPut("{id:guid}")]
-        public async Task<IActionResult> Update(Guid id, [FromBody] MenuItemCreateDto dto)
+        public async Task<IActionResult> Update(Guid id, [FromForm] MenuItemCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
 
             var m = await _db.MenuItems.FindAsync(id);
             if (m is null) return NotFound();
@@ -95,6 +112,13 @@ namespace System_ApiTest.Controllers
             m.PricePerTray = dto.PricePerTray;
             m.ServesPerTray = dto.ServesPerTray;
             m.MenuPackageId = dto.MenuPackageId;
+
+            if (dto.ImageFile is not null)
+            {
+                ImageUploadHelper.DeleteImage(_env, m.ImageUrl);
+                m.ImageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "menu");
+            }
+
             try
             {
                 await _db.SaveChangesAsync();
@@ -123,6 +147,6 @@ namespace System_ApiTest.Controllers
 
         private static MenuItemResponseDto ToDto(Menuitem m) =>
             new(m.Id, m.ItemName, m.ItemCategory.ToString(), m.CourseCategory.ToString(), m.Description,
-                m.DietaryTags, m.PricePerTray, m.ServesPerTray, m.MenuPackageId, m.IsActive);
+                m.DietaryTags, m.PricePerTray, m.ServesPerTray, m.MenuPackageId, m.IsActive, m.ImageUrl);
     }
 }

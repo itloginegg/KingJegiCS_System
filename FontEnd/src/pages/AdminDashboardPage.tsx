@@ -1,12 +1,49 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useTheme } from '../hooks/useTheme';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import { readSession } from '../lib/tokenStorage';
+import {
+  fetchMenuItems,
+  fetchMenuTrays,
+  createMenuItem,
+  updateMenuItem,
+  deactivateMenuItem,
+  createMenuTray,
+  updateMenuTray,
+  deactivateMenuTray,
+  MenuApiError,
+  getFullImageUrl,
+  type AdminMenuItem,
+  type AdminMenuItemPayload,
+  type AdminMenuTray,
+  type AdminMenuTrayPayload,
+} from '../api/menuAdminApi';
+import {
+  fetchRentalItems,
+  createRentalItem,
+  updateRentalItem,
+  RentalApiError,
+  type AdminRentalItem,
+  type AdminRentalItemCreate,
+  type AdminRentalItemUpdate,
+} from '../api/rentalAdminApi';
+import {
+  fetchServiceItems,
+  createServiceItem,
+  updateServiceItem,
+  ServiceApiError,
+  type AdminServiceItem,
+  type AdminServiceItemCreate,
+  type AdminServiceItemUpdate,
+} from '../api/serviceAdminApi';
+import { AdminPackagesTab } from './AdminPackagesTab';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
 ───────────────────────────────────────────────────────────────────────── */
 
-const ADMIN = { name: 'Chris Paul', role: 'Administrator' };
+/* Fallback identity; the signed-in admin account takes precedence. */
+const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
 type ResStatus = 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
@@ -138,7 +175,7 @@ const TESTI_STATUS: Record<TestiStatus, { label: string; color: string }> = {
   rejected: { label: 'Rejected', color: 'var(--danger)' },
 };
 
-const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
+export const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
 const fmtDate = (iso: string) => {
   try {
     return new Date(iso).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -149,12 +186,16 @@ const fmtDate = (iso: string) => {
 
 const orderTotal = (o: Order) => o.items.reduce((s, i) => s + i.price * i.qty, 0);
 
-function StatusBadge({ label, color }: { label: string; color: string }) {
+export function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
     <span
       style={{
-        fontFamily: 'var(--font-body)', fontSize: '0.55rem',
-        letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 500,
+        display: 'inline-block',
+        fontFamily: 'var(--font-body)',
+        fontSize: '0.62rem',
+        fontWeight: 600,
+        letterSpacing: '0.12em',
+        textTransform: 'uppercase',
         color,
         background: `color-mix(in srgb, ${color} 12%, transparent)`,
         border: `1px solid color-mix(in srgb, ${color} 40%, transparent)`,
@@ -167,7 +208,7 @@ function StatusBadge({ label, color }: { label: string; color: string }) {
   );
 }
 
-function FieldLabel({ text }: { text: string }) {
+export function FieldLabel({ text }: { text: string }) {
   return (
     <span
       style={{
@@ -185,12 +226,15 @@ function FieldLabel({ text }: { text: string }) {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'testimonials' | 'placeholder';
+type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'placeholder';
 
-const PLACEHOLDER_ITEMS = ['Menus & Dishes', 'Rentals', 'Announcements', 'Chat Support', 'Audit Log'];
+const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support', 'Audit Log'];
 
 export function AdminDashboardPage() {
-  const { theme, toggleTheme } = useTheme();
+  const { user: authUser, logout } = useAuth();
+  const location = useLocation();
+
+  const adminName = authUser?.name ?? FALLBACK_ADMIN.name;
 
   const [tab, setTab] = useState<Tab>('overview');
   const [placeholderName, setPlaceholderName] = useState(PLACEHOLDER_ITEMS[0]);
@@ -200,6 +244,147 @@ export function AdminDashboardPage() {
   const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [packages, setPackages] = useState(INITIAL_PACKAGES);
   const [testimonials, setTestimonials] = useState(INITIAL_TESTIMONIALS);
+
+  /* menus & dishes tab — live data from /api/Menuitems + /api/Menutrays */
+  const [menuItems, setMenuItems] = useState<AdminMenuItem[]>([]);
+  const [menuTrays, setMenuTrays] = useState<AdminMenuTray[]>([]);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const [menuAuthError, setMenuAuthError] = useState(false);
+  const [menuCategory, setMenuCategory] = useState<'all' | string>('all');
+
+  const [rentalItems, setRentalItems] = useState<AdminRentalItem[]>([]);
+  const [rentalsLoading, setRentalsLoading] = useState(false);
+  const [rentalsError, setRentalsError] = useState<string | null>(null);
+  const [rentalFormOpen, setRentalFormOpen] = useState(false);
+  const [rentalFormMode, setRentalFormMode] = useState<'create' | 'edit'>('create');
+  const [rentalFormItem, setRentalFormItem] = useState<AdminRentalItemCreate | AdminRentalItemUpdate>({
+    itemName: '',
+    category: '',
+    totalQuantity: 1,
+    unitPrice: 0,
+    isActive: true,
+    imageFile: null,
+  });
+  const [rentalImagePreview, setRentalImagePreview] = useState<string | null>(null);
+  const [rentalEditId, setRentalEditId] = useState<string | null>(null);
+  const [rentalSaving, setRentalSaving] = useState(false);
+  const [rentalFeedback, setRentalFeedback] = useState<string | null>(null);
+  const [rentalFormError, setRentalFormError] = useState<string | null>(null);
+  const rentalCategoryOptions = ['Linens', 'Chairs', 'Tables', 'Lights', 'Others'] as const;
+  const rentalFormValid = Boolean(
+    rentalFormItem.itemName.trim() &&
+    rentalFormItem.category.trim() &&
+    Number(rentalFormItem.totalQuantity) >= 1 &&
+    Number(rentalFormItem.unitPrice) >= 0,
+  );
+
+  /* service items state — live data from /api/Serviceitems */
+  const [serviceItems, setServiceItems] = useState<AdminServiceItem[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [servicesError, setServicesError] = useState<string | null>(null);
+  const [serviceFormOpen, setServiceFormOpen] = useState(false);
+  const [serviceFormMode, setServiceFormMode] = useState<'create' | 'edit'>('create');
+  const [serviceFormItem, setServiceFormItem] = useState<AdminServiceItemCreate | AdminServiceItemUpdate>({
+    serviceName: '',
+    unitCost: 0,
+    isActive: true,
+  });
+  const [serviceEditId, setServiceEditId] = useState<string | null>(null);
+  const [serviceSaving, setServiceSaving] = useState(false);
+  const [serviceFeedback, setServiceFeedback] = useState<string | null>(null);
+  const [serviceFormError, setServiceFormError] = useState<string | null>(null);
+  const serviceFormValid = Boolean(
+    serviceFormItem.serviceName.trim() && Number(serviceFormItem.unitCost) >= 0,
+  );
+
+  const [menuFormOpen, setMenuFormOpen] = useState(false);
+  const [menuFormMode, setMenuFormMode] = useState<'item' | 'tray'>('item');
+  const [menuFormAction, setMenuFormAction] = useState<'create' | 'edit'>('create');
+  const [menuFormItem, setMenuFormItem] = useState<AdminMenuItemPayload | null>(null);
+  const [menuImagePreview, setMenuImagePreview] = useState<string | null>(null);
+  const [menuFormTray, setMenuFormTray] = useState<AdminMenuTrayPayload | null>(null);
+  const [menuEditId, setMenuEditId] = useState<string | null>(null);
+  const [menuSaving, setMenuSaving] = useState(false);
+  const [menuSuccess, setMenuSuccess] = useState<string | null>(null);
+
+  const MENU_ITEM_FORM_DEFAULT: AdminMenuItemPayload = {
+    itemName: '',
+    itemCategory: '',
+    courseCategory: '',
+    description: '',
+    dietaryTags: [],
+    pricePerTray: null,
+    servesPerTray: 1,
+    menuPackageId: null,
+    imageFile: null,
+  };
+
+  const MENU_TRAY_FORM_DEFAULT: AdminMenuTrayPayload = {
+    trayName: '',
+    pricePerTray: 0,
+    servesMin: 1,
+    servesMax: 1,
+    dishIds: [],
+  };
+
+  const openMenuForm = (
+    mode: 'item' | 'tray',
+    action: 'create' | 'edit',
+    payload: AdminMenuItemPayload | AdminMenuTrayPayload | null = null,
+    id: string | null = null,
+  ) => {
+    setMenuFormMode(mode);
+    setMenuFormAction(action);
+    setMenuEditId(id);
+    setMenuSuccess(null);
+
+    if (mode === 'item') {
+      const itemData = action === 'edit' && payload ? (payload as AdminMenuItemPayload) : MENU_ITEM_FORM_DEFAULT;
+      setMenuFormItem(itemData);
+      setMenuFormTray(null);
+      const existingUrl = (payload as (AdminMenuItemPayload & { imageUrl?: string | null }))?.imageUrl;
+      setMenuImagePreview(existingUrl ? getFullImageUrl(existingUrl) : null);
+    } else {
+      setMenuFormTray(
+        action === 'edit' && payload ? (payload as AdminMenuTrayPayload) : MENU_TRAY_FORM_DEFAULT,
+      );
+      setMenuFormItem(null);
+      setMenuImagePreview(null);
+    }
+
+    setMenuFormOpen(true);
+  };
+
+  const handleMenuFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      updateMenuFormItem({ imageFile: file });
+      setMenuImagePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const clearMenuImage = () => {
+    updateMenuFormItem({ imageFile: null });
+    setMenuImagePreview(null);
+  };
+
+  const updateMenuFormItem = (changes: Partial<AdminMenuItemPayload>) => {
+    setMenuFormItem((prev) => (prev ? { ...prev, ...changes } : prev));
+  };
+
+  const updateMenuFormTray = (changes: Partial<AdminMenuTrayPayload>) => {
+    setMenuFormTray((prev) => (prev ? { ...prev, ...changes } : prev));
+  };
+
+  const closeMenuForm = () => {
+    setMenuFormOpen(false);
+    setMenuFormItem(null);
+    setMenuFormTray(null);
+    setMenuEditId(null);
+    setMenuSuccess(null);
+    setMenuImagePreview(null);
+  };
 
   /* bookings tab state */
   const [resFilter, setResFilter] = useState<'all' | ResStatus>('all');
@@ -315,6 +500,441 @@ export function AdminDashboardPage() {
     setSidebarOpen(false);
   };
 
+  /* ── menus & dishes: fetch ── */
+  const loadMenuCatalog = async () => {
+    const session = readSession();
+    if (!session) {
+      setMenuError('You are not signed in. Sign in with an Owner or Assistant account to load the menu catalog.');
+      setMenuAuthError(true);
+      return;
+    }
+    setMenuLoading(true);
+    setMenuError(null);
+    setMenuAuthError(false);
+    try {
+      const [items, trays] = await Promise.all([
+        fetchMenuItems(session.token),
+        fetchMenuTrays(session.token),
+      ]);
+      setMenuItems(items);
+      setMenuTrays(trays);
+    } catch (err) {
+      if (err instanceof MenuApiError) {
+        setMenuError(err.message);
+        setMenuAuthError(err.isAuthError);
+      } else {
+        setMenuError('Something went wrong while loading the menu catalog. Please try again.');
+      }
+    } finally {
+      setMenuLoading(false);
+    }
+  };
+
+  const loadRentalCatalog = async () => {
+    const session = readSession();
+    if (!session) {
+      setRentalsError('You are not signed in. Sign in with an Owner or Assistant account to load rentals.');
+      return;
+    }
+
+    setRentalsLoading(true);
+    setRentalsError(null);
+    setRentalFeedback(null);
+
+    try {
+      const items = await fetchRentalItems(session.token);
+      setRentalItems(items);
+    } catch (err) {
+      if (err instanceof RentalApiError) {
+        setRentalsError(err.message);
+      } else {
+        setRentalsError('Unable to load rental inventory. Please try again.');
+      }
+    } finally {
+      setRentalsLoading(false);
+    }
+  };
+
+  const openRentalForm = (mode: 'create' | 'edit', item?: AdminRentalItem) => {
+    setRentalFormMode(mode);
+    setRentalFormError(null);
+    setRentalFeedback(null);
+    if (mode === 'edit' && item) {
+      setRentalFormItem({
+        itemName: item.itemName,
+        category: item.category,
+        totalQuantity: item.totalQuantity,
+        unitPrice: item.unitPrice,
+        isActive: item.isActive,
+        imageFile: null,
+      });
+      setRentalEditId(item.id);
+      setRentalImagePreview(item.imageUrl ? getFullImageUrl(item.imageUrl) : null);
+    } else {
+      setRentalFormItem({ itemName: '', category: '', totalQuantity: 1, unitPrice: 0, isActive: true, imageFile: null });
+      setRentalEditId(null);
+      setRentalImagePreview(null);
+    }
+    setRentalFormOpen(true);
+  };
+
+  const handleRentalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setRentalFormItem((prev) => ({ ...prev, imageFile: file }));
+      setRentalImagePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const clearRentalImage = () => {
+    setRentalFormItem((prev) => ({ ...prev, imageFile: null }));
+    setRentalImagePreview(null);
+  };
+
+  const closeRentalForm = () => {
+    setRentalFormOpen(false);
+    setRentalEditId(null);
+    setRentalFormError(null);
+    setRentalFormItem({ itemName: '', category: '', totalQuantity: 1, unitPrice: 0, isActive: true, imageFile: null });
+    setRentalImagePreview(null);
+  };
+
+  const saveRentalItem = async () => {
+    const session = readSession();
+    if (!session) {
+      setRentalsError('You are not signed in. Sign in with an Owner or Assistant account to save rentals.');
+      return;
+    }
+
+    const itemName = rentalFormItem.itemName.trim();
+    const category = rentalFormItem.category.trim();
+    const totalQuantity = Number(rentalFormItem.totalQuantity);
+    const unitPrice = Number(rentalFormItem.unitPrice);
+
+    if (!itemName || !category) {
+      setRentalFormError('Please enter the rental item name and category.');
+      return;
+    }
+    if (!Number.isFinite(totalQuantity) || totalQuantity < 1) {
+      setRentalFormError('Total quantity must be at least 1.');
+      return;
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      setRentalFormError('Unit price cannot be negative.');
+      return;
+    }
+
+    setRentalSaving(true);
+    setRentalsError(null);
+    setRentalFormError(null);
+
+    try {
+      if (rentalFormMode === 'edit' && rentalEditId) {
+        const payload: AdminRentalItemUpdate = {
+          itemName,
+          category,
+          totalQuantity,
+          unitPrice,
+          isActive: Boolean((rentalFormItem as AdminRentalItemUpdate).isActive),
+          imageFile: rentalFormItem.imageFile,
+        };
+        const updated = await updateRentalItem(session.token, rentalEditId, payload);
+        setRentalItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        setRentalFeedback(`Updated ${updated.itemName}.`);
+      } else {
+        const payload: AdminRentalItemCreate = {
+          itemName,
+          category,
+          totalQuantity,
+          unitPrice,
+          imageFile: rentalFormItem.imageFile,
+        };
+        const created = await createRentalItem(session.token, payload);
+        setRentalItems((prev) => [created, ...prev]);
+        setRentalFeedback(`Created ${created.itemName}.`);
+      }
+      closeRentalForm();
+    } catch (err) {
+      if (err instanceof RentalApiError) {
+        setRentalsError(err.message);
+      } else {
+        setRentalsError('Unable to save the rental item. Please try again.');
+      }
+    } finally {
+      setRentalSaving(false);
+    }
+  };
+
+  const toggleRentalActive = async (item: AdminRentalItem) => {
+    const session = readSession();
+    if (!session) {
+      setRentalsError('You are not signed in. Sign in with an Owner or Assistant account to update rentals.');
+      return;
+    }
+
+    setRentalSaving(true);
+    setRentalsError(null);
+    setRentalFeedback(null);
+
+    try {
+      const updated = await updateRentalItem(session.token, item.id, {
+        itemName: item.itemName,
+        category: item.category,
+        totalQuantity: item.totalQuantity,
+        unitPrice: item.unitPrice,
+        isActive: !item.isActive,
+      });
+      setRentalItems((prev) => prev.map((current) => (current.id === updated.id ? updated : current)));
+      setRentalFeedback(`${updated.itemName} is now ${updated.isActive ? 'active' : 'inactive'}.`);
+    } catch (err) {
+      if (err instanceof RentalApiError) {
+        setRentalsError(err.message);
+      } else {
+        setRentalsError('Unable to update the rental item. Please try again.');
+      }
+    } finally {
+      setRentalSaving(false);
+    }
+  };
+
+  const loadServiceCatalog = async () => {
+    const session = readSession();
+    if (!session) {
+      setServicesError('You are not signed in. Sign in with an Owner or Assistant account to load services.');
+      return;
+    }
+
+    setServicesLoading(true);
+    setServicesError(null);
+    setServiceFeedback(null);
+
+    try {
+      const items = await fetchServiceItems(session.token);
+      setServiceItems(items);
+    } catch (err) {
+      if (err instanceof ServiceApiError) {
+        setServicesError(err.message);
+      } else {
+        setServicesError('Unable to load service catalog. Please try again.');
+      }
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
+  const openServiceForm = (mode: 'create' | 'edit', item?: AdminServiceItem) => {
+    setServiceFormMode(mode);
+    setServiceFormError(null);
+    setServiceFeedback(null);
+    if (mode === 'edit' && item) {
+      setServiceFormItem({
+        serviceName: item.serviceName,
+        unitCost: item.unitCost,
+        isActive: item.isActive,
+      });
+      setServiceEditId(item.id);
+    } else {
+      setServiceFormItem({ serviceName: '', unitCost: 0, isActive: true });
+      setServiceEditId(null);
+    }
+    setServiceFormOpen(true);
+  };
+
+  const closeServiceForm = () => {
+    setServiceFormOpen(false);
+    setServiceEditId(null);
+    setServiceFormError(null);
+    setServiceFormItem({ serviceName: '', unitCost: 0, isActive: true });
+  };
+
+  const saveServiceItem = async () => {
+    const session = readSession();
+    if (!session) {
+      setServicesError('You are not signed in. Sign in with an Owner or Assistant account to save services.');
+      return;
+    }
+
+    const serviceName = serviceFormItem.serviceName.trim();
+    const unitCost = Number(serviceFormItem.unitCost);
+
+    if (!serviceName) {
+      setServiceFormError('Please enter the service name.');
+      return;
+    }
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      setServiceFormError('Unit cost cannot be negative.');
+      return;
+    }
+
+    setServiceSaving(true);
+    setServicesError(null);
+    setServiceFormError(null);
+
+    try {
+      if (serviceFormMode === 'edit' && serviceEditId) {
+        const payload: AdminServiceItemUpdate = {
+          serviceName,
+          unitCost,
+          isActive: Boolean((serviceFormItem as AdminServiceItemUpdate).isActive),
+        };
+        const updated = await updateServiceItem(session.token, serviceEditId, payload);
+        setServiceItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        setServiceFeedback(`Updated service "${updated.serviceName}".`);
+      } else {
+        const payload: AdminServiceItemCreate = { serviceName, unitCost };
+        const created = await createServiceItem(session.token, payload);
+        setServiceItems((prev) => [created, ...prev]);
+        setServiceFeedback(`Created service "${created.serviceName}".`);
+      }
+      closeServiceForm();
+    } catch (err) {
+      if (err instanceof ServiceApiError) {
+        setServiceFormError(err.message);
+      } else {
+        setServiceFormError('Unable to save the service item. Please try again.');
+      }
+    } finally {
+      setServiceSaving(false);
+    }
+  };
+
+  const toggleServiceActive = async (item: AdminServiceItem) => {
+    const session = readSession();
+    if (!session) {
+      setServicesError('You are not signed in. Sign in with an Owner or Assistant account to update services.');
+      return;
+    }
+
+    setServiceSaving(true);
+    setServicesError(null);
+    setServiceFeedback(null);
+
+    try {
+      const updated = await updateServiceItem(session.token, item.id, {
+        serviceName: item.serviceName,
+        unitCost: item.unitCost,
+        isActive: !item.isActive,
+      });
+      setServiceItems((prev) => prev.map((current) => (current.id === updated.id ? updated : current)));
+      setServiceFeedback(`"${updated.serviceName}" is now ${updated.isActive ? 'active' : 'inactive'}.`);
+    } catch (err) {
+      if (err instanceof ServiceApiError) {
+        setServicesError(err.message);
+      } else {
+        setServicesError('Unable to update service status. Please try again.');
+      }
+    } finally {
+      setServiceSaving(false);
+    }
+  };
+
+  const applyMenuItemToState = (item: AdminMenuItem) => {
+    setMenuItems((prev) => {
+      const exists = prev.some((m) => m.id === item.id);
+      return exists ? prev.map((m) => (m.id === item.id ? item : m)) : [item, ...prev];
+    });
+  };
+
+  const applyMenuTrayToState = (tray: AdminMenuTray) => {
+    setMenuTrays((prev) => {
+      const exists = prev.some((t) => t.id === tray.id);
+      return exists ? prev.map((t) => (t.id === tray.id ? tray : t)) : [tray, ...prev];
+    });
+  };
+
+  const saveMenuForm = async () => {
+    const session = readSession();
+    if (!session) {
+      setMenuError('You are not signed in. Sign in with an Owner or Assistant account to save changes.');
+      setMenuAuthError(true);
+      return;
+    }
+
+    setMenuSaving(true);
+    setMenuError(null);
+    setMenuSuccess(null);
+
+    try {
+      if (menuFormMode === 'item' && menuFormItem) {
+        const payload = menuFormItem;
+        const result = menuFormAction === 'edit' && menuEditId
+          ? await updateMenuItem(session.token, menuEditId, payload)
+          : await createMenuItem(session.token, payload);
+        applyMenuItemToState(result);
+        setMenuSuccess(`Menu item ${menuFormAction === 'edit' ? 'updated' : 'created'} successfully.`);
+      }
+
+      if (menuFormMode === 'tray' && menuFormTray) {
+        const payload = menuFormTray;
+        const result = menuFormAction === 'edit' && menuEditId
+          ? await updateMenuTray(session.token, menuEditId, payload)
+          : await createMenuTray(session.token, payload);
+        applyMenuTrayToState(result);
+        setMenuSuccess(`Menu tray ${menuFormAction === 'edit' ? 'updated' : 'created'} successfully.`);
+      }
+
+      setTimeout(() => {
+        closeMenuForm();
+      }, 700);
+    } catch (err) {
+      if (err instanceof MenuApiError) {
+        setMenuError(err.message);
+        setMenuAuthError(err.isAuthError);
+      } else {
+        setMenuError('Unable to save the menu entry. Please try again.');
+      }
+    } finally {
+      setMenuSaving(false);
+    }
+  };
+
+  const deactivateMenuEntry = async (mode: 'item' | 'tray', id: string) => {
+    const session = readSession();
+    if (!session) {
+      setMenuError('You are not signed in. Sign in with an Owner or Assistant account to deactivate entries.');
+      setMenuAuthError(true);
+      return;
+    }
+
+    setMenuLoading(true);
+    setMenuError(null);
+
+    try {
+      if (mode === 'item') {
+        await deactivateMenuItem(session.token, id);
+        setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, isActive: false } : m)));
+      } else {
+        await deactivateMenuTray(session.token, id);
+        setMenuTrays((prev) => prev.map((t) => (t.id === id ? { ...t, isActive: false } : t)));
+      }
+    } catch (err) {
+      if (err instanceof MenuApiError) {
+        setMenuError(err.message);
+        setMenuAuthError(err.isAuthError);
+      } else {
+        setMenuError('Unable to deactivate the menu entry. Please try again.');
+      }
+    } finally {
+      setMenuLoading(false);
+    }
+  };
+
+  /* refetch every time the tab is opened so admin edits elsewhere show up */
+  useEffect(() => {
+    if (tab === 'menus') void loadMenuCatalog();
+    if (tab === 'rentals') void loadRentalCatalog();
+    if (tab === 'services') void loadServiceCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const menuCategories = useMemo(
+    () => [...new Set(menuItems.map((m) => m.itemCategory))].sort(),
+    [menuItems],
+  );
+  const visibleMenuItems = menuItems.filter(
+    (m) => menuCategory === 'all' || m.itemCategory === menuCategory,
+  );
+
   /* calendar cells */
   const calYear = calMonth.getFullYear();
   const calMo = calMonth.getMonth();
@@ -336,6 +956,8 @@ export function AdminDashboardPage() {
     { id: 'packages', label: 'Packages', icon: '📦' },
     { id: 'testimonials', label: 'Testimonials', icon: '★', badge: pendingTesti },
   ];
+
+  const isRouteActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (
     <>
@@ -467,6 +1089,15 @@ export function AdminDashboardPage() {
         }
         .adm-card:hover { border-color: var(--border-accent); box-shadow: var(--shadow-md); }
 
+        /* skeleton shimmer (loading states) */
+        @keyframes admShimmer { 0% { background-position: -450px 0; } 100% { background-position: 450px 0; } }
+        .adm-skel {
+          background: linear-gradient(90deg, var(--border) 0%, var(--bg-subtle) 40%, var(--border) 80%);
+          background-size: 450px 100%;
+          animation: admShimmer 1.4s ease-in-out infinite;
+          border-radius: var(--r-sm);
+        }
+
         .adm-title { font-family: var(--font-display); font-size: 1.4rem; font-weight: 500; color: var(--text-primary); }
 
         .adm-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; }
@@ -536,6 +1167,48 @@ export function AdminDashboardPage() {
         .adm-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted); }
         .adm-input.square { border-radius: var(--r-lg); background: var(--bg-subtle); width: 100%; }
         select.adm-input { cursor: pointer; font-weight: 400; }
+
+        .adm-modal-overlay {
+          position: fixed; inset: 0; z-index: 120;
+          background: rgba(20, 14, 8, 0.6);
+          display: flex; align-items: center; justify-content: center;
+          padding: 1.5rem;
+        }
+        .adm-modal-panel {
+          width: min(100%, 720px);
+          max-height: 92vh;
+          overflow-y: auto;
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: var(--r-xl);
+          box-shadow: var(--shadow-lg);
+          padding: 1.4rem 1.5rem;
+        }
+        .adm-modal-panel h3 {
+          margin: 0 0 0.75rem;
+          font-family: var(--font-display);
+          font-size: 1.25rem;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .adm-modal-panel .form-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+        }
+        .adm-modal-panel .form-grid.full { grid-template-columns: 1fr; }
+        .adm-modal-panel .form-row {
+          display: flex; flex-direction: column; gap: 0.35rem;
+          margin-bottom: 0.9rem;
+        }
+        .adm-modal-panel .form-row label {
+          font-family: var(--font-body); font-size: 0.66rem;
+          letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500;
+          color: var(--text-dim);
+        }
+        .adm-modal-panel .form-actions {
+          display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: flex-end; margin-top: 1rem;
+        }
 
         /* chart */
         .adm-chart { display: flex; align-items: flex-end; gap: 0.9rem; height: 160px; padding-top: 0.5rem; }
@@ -622,6 +1295,46 @@ export function AdminDashboardPage() {
             ))}
 
             <span className="adm-nav-caption" style={{ marginTop: '0.9rem' }}>Management</span>
+            <button
+              type="button"
+              className={`adm-nav-item${tab === 'menus' ? ' active' : ''}`}
+              onClick={() => openTab('menus')}
+            >
+              <span className="adm-nav-icon">🍽️</span>
+              Menus &amp; Dishes
+            </button>
+            <button
+              type="button"
+              className={`adm-nav-item${tab === 'rentals' ? ' active' : ''}`}
+              onClick={() => openTab('rentals')}
+            >
+              <span className="adm-nav-icon">🎪</span>
+              Rentals
+            </button>
+            <button
+              type="button"
+              className={`adm-nav-item${tab === 'services' ? ' active' : ''}`}
+              onClick={() => openTab('services')}
+            >
+              <span className="adm-nav-icon">🛠️</span>
+              Service Items
+            </button>
+            <Link
+              to="/admin/booking-histories"
+              className={`adm-nav-item${isRouteActive('/admin/booking-histories') ? ' active' : ''}`}
+            >
+              <span className="adm-nav-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                  <path d="M8 2v4" />
+                  <path d="M16 2v4" />
+                  <path d="M4 10h16" />
+                  <path d="M8 14h3" />
+                  <path d="M8 17h6" />
+                </svg>
+              </span>
+              Booking Histories
+            </Link>
             {PLACEHOLDER_ITEMS.map((name) => (
               <button
                 key={name}
@@ -636,10 +1349,9 @@ export function AdminDashboardPage() {
           </nav>
 
           <div className="adm-sidebar-foot">
-            <button type="button" className="adm-foot-btn" onClick={toggleTheme}>
-              {theme === 'dark' ? '☀ Light Mode' : '☾ Dark Mode'}
+            <button type="button" className="adm-foot-btn danger" onClick={() => void logout()}>
+              ⎋ Logout
             </button>
-            <Link to="/login" className="adm-foot-btn danger">⎋ Logout</Link>
           </div>
         </aside>
 
@@ -654,13 +1366,13 @@ export function AdminDashboardPage() {
               </svg>
             </button>
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : NAV.find((n) => n.id === tab)?.label}
+              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }} className="adm-hide-sm">
-              {ADMIN.name} · {ADMIN.role}
+              {adminName} · {FALLBACK_ADMIN.role}
             </span>
-            <div className="adm-avatar" title={ADMIN.name}>{ADMIN.name.charAt(0)}</div>
+            <div className="adm-avatar" title={adminName}>{adminName.charAt(0)}</div>
           </div>
 
           {/* content */}
@@ -672,7 +1384,7 @@ export function AdminDashboardPage() {
                 <div>
                   <h1 className="adm-title" style={{ fontSize: 'clamp(1.5rem, 2.6vw, 2.1rem)' }}>
                     Good day,{' '}
-                    <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>{ADMIN.name.split(' ')[0]}</em>
+                    <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>{adminName.split(' ')[0]}</em>
                   </h1>
                   <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.84rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem' }}>
                     Here's the business at a glance.
@@ -1005,57 +1717,7 @@ export function AdminDashboardPage() {
 
             {/* ══════════ PACKAGES ══════════ */}
             {tab === 'packages' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <h2 className="adm-title">Manage Packages</h2>
-                <div className="adm-card" style={{ overflow: 'hidden' }}>
-                  {packages.map((p) => (
-                    <div key={p.id} className="adm-row">
-                      {editPkgId === p.id ? (
-                        <div style={{ padding: '1.15rem 1.5rem', background: 'var(--bg-subtle)' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.8rem', marginBottom: '0.8rem' }}>
-                            <div><FieldLabel text="Name" /><input className="adm-input square" value={editPkg.name ?? ''} onChange={(e) => setEditPkg((x) => ({ ...x, name: e.target.value }))} /></div>
-                            <div><FieldLabel text="Price" /><input className="adm-input square" value={editPkg.price ?? ''} onChange={(e) => setEditPkg((x) => ({ ...x, price: e.target.value }))} /></div>
-                            <div><FieldLabel text="Unit" /><input className="adm-input square" value={editPkg.unit ?? ''} onChange={(e) => setEditPkg((x) => ({ ...x, unit: e.target.value }))} /></div>
-                          </div>
-                          <div style={{ marginBottom: '0.8rem' }}>
-                            <FieldLabel text="Description" />
-                            <input className="adm-input square" value={editPkg.description ?? ''} onChange={(e) => setEditPkg((x) => ({ ...x, description: e.target.value }))} />
-                          </div>
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
-                            <button type="button" className="adm-btn primary" onClick={() => savePkg(p.id)}>Save</button>
-                            <button type="button" className="adm-btn outline" onClick={() => setEditPkgId(null)}>Cancel</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ padding: '1.1rem 1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', opacity: p.active ? 1 : 0.55 }}>
-                          <div style={{ flex: 1, minWidth: 200 }}>
-                            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                              {p.name}
-                              {p.highlight && (
-                                <span style={{ marginLeft: '0.55rem', fontFamily: 'var(--font-body)', fontSize: '0.5rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--accent)', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', padding: '0.14rem 0.5rem', borderRadius: 'var(--r-full)', fontWeight: 500, verticalAlign: 'middle' }}>
-                                  Best Value
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.15rem' }}>{p.description}</div>
-                          </div>
-                          <span style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)' }}>{p.price}</span>
-                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>{p.unit}</span>
-                          <StatusBadge label={p.active ? 'Active' : 'Inactive'} color={p.active ? 'var(--primary)' : 'var(--danger)'} />
-                          <div style={{ display: 'flex', gap: '0.4rem' }}>
-                            <button type="button" className="adm-btn outline" onClick={() => { setEditPkgId(p.id); setEditPkg({ name: p.name, price: p.price, unit: p.unit, description: p.description }); }}>
-                              Edit
-                            </button>
-                            <button type="button" className={`adm-btn ${p.active ? 'danger' : 'success'}`} onClick={() => togglePkg(p.id)}>
-                              {p.active ? 'Deactivate' : 'Activate'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <AdminPackagesTab />
             )}
 
             {/* ══════════ TESTIMONIALS ══════════ */}
@@ -1136,9 +1798,940 @@ export function AdminDashboardPage() {
               </div>
             )}
 
-            {/* ══════════ PLACEHOLDER ══════════ */}
-            {tab === 'placeholder' && (
-              <div className="fade-up">
+            {/* ══════════ MENUS & DISHES (live backend data) ══════════ */}
+            {tab === 'menus' && (
+              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 className="adm-title">Menus &amp; Dishes</h2>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Menuitems</code> · <code style={{ fontSize: '0.66rem' }}>/api/Menutrays</code>
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button type="button" className="adm-btn primary" onClick={() => openMenuForm('item', 'create')}>
+                      + Add Dish
+                    </button>
+                    <button type="button" className="adm-btn success" onClick={() => openMenuForm('tray', 'create')}>
+                      + Add Tray
+                    </button>
+                    <button type="button" className="adm-btn outline" onClick={() => void loadMenuCatalog()} disabled={menuLoading}>
+                      {menuLoading ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── error state ── */}
+                {menuError && !menuLoading && (
+                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                      Couldn't load the menu catalog
+                    </h3>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                      {menuError}
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      <button type="button" className="adm-btn outline" onClick={() => void loadMenuCatalog()}>Try Again</button>
+                      {menuAuthError && <Link to="/login" className="adm-btn primary">Go to Sign In</Link>}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── loading skeleton ── */}
+                {menuLoading && (
+                  <>
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                      <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                      {[0, 1, 2, 3].map((i) => (
+                        <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 3 ? '1px solid var(--border)' : 'none' }}>
+                          <div style={{ flex: 1 }}>
+                            <div className="adm-skel" style={{ height: '0.9rem', width: '40%', marginBottom: '0.45rem' }} />
+                            <div className="adm-skel" style={{ height: '0.6rem', width: '68%' }} />
+                          </div>
+                          <div className="adm-skel" style={{ height: '1.4rem', width: 84, borderRadius: 'var(--r-full)' }} />
+                          <div className="adm-skel" style={{ height: '1.4rem', width: 70, borderRadius: 'var(--r-full)' }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                      <div className="adm-skel" style={{ height: '0.8rem', width: 110, marginBottom: '1.2rem' }} />
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                        {[0, 1, 2].map((i) => <div key={i} className="adm-skel" style={{ height: 140, borderRadius: 'var(--r-xl)' }} />)}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* ── data ── */}
+                {!menuLoading && !menuError && (
+                  <>
+                    {/* dishes */}
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.8rem', marginBottom: '1rem' }}>
+                        <div>
+                          <FieldLabel text="Menu Items" />
+                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                            Dishes ({visibleMenuItems.length})
+                          </h3>
+                        </div>
+                        {menuCategories.length > 0 && (
+                          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            <button type="button" className={`adm-pill${menuCategory === 'all' ? ' active' : ''}`} onClick={() => setMenuCategory('all')}>
+                              All<span className="count">{menuItems.length}</span>
+                            </button>
+                            {menuCategories.map((c) => (
+                              <button key={c} type="button" className={`adm-pill${menuCategory === c ? ' active' : ''}`} onClick={() => setMenuCategory(c)}>
+                                {c}<span className="count">{menuItems.filter((m) => m.itemCategory === c).length}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {menuItems.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          The catalog is empty — no menu items have been created yet.
+                        </p>
+                      ) : visibleMenuItems.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          No dishes in this category.
+                        </p>
+                      ) : (
+                        visibleMenuItems.map((m) => (
+                          <div key={m.id} className="adm-row" style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.85rem 0', flexWrap: 'wrap', opacity: m.isActive ? 1 : 0.55 }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', overflow: 'hidden', flexShrink: 0, background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {m.imageUrl ? (
+                                <img src={getFullImageUrl(m.imageUrl)!} alt={m.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                <span style={{ fontSize: '1.4rem' }}>🍽️</span>
+                              )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 200 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.02rem', fontWeight: 500, color: 'var(--text-primary)' }}>{m.itemName}</div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.15rem', lineHeight: 1.5 }}>{m.description}</div>
+                              {m.dietaryTags.length > 0 && (
+                                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+                                  {m.dietaryTags.map((t) => (
+                                    <span key={t} style={{ fontFamily: 'var(--font-body)', fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 500, color: 'var(--accent)', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', borderRadius: 'var(--r-full)', padding: '0.12rem 0.5rem' }}>
+                                      {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <StatusBadge label={m.itemCategory} color="var(--primary)" />
+                            <StatusBadge label={m.courseCategory} color="#4a90d9" />
+                            <div style={{ textAlign: 'right', minWidth: 96 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)' }}>
+                                {m.pricePerTray != null ? fmt(m.pricePerTray) : '—'}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.1rem' }}>
+                                per tray · serves {m.servesPerTray}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                              <StatusBadge label={m.isActive ? 'Active' : 'Inactive'} color={m.isActive ? 'var(--primary)' : 'var(--danger)'} />
+                              <button
+                                type="button"
+                                className="adm-btn info"
+                                onClick={() => openMenuForm('item', 'edit', {
+                                  itemName: m.itemName,
+                                  itemCategory: m.itemCategory,
+                                  courseCategory: m.courseCategory,
+                                  description: m.description,
+                                  dietaryTags: m.dietaryTags,
+                                  pricePerTray: m.pricePerTray,
+                                  servesPerTray: m.servesPerTray,
+                                  menuPackageId: m.menuPackageId,
+                                  imageUrl: m.imageUrl,
+                                }, m.id)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="adm-btn danger"
+                                onClick={() => deactivateMenuEntry('item', m.id)}
+                                disabled={!m.isActive}
+                              >
+                                Deactivate
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* trays */}
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                      <div style={{ marginBottom: '1rem' }}>
+                        <FieldLabel text="Menu Trays" />
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                          Party Trays ({menuTrays.length})
+                        </h3>
+                      </div>
+                      {menuTrays.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          No trays configured yet.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
+                          {menuTrays.map((t) => (
+                            <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '1.1rem 1.2rem', background: 'var(--bg-subtle)', opacity: t.isActive ? 1 : 0.55 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.5rem' }}>
+                                <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.trayName}</span>
+                                <StatusBadge label={t.isActive ? 'Active' : 'Inactive'} color={t.isActive ? 'var(--primary)' : 'var(--danger)'} />
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, color: 'var(--primary)', lineHeight: 1 }}>{fmt(t.pricePerTray)}</div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.25rem 0 0.75rem' }}>
+                                per tray · serves {t.servesMin}–{t.servesMax}
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.85rem' }}>
+                                <button
+                                  type="button"
+                                  className="adm-btn info"
+                                  onClick={() => openMenuForm('tray', 'edit', {
+                                    trayName: t.trayName,
+                                    pricePerTray: t.pricePerTray,
+                                    servesMin: t.servesMin,
+                                    servesMax: t.servesMax,
+                                    dishIds: t.dishes.map((d) => d.id),
+                                  }, t.id)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="adm-btn danger"
+                                  onClick={() => deactivateMenuEntry('tray', t.id)}
+                                  disabled={!t.isActive}
+                                >
+                                  Deactivate
+                                </button>
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                                {t.dishes.map((d) => (
+                                  <span
+                                    key={d.id}
+                                    title={`${d.itemCategory} · ${d.courseCategory}`}
+                                    style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 500, color: 'var(--primary)', background: 'var(--primary-muted)', border: '1px solid var(--border-accent)', borderRadius: 'var(--r-full)', padding: '0.2rem 0.6rem' }}
+                                  >
+                                    {d.itemName}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {menuFormOpen && (
+                  <div className="adm-modal-overlay" onClick={closeMenuForm}>
+                    <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={menuFormMode === 'item' ? 'Menu item form' : 'Menu tray form'}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                        <div>
+                          <h3>{menuFormAction === 'edit' ? 'Edit' : 'Add'} {menuFormMode === 'item' ? 'Dish' : 'Tray'}</h3>
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                            {menuFormMode === 'item'
+                              ? 'Create or update a menu dish entry and sync it with the backend.'
+                              : 'Create or update a party tray with associated dishes.'}
+                          </p>
+                        </div>
+                        <button type="button" className="adm-btn outline" onClick={closeMenuForm} style={{ height: '2.3rem' }}>
+                          Close
+                        </button>
+                      </div>
+
+                      {menuSuccess && (
+                        <div style={{ padding: '0.9rem 1rem', borderRadius: 'var(--r-lg)', background: 'var(--primary-muted)', border: '1px solid var(--border-accent)', marginBottom: '1rem', color: 'var(--primary)' }}>
+                          {menuSuccess}
+                        </div>
+                      )}
+
+                      <div className="adm-modal-panel form-grid full">
+                        {menuFormMode === 'item' && menuFormItem && (
+                          <>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-name">Dish name</label>
+                              <input
+                                id="menu-item-name"
+                                className="adm-input"
+                                value={menuFormItem.itemName}
+                                onChange={(e) => updateMenuFormItem({ itemName: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-category">Category</label>
+                              <input
+                                id="menu-item-category"
+                                className="adm-input"
+                                value={menuFormItem.itemCategory}
+                                onChange={(e) => updateMenuFormItem({ itemCategory: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-course">Course</label>
+                              <input
+                                id="menu-item-course"
+                                className="adm-input"
+                                value={menuFormItem.courseCategory}
+                                onChange={(e) => updateMenuFormItem({ courseCategory: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-row full">
+                              <label htmlFor="menu-item-description">Description</label>
+                              <textarea
+                                id="menu-item-description"
+                                className="adm-input square"
+                                rows={4}
+                                value={menuFormItem.description}
+                                onChange={(e) => updateMenuFormItem({ description: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-tags">Dietary tags</label>
+                              <input
+                                id="menu-item-tags"
+                                className="adm-input"
+                                value={menuFormItem.dietaryTags.join(', ')}
+                                onChange={(e) => updateMenuFormItem({ dietaryTags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-price">Price per tray</label>
+                              <input
+                                id="menu-item-price"
+                                className="adm-input"
+                                type="number"
+                                min={0}
+                                value={menuFormItem.pricePerTray ?? ''}
+                                onChange={(e) => updateMenuFormItem({ pricePerTray: e.target.value === '' ? null : Number(e.target.value) })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-item-serves">Serves per tray</label>
+                              <input
+                                id="menu-item-serves"
+                                className="adm-input"
+                                type="number"
+                                min={1}
+                                value={menuFormItem.servesPerTray}
+                                onChange={(e) => updateMenuFormItem({ servesPerTray: Number(e.target.value) || 1 })}
+                              />
+                            </div>
+                            <div className="form-row full">
+                              <label htmlFor="menu-item-package">Package ID (optional)</label>
+                              <input
+                                id="menu-item-package"
+                                className="adm-input"
+                                value={menuFormItem.menuPackageId ?? ''}
+                                onChange={(e) => updateMenuFormItem({ menuPackageId: e.target.value.trim() || null })}
+                              />
+                            </div>
+                            <div className="form-row full">
+                              <label htmlFor="menu-item-image">Dish Photo (File Upload)</label>
+                              <input
+                                id="menu-item-image"
+                                type="file"
+                                accept="image/*"
+                                className="adm-input square"
+                                onChange={handleMenuFileChange}
+                                style={{ padding: '0.45rem' }}
+                              />
+                              {menuImagePreview ? (
+                                <div style={{ marginTop: '0.65rem', padding: '0.85rem 1rem', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                  <img
+                                    src={menuImagePreview}
+                                    alt="Dish Preview"
+                                    style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}
+                                  />
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                      {menuFormItem.imageFile ? menuFormItem.imageFile.name : 'Current Server Image'}
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+                                      {menuFormItem.imageFile
+                                        ? `${(menuFormItem.imageFile.size / 1024 / 1024).toFixed(2)} MB`
+                                        : 'Stored on backend server'}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="adm-btn danger"
+                                    style={{ fontSize: '0.58rem', padding: '0.35rem 0.75rem' }}
+                                    onClick={clearMenuImage}
+                                  >
+                                    Remove Photo
+                                  </button>
+                                </div>
+                              ) : (
+                                <div style={{ marginTop: '0.4rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                                  No image selected yet. Select a photo file (JPG, PNG, WEBP, etc.) to upload.
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+
+                        {menuFormMode === 'tray' && menuFormTray && (
+                          <>
+                            <div className="form-row">
+                              <label htmlFor="menu-tray-name">Tray name</label>
+                              <input
+                                id="menu-tray-name"
+                                className="adm-input"
+                                value={menuFormTray.trayName}
+                                onChange={(e) => updateMenuFormTray({ trayName: e.target.value })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-tray-price">Price per tray</label>
+                              <input
+                                id="menu-tray-price"
+                                className="adm-input"
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={menuFormTray.pricePerTray}
+                                onChange={(e) => updateMenuFormTray({ pricePerTray: Number(e.target.value) })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-tray-serves-min">Serves min</label>
+                              <input
+                                id="menu-tray-serves-min"
+                                className="adm-input"
+                                type="number"
+                                min={1}
+                                value={menuFormTray.servesMin}
+                                onChange={(e) => updateMenuFormTray({ servesMin: Number(e.target.value) || 1 })}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="menu-tray-serves-max">Serves max</label>
+                              <input
+                                id="menu-tray-serves-max"
+                                className="adm-input"
+                                type="number"
+                                min={1}
+                                value={menuFormTray.servesMax}
+                                onChange={(e) => updateMenuFormTray({ servesMax: Number(e.target.value) || 1 })}
+                              />
+                            </div>
+                            <div className="form-row full">
+                              <label>Tray dishes</label>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '0.6rem', maxHeight: '240px', overflowY: 'auto', padding: '0.6rem', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', background: 'var(--bg-subtle)' }}>
+                                {menuItems.map((item) => {
+                                  const checked = menuFormTray.dishIds.includes(item.id);
+                                  return (
+                                    <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', fontSize: '0.78rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const next = e.target.checked
+                                            ? [...menuFormTray.dishIds, item.id]
+                                            : menuFormTray.dishIds.filter((dishId) => dishId !== item.id);
+                                          updateMenuFormTray({ dishIds: next });
+                                        }}
+                                      />
+                                      {item.itemName}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="form-actions">
+                        <button type="button" className="adm-btn outline" onClick={closeMenuForm}>
+                          Cancel
+                        </button>
+                        <button type="button" className="adm-btn primary" onClick={saveMenuForm} disabled={menuSaving}>
+                          {menuSaving ? 'Saving…' : menuFormAction === 'edit' ? 'Save changes' : 'Create entry'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ══════════ RENTALS (live backend data) ══════════ */}
+            {tab === 'rentals' && (
+                  <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div>
+                        <h2 className="adm-title">Rentals</h2>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                          Manage party rental equipment and sync changes with the C# backend.
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button type="button" className="adm-btn primary" onClick={() => openRentalForm('create')}>
+                          + Add Rental Item
+                        </button>
+                        <button type="button" className="adm-btn outline" onClick={() => void loadRentalCatalog()} disabled={rentalsLoading}>
+                          {rentalsLoading ? 'Refreshing…' : '↻ Refresh'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {rentalFeedback && (
+                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--primary) 35%, transparent)', background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--primary)' }}>{rentalFeedback}</div>
+                      </div>
+                    )}
+
+                    {rentalsError && !rentalsLoading && (
+                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                          Rental inventory unavailable
+                        </h3>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                          {rentalsError}
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <button type="button" className="adm-btn outline" onClick={() => void loadRentalCatalog()}>Try Again</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {rentalsLoading && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                        <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                        {[0, 1, 2].map((index) => (
+                          <div key={index} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: index < 2 ? '1px solid var(--border)' : 'none' }}>
+                            <div className="adm-skel" style={{ height: '1rem', width: '30%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '18%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '18%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '18%' }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!rentalsLoading && !rentalsError && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.8rem', marginBottom: '1rem' }}>
+                          <div>
+                            <FieldLabel text="Rental Inventory" />
+                            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                              Items ({rentalItems.length})
+                            </h3>
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-dim)' }}>
+                            {rentalItems.filter((item) => item.isActive).length} active
+                          </div>
+                        </div>
+                        {rentalItems.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                            No rental inventory items are configured yet.
+                          </p>
+                        ) : (
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+                              <thead>
+                                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Image</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Name</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Category</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Total</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Out</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Available</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Unit Price</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Status</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rentalItems.map((item) => (
+                                  <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
+                                    <td style={{ padding: '0.75rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <div style={{ width: 48, height: 48, borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                        {item.imageUrl ? (
+                                          <img src={getFullImageUrl(item.imageUrl)!} alt={item.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                          <span style={{ fontSize: '1.2rem' }}>🎪</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>{item.itemName}</div>
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', color: 'var(--text-muted)', fontSize: '0.88rem' }}>{item.category}</td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.totalQuantity}</td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.quantityOut}</td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.stock}</td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{fmt(item.unitPrice)}</td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <StatusBadge label={item.isActive ? 'Active' : 'Inactive'} color={item.isActive ? 'var(--primary)' : 'var(--danger)'} />
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                        <button type="button" className="adm-btn info" onClick={() => openRentalForm('edit', item)}>
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`adm-btn ${item.isActive ? 'danger' : 'success'}`}
+                                          onClick={() => void toggleRentalActive(item)}
+                                          disabled={rentalSaving}
+                                        >
+                                          {item.isActive ? 'Deactivate' : 'Activate'}
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {rentalFormOpen && (
+                      <div className="adm-modal-overlay" onClick={closeRentalForm}>
+                        <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Rental item form">
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                            <div>
+                              <h3>{rentalFormMode === 'edit' ? 'Edit' : 'Add'} Rental Item</h3>
+                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                                {rentalFormMode === 'edit'
+                                  ? 'Update the rental item and toggle whether it is active in the catalog.'
+                                  : 'Create a new rental inventory item for Rentals management.'}
+                              </p>
+                            </div>
+                            <button type="button" className="adm-btn outline" onClick={closeRentalForm} style={{ height: '2.3rem' }}>
+                              Close
+                            </button>
+                          </div>
+
+                          {rentalFormError && (
+                            <div style={{ padding: '0.8rem 0.9rem', marginBottom: '1rem', borderRadius: 'var(--r-lg)', border: '1px solid color-mix(in srgb, var(--danger) 35%, transparent)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', color: 'var(--danger)' }}>
+                              {rentalFormError}
+                            </div>
+                          )}
+
+                          <div className="adm-modal-panel form-grid full">
+                            <div className="form-row">
+                              <label htmlFor="rental-item-name">Item name</label>
+                              <input
+                                id="rental-item-name"
+                                className="adm-input"
+                                value={rentalFormItem.itemName}
+                                onChange={(e) => setRentalFormItem((prev) => ({ ...prev, itemName: e.target.value }))}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="rental-item-category">Category</label>
+                              <select
+                                id="rental-item-category"
+                                className="adm-input"
+                                value={rentalFormItem.category}
+                                onChange={(e) => setRentalFormItem((prev) => ({ ...prev, category: e.target.value }))}
+                              >
+                                <option value="">Select a category</option>
+                                {rentalCategoryOptions.map((option) => (
+                                  <option key={option} value={option}>{option}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="rental-item-total">Total quantity</label>
+                              <input
+                                id="rental-item-total"
+                                className="adm-input"
+                                type="number"
+                                min={1}
+                                value={rentalFormItem.totalQuantity}
+                                onChange={(e) => setRentalFormItem((prev) => ({ ...prev, totalQuantity: Number(e.target.value) || 1 }))}
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="rental-item-price">Unit price</label>
+                              <input
+                                id="rental-item-price"
+                                className="adm-input"
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={rentalFormItem.unitPrice}
+                                onChange={(e) => setRentalFormItem((prev) => ({ ...prev, unitPrice: Number(e.target.value) || 0 }))}
+                              />
+                            </div>
+                            {rentalFormMode === 'edit' && (
+                              <div className="form-row" style={{ alignItems: 'center' }}>
+                                <label htmlFor="rental-item-active">Active</label>
+                                <input
+                                  id="rental-item-active"
+                                  type="checkbox"
+                                  checked={Boolean((rentalFormItem as AdminRentalItemUpdate).isActive)}
+                                  onChange={(e) => setRentalFormItem((prev) => ({ ...prev, isActive: e.target.checked }))}
+                                />
+                              </div>
+                            )}
+                            <div className="form-row full">
+                              <label htmlFor="rental-item-image">Rental Photo (File Upload)</label>
+                              <input
+                                id="rental-item-image"
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                className="adm-input square"
+                                onChange={handleRentalFileChange}
+                                style={{ padding: '0.45rem' }}
+                              />
+                              {rentalImagePreview ? (
+                                <div style={{ marginTop: '0.6rem', padding: '0.8rem', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', background: 'var(--bg-subtle)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                  <img
+                                    src={rentalImagePreview}
+                                    alt="Rental Preview"
+                                    style={{ width: 68, height: 68, objectFit: 'cover', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}
+                                  />
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                      {rentalFormItem.imageFile ? rentalFormItem.imageFile.name : 'Current Image'}
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>
+                                      {rentalFormItem.imageFile
+                                        ? `${(rentalFormItem.imageFile.size / 1024 / 1024).toFixed(2)} MB`
+                                        : 'Stored on backend server'}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="adm-btn danger"
+                                    style={{ fontSize: '0.55rem', padding: '0.35rem 0.7rem' }}
+                                    onClick={clearRentalImage}
+                                  >
+                                    Remove Photo
+                                  </button>
+                                </div>
+                              ) : (
+                                <div style={{ marginTop: '0.4rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                                  No photo uploaded yet. Supported formats: JPG, PNG, WEBP (Max 5MB).
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="form-actions">
+                            <button type="button" className="adm-btn outline" onClick={closeRentalForm}>
+                              Cancel
+                            </button>
+                            <button type="button" className="adm-btn primary" onClick={() => void saveRentalItem()} disabled={rentalSaving || !rentalFormValid}>
+                              {rentalSaving ? 'Saving…' : rentalFormMode === 'edit' ? 'Save changes' : 'Create item'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ══════════ SERVICE ITEMS (live backend data) ══════════ */}
+                {tab === 'services' && (
+                  <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div>
+                        <h2 className="adm-title">Service Items</h2>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                          Manage event service offerings (e.g., sound systems, DJs, photo booths) and sync with the C# backend.
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button type="button" className="adm-btn primary" onClick={() => openServiceForm('create')}>
+                          + Add Service Item
+                        </button>
+                        <button type="button" className="adm-btn outline" onClick={() => void loadServiceCatalog()} disabled={servicesLoading}>
+                          {servicesLoading ? 'Refreshing…' : '↻ Refresh'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {serviceFeedback && (
+                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--primary) 35%, transparent)', background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--primary)' }}>{serviceFeedback}</div>
+                      </div>
+                    )}
+
+                    {servicesError && !servicesLoading && (
+                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                          Service catalog unavailable
+                        </h3>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                          {servicesError}
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <button type="button" className="adm-btn outline" onClick={() => void loadServiceCatalog()}>Try Again</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {servicesLoading && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                        <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                        {[0, 1, 2].map((index) => (
+                          <div key={index} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: index < 2 ? '1px solid var(--border)' : 'none' }}>
+                            <div className="adm-skel" style={{ height: '1rem', width: '35%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '20%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '20%' }} />
+                            <div className="adm-skel" style={{ height: '1rem', width: '20%' }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!servicesLoading && !servicesError && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.8rem', marginBottom: '1rem' }}>
+                          <div>
+                            <FieldLabel text="Service Offerings" />
+                            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                              Services ({serviceItems.length})
+                            </h3>
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-dim)' }}>
+                            {serviceItems.filter((item) => item.isActive).length} active
+                          </div>
+                        </div>
+                        {serviceItems.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                            No service items configured yet.
+                          </p>
+                        ) : (
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
+                              <thead>
+                                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Service Name</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Unit Cost</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Status</th>
+                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {serviceItems.map((item) => (
+                                  <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.98rem', fontWeight: 500, color: 'var(--text-primary)' }}>{item.serviceName}</div>
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 600, color: 'var(--primary)' }}>
+                                      {fmt(item.unitCost)}
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <StatusBadge label={item.isActive ? 'Active' : 'Inactive'} color={item.isActive ? 'var(--primary)' : 'var(--danger)'} />
+                                    </td>
+                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
+                                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                        <button type="button" className="adm-btn info" onClick={() => openServiceForm('edit', item)}>
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`adm-btn ${item.isActive ? 'danger' : 'success'}`}
+                                          onClick={() => void toggleServiceActive(item)}
+                                          disabled={serviceSaving}
+                                        >
+                                          {item.isActive ? 'Deactivate' : 'Activate'}
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {serviceFormOpen && (
+                      <div className="adm-modal-overlay" onClick={closeServiceForm}>
+                        <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Service item form">
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                            <div>
+                              <h3>{serviceFormMode === 'edit' ? 'Edit' : 'Add'} Service Item</h3>
+                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                                {serviceFormMode === 'edit'
+                                  ? 'Update service details or toggle whether it is active for customer bookings.'
+                                  : 'Create a new service offering for event bookings.'}
+                              </p>
+                            </div>
+                            <button type="button" className="adm-btn outline" onClick={closeServiceForm} style={{ height: '2.3rem' }}>
+                              Close
+                            </button>
+                          </div>
+
+                          {serviceFormError && (
+                            <div style={{ padding: '0.8rem 0.9rem', marginBottom: '1rem', borderRadius: 'var(--r-lg)', border: '1px solid color-mix(in srgb, var(--danger) 35%, transparent)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', color: 'var(--danger)' }}>
+                              {serviceFormError}
+                            </div>
+                          )}
+
+                          <div className="adm-modal-panel form-grid full">
+                            <div className="form-row">
+                              <label htmlFor="service-item-name">Service Name</label>
+                              <input
+                                id="service-item-name"
+                                className="adm-input"
+                                value={serviceFormItem.serviceName}
+                                onChange={(e) => setServiceFormItem((prev) => ({ ...prev, serviceName: e.target.value }))}
+                                placeholder="e.g. Sound System & Lighting Package"
+                              />
+                            </div>
+                            <div className="form-row">
+                              <label htmlFor="service-item-cost">Unit Cost (₱)</label>
+                              <input
+                                id="service-item-cost"
+                                className="adm-input"
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={serviceFormItem.unitCost}
+                                onChange={(e) => setServiceFormItem((prev) => ({ ...prev, unitCost: Number(e.target.value) || 0 }))}
+                              />
+                            </div>
+                            {serviceFormMode === 'edit' && (
+                              <div className="form-row" style={{ alignItems: 'center' }}>
+                                <label htmlFor="service-item-active">Active</label>
+                                <input
+                                  id="service-item-active"
+                                  type="checkbox"
+                                  checked={Boolean((serviceFormItem as AdminServiceItemUpdate).isActive)}
+                                  onChange={(e) => setServiceFormItem((prev) => ({ ...prev, isActive: e.target.checked }))}
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="form-actions">
+                            <button type="button" className="adm-btn outline" onClick={closeServiceForm}>
+                              Cancel
+                            </button>
+                            <button type="button" className="adm-btn primary" onClick={() => void saveServiceItem()} disabled={serviceSaving || !serviceFormValid}>
+                              {serviceSaving ? 'Saving…' : serviceFormMode === 'edit' ? 'Save changes' : 'Create service'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ══════════ PLACEHOLDER ══════════ */}
+                {tab === 'placeholder' && (
+                  <div className="fade-up">
                 <h2 className="adm-title" style={{ marginBottom: '1.2rem' }}>{placeholderName}</h2>
                 <div className="adm-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
                   <div style={{ fontSize: '1.8rem', color: 'var(--text-dim)', marginBottom: '0.8rem' }}>◌</div>

@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System_ApiTest;
 using System_ApiTest.Data;
+using System_ApiTest.Seeding;
 using System_ApiTest.Services;
 using System_ApiTest.Workers;
 using static System_ApiTest.Services.Jwttokenservice;
@@ -70,6 +71,10 @@ builder.Services.AddScoped<Systemsettingsservice>();
 builder.Services.AddScoped<Auditlogservice>();
 builder.Services.AddHostedService<DenylistCleanupWorker>();
 builder.Services.AddHttpClient<PayMongoservice>();
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.Configure<OtpOptions>(builder.Configuration.GetSection(OtpOptions.SectionName));
+builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<OtpService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -121,12 +126,15 @@ else
 }
 
 app.UseCors(FrontendCors);
+app.UseStaticFiles();
 
 app.UseAuthentication();
 
 app.UseAuthorization();
 
 app.MapControllers();
+
+await DbSeeder.SeedAsync(app.Services);
 
 app.Run();
 

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System_ApiTest.Data;
@@ -21,12 +21,14 @@ namespace System_ApiTest.Controllers
         private readonly AppDbContext _db;
         private readonly Rentalservice _rentals;
         private readonly Auditlogservice _audit;
+        private readonly IWebHostEnvironment _env;
 
-        public RentalitemsController(AppDbContext db, Rentalservice rentals, Auditlogservice audit)
+        public RentalitemsController(AppDbContext db, Rentalservice rentals, Auditlogservice audit, IWebHostEnvironment env)
         {
             _db = db;
             _rentals = rentals;
             _audit = audit;
+            _env = env;
         }
 
         /// <summary>Catalog list. Admins see everything; customers see only active items.</summary>
@@ -74,16 +76,26 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] RentalItemCreateDto dto)
+        public async Task<IActionResult> Create([FromForm] RentalItemCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
+
+            string? imageUrl = null;
+            if (dto.ImageFile is not null)
+            {
+                imageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "rentals");
+            }
 
             var item = new Rentalitem
             {
                 ItemName = dto.ItemName.Trim(),
                 Category = dto.Category,
                 TotalQuantity = dto.TotalQuantity,
-                UnitPrice = dto.UnitPrice
+                UnitPrice = dto.UnitPrice,
+                ImageUrl = imageUrl
             };
             _db.RentalItems.Add(item);
             await _db.SaveChangesAsync();
@@ -93,9 +105,12 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPut("{id:guid}")]
-        public async Task<IActionResult> Update(Guid id, [FromBody] RentalItemUpdateDto dto)
+        public async Task<IActionResult> Update(Guid id, [FromForm] RentalItemUpdateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
 
             var item = await _db.RentalItems.FindAsync(id);
             if (item is null) return NotFound();
@@ -107,6 +122,13 @@ namespace System_ApiTest.Controllers
             item.TotalQuantity = dto.TotalQuantity;
             item.UnitPrice = dto.UnitPrice;
             item.IsActive = dto.IsActive;
+
+            if (dto.ImageFile is not null)
+            {
+                ImageUploadHelper.DeleteImage(_env, item.ImageUrl);
+                item.ImageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "rentals");
+            }
+
             await _db.SaveChangesAsync();
             await _audit.LogAsync(User, AuditAction.UPDATE, "RENTAL_ITEM", item.Id.ToString(), old, ToDto(item, itemOut));
             return Ok(ToDto(item, itemOut));
@@ -125,7 +147,7 @@ namespace System_ApiTest.Controllers
 
         private static RentalItemResponseDto ToDto(Rentalitem i, int quantityOut) =>
             new(i.Id, i.ItemName, i.Category.ToString(), i.TotalQuantity,
-                quantityOut, i.TotalQuantity - quantityOut, i.UnitPrice, i.IsActive);
+                quantityOut, i.TotalQuantity - quantityOut, i.UnitPrice, i.IsActive, i.ImageUrl);
     }
 }
  

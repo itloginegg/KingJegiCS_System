@@ -15,6 +15,7 @@ namespace System_ApiTest.Data
         public DbSet<Admin> Admins => Set<Admin>();
         public DbSet<Auditlog> AuditLogs => Set<Auditlog>();
         public DbSet<Bookinghistory> BookingHistories => Set<Bookinghistory>();
+        public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
 
         // Auth
         public DbSet<Revokedtoken> RevokedTokens => Set<Revokedtoken>();
@@ -125,6 +126,14 @@ namespace System_ApiTest.Data
                     t.HasCheckConstraint("CK_Booking_EndDateNotBefore", "[EndDate] IS NULL OR [EndDate] >= [EventDate]");
                     t.HasCheckConstraint("CK_Booking_GuestCountPositive", "[GuestCount] IS NULL OR [GuestCount] > 0");
                 });
+            });
+
+            // ---------------- OtpCode ----------------
+            b.Entity<OtpCode>(e =>
+            {
+                e.Property(o => o.Purpose).HasConversion<string>().HasMaxLength(20);
+                // The verify path looks up the latest active code for a user+purpose.
+                e.HasIndex(o => new { o.UserType, o.UserId, o.Purpose, o.ConsumedAt });
             });
 
             // ---------------- BookingHistory ----------------

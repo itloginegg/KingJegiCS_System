@@ -48,6 +48,34 @@ export interface AuthResponse {
   expiresIn: number;
 }
 
+/** Outcome of the password step. When the server has email OTP enabled, a
+ *  correct password returns a challenge instead of a session — the JWT is only
+ *  issued after the emailed code is confirmed at /login/verify-otp. */
+export type LoginResult =
+  | ({ otpRequired: false } & AuthResponse)
+  | { otpRequired: true; message: string };
+
+/** Login step 2: the emailed 6-digit code plus the context from step 1. */
+export interface OtpVerification {
+  role: UserRole;
+  email: string;
+  code: string;
+  rememberMe: boolean;
+}
+
 /** Per-field validation errors. Keys mirror the form fields so a component
  *  can do `errors.email` with full type safety. */
 export type FieldErrors = Partial<Record<'email' | 'password', string>>;
+
+/** Data submitted by the registration form (mirrors CustomerRegistrationDto). */
+export interface RegistrationData {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  password: string;
+}
+
+/** Field errors for the registration form (client- or server-reported). */
+export type RegistrationFieldErrors = Partial<
+  Record<'fullName' | 'email' | 'phoneNumber' | 'password' | 'confirmPassword', string>
+>;
