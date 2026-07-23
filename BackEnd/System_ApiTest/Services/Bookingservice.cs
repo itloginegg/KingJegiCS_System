@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System_ApiTest.Data;
 using System_ApiTest.Models;
@@ -55,7 +55,8 @@ namespace System_ApiTest.Services
         public async Task<Booking> CreateAsync(
             Guid customerId, BookingType bookingType,
             DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
-            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId)
+            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId,
+            string? contactNumber = null)
         {
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
@@ -87,6 +88,16 @@ namespace System_ApiTest.Services
                 // Full-service requires the event fields.
                 if (endDate is null || end is null || type is null || guestCount is null)
                     throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
+
+                if (menuPackageId is not null)
+                {
+                    var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
+                    if (pkg is null)
+                        throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
+                    
+                    if (guestCount < pkg.MinPax)
+                        throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+                }
             }
 
             await using var tx = await _db.Database.BeginTransactionAsync();
@@ -128,6 +139,7 @@ namespace System_ApiTest.Services
                 EndTime = end,
                 EventType = type,
                 VenueAddress = venueAddress.Trim(),
+                ContactNumber = contactNumber?.Trim(),
                 GuestCount = guestCount,
                 MenuPackageId = menuPackageId,
                 BookingName = BuildBookingName(customer.FullName, bookingType, type),
@@ -651,9 +663,9 @@ namespace System_ApiTest.Services
         /// package, same as create). Get-or-creates the calendar day if the date moved.
         /// </summary>
         public async Task<Booking> UpdateAsync(
-            Guid bookingId, Guid changedByAdminId,
+            Guid bookingId, Guid? changedByAdminId,
             string bookingName, DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
-            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId)
+            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId, string? contactNumber)
         {
             if (string.IsNullOrWhiteSpace(bookingName))
                 throw new BookingRuleException("Booking name cannot be blank.");
@@ -676,6 +688,16 @@ namespace System_ApiTest.Services
             else if (endDate is null || end is null || type is null || guestCount is null)
             {
                 throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
+            }
+
+            if (menuPackageId is not null)
+            {
+                var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
+                if (pkg is null)
+                    throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
+                
+                if (guestCount < pkg.MinPax)
+                    throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
             }
 
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
@@ -720,6 +742,7 @@ namespace System_ApiTest.Services
             booking.EndTime = end;
             booking.EventType = type;
             booking.VenueAddress = venueAddress.Trim();
+            booking.ContactNumber = contactNumber?.Trim();
             booking.GuestCount = guestCount;
             booking.MenuPackageId = menuPackageId;
 

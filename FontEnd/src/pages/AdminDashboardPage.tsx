@@ -37,6 +37,13 @@ import {
   type AdminServiceItemUpdate,
 } from '../api/serviceAdminApi';
 import { AdminPackagesTab } from './AdminPackagesTab';
+import {
+  getAllBookings,
+  confirmBooking,
+  completeBooking,
+  cancelBooking,
+  type BookingResponse,
+} from '../api/bookingApi';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
@@ -47,28 +54,7 @@ const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
 type ResStatus = 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
-type Reservation = {
-  id: string;
-  fullName: string;
-  email: string;
-  phone: string;
-  eventType: string;
-  eventDate: string;
-  eventTime: string;
-  guests: number;
-  pkg?: string;
-  notes?: string;
-  status: ResStatus;
-};
 
-const INITIAL_RESERVATIONS: Reservation[] = [
-  { id: 'RSV-1041', fullName: 'Santos Family', email: 'santos@example.com', phone: '0917 555 0141', eventType: 'Wedding', eventDate: '2026-08-08', eventTime: '17:00', guests: 150, pkg: 'Wedding Package', notes: 'Sage green & gold motif. Church ceremony ends 4 PM.', status: 'Pending' },
-  { id: 'RSV-1038', fullName: 'Reyes Family', email: 'reyes@example.com', phone: '0917 555 0223', eventType: 'Debut', eventDate: '2026-08-08', eventTime: '18:30', guests: 100, pkg: 'Custom Package', status: 'Pending' },
-  { id: 'RSV-1035', fullName: 'Cruz Corporation', email: 'events@cruzcorp.ph', phone: '0918 555 0987', eventType: 'Corporate Dinner', eventDate: '2026-07-28', eventTime: '19:00', guests: 80, pkg: 'Custom Package', notes: 'Projector and two wireless mics required.', status: 'Confirmed' },
-  { id: 'RSV-1029', fullName: 'Bautista Family', email: 'bautista@example.com', phone: '0919 555 0456', eventType: 'Wedding', eventDate: '2026-09-12', eventTime: '16:00', guests: 180, pkg: 'Wedding Package', status: 'Confirmed' },
-  { id: 'RSV-1022', fullName: 'Dela Cruz', email: 'delacruz@example.com', phone: '0916 555 0678', eventType: 'Birthday', eventDate: '2026-07-20', eventTime: '14:00', guests: 60, pkg: 'Birthday Package', status: 'Cancelled' },
-  { id: 'RSV-1010', fullName: 'Mendoza Family', email: 'mendoza@example.com', phone: '0915 555 0332', eventType: 'Family Reunion', eventDate: '2026-06-14', eventTime: '12:00', guests: 45, status: 'Completed' },
-];
 
 type OrderStatus = 'pending_dp' | 'dp_paid' | 'fully_paid' | 'cancelled';
 
@@ -122,14 +108,7 @@ const INITIAL_ORDERS: Order[] = [
   },
 ];
 
-type Pkg = { id: number; name: string; price: string; unit: string; description: string; highlight: boolean; active: boolean };
 
-const INITIAL_PACKAGES: Pkg[] = [
-  { id: 1, name: 'Birthday Package', price: '₱65,000', unit: 'up to 100 pax', description: 'Themed styling, buffet, sound, and crew.', highlight: false, active: true },
-  { id: 2, name: 'Wedding Package', price: '₱80,000', unit: 'up to 150 pax', description: 'Signature floral styling and full coordination.', highlight: true, active: true },
-  { id: 3, name: 'Custom Package', price: 'Custom', unit: 'tailored quote', description: 'Built from scratch around the client brief.', highlight: false, active: true },
-  { id: 4, name: 'Starter Package', price: '₱38,000', unit: 'up to 50 pax', description: 'Compact setup for intimate gatherings.', highlight: false, active: false },
-];
 
 type TestiStatus = 'pending' | 'approved' | 'rejected';
 
@@ -240,9 +219,19 @@ export function AdminDashboardPage() {
   const [placeholderName, setPlaceholderName] = useState(PLACEHOLDER_ITEMS[0]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [reservations, setReservations] = useState(INITIAL_RESERVATIONS);
+  const [reservations, setReservations] = useState<BookingResponse[]>([]);
+
+  const loadBookings = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      const data = await getAllBookings(session.token);
+      setReservations(data);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
   const [orders, setOrders] = useState(INITIAL_ORDERS);
-  const [packages, setPackages] = useState(INITIAL_PACKAGES);
   const [testimonials, setTestimonials] = useState(INITIAL_TESTIMONIALS);
 
   /* menus & dishes tab — live data from /api/Menuitems + /api/Menutrays */
@@ -325,7 +314,7 @@ export function AdminDashboardPage() {
     pricePerTray: 0,
     servesMin: 1,
     servesMax: 1,
-    dishIds: [],
+    dishItemIds: [],
   };
 
   const openMenuForm = (
@@ -399,8 +388,7 @@ export function AdminDashboardPage() {
   const [noteText, setNoteText] = useState('');
 
   /* packages tab state */
-  const [editPkgId, setEditPkgId] = useState<number | null>(null);
-  const [editPkg, setEditPkg] = useState<Partial<Pkg>>({});
+
 
   /* testimonials tab state */
   const [testiFilter, setTestiFilter] = useState<'all' | TestiStatus>('pending');
@@ -447,9 +435,9 @@ export function AdminDashboardPage() {
       .filter(
         (r) =>
           q === '' ||
-          r.fullName.toLowerCase().includes(q) ||
-          r.email.toLowerCase().includes(q) ||
-          r.eventType.toLowerCase().includes(q),
+          (r.bookingName && r.bookingName.toLowerCase().includes(q)) ||
+          (r.contactNumber && r.contactNumber.toLowerCase().includes(q)) ||
+          (r.eventType && r.eventType.toLowerCase().includes(q)),
       )
       .sort((a, b) => +new Date(a.eventDate) - +new Date(b.eventDate));
   }, [reservations, resFilter, resSearch]);
@@ -459,13 +447,32 @@ export function AdminDashboardPage() {
   const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
 
   /* ── local mutations ── */
-  const setResStatus = (id: string, status: ResStatus) =>
-    setReservations((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  const setResStatus = async (id: string, st: 'Confirmed' | 'Completed' | 'Cancelled') => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      let updated: BookingResponse;
+      if (st === 'Confirmed') updated = await confirmBooking(session.token, id);
+      else if (st === 'Completed') updated = await completeBooking(session.token, id);
+      else updated = await cancelBooking(session.token, id);
+      
+      setReservations((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    } catch (err: any) {
+      alert(err.message || `Failed to set status to ${st}`);
+    }
+  };
 
-  const cancelReservation = (id: string) => {
-    setResStatus(id, 'Cancelled');
-    setCancelResId(null);
-    setCancelReason('');
+  const cancelReservation = async (id: string) => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      const updated = await cancelBooking(session.token, id);
+      setReservations((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      setCancelResId(null);
+      setCancelReason('');
+    } catch (err: any) {
+      alert(err.message || 'Failed to cancel booking.');
+    }
   };
 
   const advanceOrder = (o: Order) => {
@@ -484,13 +491,7 @@ export function AdminDashboardPage() {
     setNoteText('');
   };
 
-  const togglePkg = (id: number) =>
-    setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, active: !p.active } : p)));
 
-  const savePkg = (id: number) => {
-    setPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...editPkg } : p)));
-    setEditPkgId(null);
-  };
 
   const setTestiStatus = (id: number, status: TestiStatus) =>
     setTestimonials((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
@@ -921,6 +922,7 @@ export function AdminDashboardPage() {
 
   /* refetch every time the tab is opened so admin edits elsewhere show up */
   useEffect(() => {
+    if (tab === 'bookings') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
     if (tab === 'rentals') void loadRentalCatalog();
     if (tab === 'services') void loadServiceCatalog();
@@ -1466,10 +1468,10 @@ export function AdminDashboardPage() {
                           >
                             <div className="d" style={{ color: isToday ? 'var(--primary)' : undefined }}>{day}</div>
                             {dayEvents.slice(0, 2).map((ev) => {
-                              const c = RES_STATUS[ev.status].color;
+                              const c = RES_STATUS[ev.status as ResStatus]?.color || '#999';
                               return (
                                 <span key={ev.id} className="adm-cal-ev" style={{ color: c, background: `color-mix(in srgb, ${c} 14%, transparent)` }}>
-                                  {ev.fullName}
+                                  {ev.bookingName}
                                 </span>
                               );
                             })}
@@ -1502,9 +1504,9 @@ export function AdminDashboardPage() {
                     pendingRes.map((r) => (
                       <div key={r.id} className="adm-row" style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.8rem 0', flexWrap: 'wrap' }}>
                         <div style={{ flex: 1, minWidth: 180 }}>
-                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>{r.fullName}</div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>{r.bookingName}</div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.1rem' }}>
-                            {r.eventType} · {fmtDate(r.eventDate)} · {r.guests} guests
+                            {r.eventType || r.bookingType} · {fmtDate(r.eventDate)} · {r.guestCount || 'N/A'} guests
                           </div>
                         </div>
                         {conflictDates.has(r.eventDate) && <StatusBadge label="⚠ Date conflict" color="var(--accent)" />}
@@ -1550,26 +1552,25 @@ export function AdminDashboardPage() {
                   </div>
                 ) : (
                   filteredRes.map((r) => {
-                    const st = RES_STATUS[r.status];
                     const cancelling = cancelResId === r.id;
                     return (
                       <div key={r.id} className="adm-card" style={{ padding: '1.35rem 1.5rem' }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
                           <div style={{ flex: 1, minWidth: 240 }}>
                             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
-                              {r.fullName}
+                              {r.bookingName}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.3rem 1.4rem', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                              <span>Event: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.eventType}</strong></span>
-                              <span>Date: <strong style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmtDate(r.eventDate)} · {r.eventTime}</strong></span>
-                              <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.guests}</strong></span>
-                              <span>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.email}</strong></span>
-                              <span>Phone: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.phone}</strong></span>
-                              {r.pkg && <span>Package: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.pkg}</strong></span>}
+                              <span>Event: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.eventType || r.bookingType}</strong></span>
+                              <span>Date: <strong style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmtDate(r.eventDate)} · {r.startTime?.substring(0, 5)}</strong></span>
+                              <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.guestCount || 'N/A'}</strong></span>
+                              <span>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Not provided</strong></span>
+                              <span>Phone: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.contactNumber || 'N/A'}</strong></span>
+                              {r.menuPackageId && <span>Package: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package Selected</strong></span>}
                             </div>
-                            {r.notes && (
+                            {r.cancellationRequested && (
                               <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.65rem', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.5rem 0.8rem', borderLeft: '2px solid var(--border-accent)' }}>
-                                {r.notes}
+                                ⚠ Cancellation Requested: {r.cancellationRequestReason}
                               </p>
                             )}
                           </div>
@@ -1577,7 +1578,7 @@ export function AdminDashboardPage() {
                             {conflictDates.has(r.eventDate) && (r.status === 'Pending' || r.status === 'Confirmed') && (
                               <StatusBadge label="⚠ Date conflict" color="var(--accent)" />
                             )}
-                            <StatusBadge label={st.label} color={st.color} />
+                            <StatusBadge label={RES_STATUS[r.status as ResStatus]?.label || r.status} color={RES_STATUS[r.status as ResStatus]?.color || '#999'} />
                           </div>
                         </div>
 
@@ -1996,7 +1997,7 @@ export function AdminDashboardPage() {
                                     pricePerTray: t.pricePerTray,
                                     servesMin: t.servesMin,
                                     servesMax: t.servesMax,
-                                    dishIds: t.dishes.map((d) => d.id),
+                                    dishItemIds: t.dishes.map((d) => d.id),
                                   }, t.id)}
                                 >
                                   Edit
@@ -2226,7 +2227,7 @@ export function AdminDashboardPage() {
                               <label>Tray dishes</label>
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '0.6rem', maxHeight: '240px', overflowY: 'auto', padding: '0.6rem', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', background: 'var(--bg-subtle)' }}>
                                 {menuItems.map((item) => {
-                                  const checked = menuFormTray.dishIds.includes(item.id);
+                                  const checked = menuFormTray.dishItemIds?.includes(item.id) ?? false;
                                   return (
                                     <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', fontSize: '0.78rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
                                       <input
@@ -2234,9 +2235,9 @@ export function AdminDashboardPage() {
                                         checked={checked}
                                         onChange={(e) => {
                                           const next = e.target.checked
-                                            ? [...menuFormTray.dishIds, item.id]
-                                            : menuFormTray.dishIds.filter((dishId) => dishId !== item.id);
-                                          updateMenuFormTray({ dishIds: next });
+                                            ? [...(menuFormTray.dishItemIds || []), item.id]
+                                            : (menuFormTray.dishItemIds || []).filter((dishId) => dishId !== item.id);
+                                          updateMenuFormTray({ dishItemIds: next });
                                         }}
                                       />
                                       {item.itemName}

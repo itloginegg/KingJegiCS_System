@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '../../hooks/useTheme';
+import { useAuth } from '../../hooks/useAuth';
 
 const NAV_LINKS = [
   { label: 'Home', href: '/' },
@@ -40,6 +41,7 @@ function CartIcon() {
 /** Site navbar — absolutely positioned over whatever section renders it. */
 export function Navbar({ activePage }: { activePage?: string }) {
   const { theme, toggleTheme } = useTheme();
+  const { isAuthenticated, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const iconBtn: React.CSSProperties = {
@@ -170,13 +172,29 @@ export function Navbar({ activePage }: { activePage?: string }) {
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>
 
-          <Link to="/login" className="nav-link nav-signin">
-            Sign In
-          </Link>
-
-          <Link to="/book" className="nav-cta">
-            Book Now
-          </Link>
+          {isAuthenticated ? (
+            <>
+              <Link to="/dashboard" className="nav-link nav-signin">
+                Go to Dashboard
+              </Link>
+              <button
+                type="button"
+                className="nav-cta"
+                onClick={logout}
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="nav-link nav-signin">
+                Login
+              </Link>
+              <Link to="/register" className="nav-link nav-signin">
+                Register
+              </Link>
+            </>
+          )}
 
           <button
             type="button"
@@ -213,11 +231,33 @@ export function Navbar({ activePage }: { activePage?: string }) {
               {renderLink(link, { display: 'block', padding: '0.7rem 0.75rem' }, () => setMenuOpen(false))}
             </li>
           ))}
-          <li>
-            <Link to="/login" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
-              Sign In
-            </Link>
-          </li>
+          {isAuthenticated ? (
+            <>
+              <li>
+                <Link to="/dashboard" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
+                  Dashboard
+                </Link>
+              </li>
+              <li>
+                <button type="button" onClick={logout} className="nav-link" style={{ background: 'none', border: 'none', textAlign: 'left', width: '100%', display: 'block', padding: '0.7rem 0.75rem', cursor: 'pointer' }}>
+                  Logout
+                </button>
+              </li>
+            </>
+          ) : (
+            <>
+              <li>
+                <Link to="/login" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
+                  Login
+                </Link>
+              </li>
+              <li>
+                <Link to="/register" className="nav-link" style={{ display: 'block', padding: '0.7rem 0.75rem' }}>
+                  Register
+                </Link>
+              </li>
+            </>
+          )}
         </ul>
       )}
     </header>

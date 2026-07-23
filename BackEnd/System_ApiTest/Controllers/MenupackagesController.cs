@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System_ApiTest.Data;
@@ -134,11 +134,17 @@ namespace System_ApiTest.Controllers
             pkg.PricePerExtraPax = dto.PricePerExtraPax;
             pkg.Inclusions = dto.Inclusions;
 
-            // Replace fixed items.
-            _db.MenuPackageFixedItems.RemoveRange(pkg.FixedItems);
-            pkg.FixedItems.Clear();
+            var oldFixedItems = pkg.FixedItems.ToList();
+            _db.MenuPackageFixedItems.RemoveRange(oldFixedItems);
+            
             foreach (var fid in fixedItemIds)
-                pkg.FixedItems.Add(new Menupackagefixeditem { MenuPackageId = pkg.Id, MenuItemId = fid });
+            {
+                _db.MenuPackageFixedItems.Add(new Menupackagefixeditem 
+                { 
+                    MenuPackageId = pkg.Id, 
+                    MenuItemId = fid 
+                });
+            }
 
             await _db.SaveChangesAsync();
 
@@ -196,18 +202,26 @@ namespace System_ApiTest.Controllers
             slot.ChooseCount = dto.ChooseCount;
             slot.DisplayOrder = dto.DisplayOrder;
 
-            _db.SlotCategories.RemoveRange(slot.AllowedCategories);
-            slot.AllowedCategories.Clear();
+            var oldCats = slot.AllowedCategories.ToList();
+            _db.SlotCategories.RemoveRange(oldCats);
+            
             foreach (var cat in dto.AllowedCategories)
-                slot.AllowedCategories.Add(new SlotCategory
+            {
+                _db.SlotCategories.Add(new SlotCategory
                 {
                     MenuPackageSlotId = slotId,
                     ItemCategory = cat.ItemCategory,
                     CourseCategory = cat.CourseCategory
                 });
-
+            }
             await _db.SaveChangesAsync();
-            return Ok(SlotToDto(slot));
+
+            var updatedSlot = await _db.MenuPackageSlots
+                .Include(s => s.AllowedCategories)
+                .AsNoTracking()
+                .FirstAsync(s => s.Id == slotId);
+
+            return Ok(SlotToDto(updatedSlot));
         }
 
         /// <summary>Removes a slot. Blocked if any booking already has selections for it.</summary>

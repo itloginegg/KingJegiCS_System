@@ -11,7 +11,6 @@ import {
   type AdminPackageCreate,
   type PackageSlotDto,
   type SlotCategoryDto,
-  type MenuItemBriefDto,
 } from '../api/packageAdminApi';
 import { fetchMenuItems, type AdminMenuItem } from '../api/menuAdminApi';
 import { readSession } from '../lib/tokenStorage';
@@ -158,6 +157,10 @@ export function AdminPackagesTab() {
 
     if (!pkgFormItem.packageName.trim()) {
       setFormError('Package name is required.');
+      return;
+    }
+    if (!pkgFormItem.description.trim()) {
+      setFormError('Description is required.');
       return;
     }
     if (pkgFormItem.minPax > pkgFormItem.maxPax) {
@@ -343,8 +346,9 @@ export function AdminPackagesTab() {
   }
 
   return (
-    <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-      {/* Header */}
+    <>
+      <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+        {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
         <div>
           <h2 className="adm-title">Packages Management</h2>
@@ -528,6 +532,7 @@ export function AdminPackagesTab() {
           </div>
         )}
       </div>
+      </div>
 
       {/* ══════════ PACKAGE FORM MODAL ══════════ */}
       {pkgFormOpen && (
@@ -543,11 +548,11 @@ export function AdminPackagesTab() {
             <div className="form-grid full" style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
               <div className="form-row">
                 <label>Package Name</label>
-                <input className="adm-input" value={pkgFormItem.packageName} onChange={(e) => setPkgFormItem({ ...pkgFormItem, packageName: e.target.value })} />
+                <input className="adm-input square" value={pkgFormItem.packageName} onChange={(e) => setPkgFormItem({ ...pkgFormItem, packageName: e.target.value })} />
               </div>
               <div className="form-row">
                 <label>Base Price (₱)</label>
-                <input className="adm-input" type="number" min={0} value={pkgFormItem.basePrice} onChange={(e) => setPkgFormItem({ ...pkgFormItem, basePrice: Number(e.target.value) || 0 })} />
+                <input className="adm-input square" type="number" min={0} value={pkgFormItem.basePrice} onChange={(e) => setPkgFormItem({ ...pkgFormItem, basePrice: Number(e.target.value) || 0 })} />
               </div>
               
               <div className="form-row full">
@@ -557,15 +562,15 @@ export function AdminPackagesTab() {
 
               <div className="form-row">
                 <label>Min Pax</label>
-                <input className="adm-input" type="number" min={1} value={pkgFormItem.minPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, minPax: Number(e.target.value) || 1 })} />
+                <input className="adm-input square" type="number" min={1} value={pkgFormItem.minPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, minPax: Number(e.target.value) || 1 })} />
               </div>
               <div className="form-row">
                 <label>Max Pax</label>
-                <input className="adm-input" type="number" min={1} value={pkgFormItem.maxPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, maxPax: Number(e.target.value) || 1 })} />
+                <input className="adm-input square" type="number" min={1} value={pkgFormItem.maxPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, maxPax: Number(e.target.value) || 1 })} />
               </div>
               <div className="form-row">
                 <label>Price Per Extra Pax (₱)</label>
-                <input className="adm-input" type="number" min={0} value={pkgFormItem.pricePerExtraPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, pricePerExtraPax: Number(e.target.value) || 0 })} />
+                <input className="adm-input square" type="number" min={0} value={pkgFormItem.pricePerExtraPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, pricePerExtraPax: Number(e.target.value) || 0 })} />
               </div>
               <div className="form-row"></div>
 
@@ -573,7 +578,7 @@ export function AdminPackagesTab() {
               <div className="form-row full">
                 <label>Inclusions (Text items)</label>
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <input className="adm-input" style={{ flex: 1 }} placeholder="e.g. 2 Waiters, Sound System" value={pkgInclusionInput} onChange={(e) => setPkgInclusionInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addInclusion()} />
+                  <input className="adm-input square" style={{ flex: 1 }} placeholder="e.g. 2 Waiters, Sound System" value={pkgInclusionInput} onChange={(e) => setPkgInclusionInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addInclusion()} />
                   <button type="button" className="adm-btn outline" onClick={addInclusion}>Add</button>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
@@ -624,15 +629,15 @@ export function AdminPackagesTab() {
             <div className="form-grid full">
               <div className="form-row">
                 <label>Label</label>
-                <input className="adm-input" placeholder="e.g. Main Course, Dessert" value={slotFormItem.label} onChange={(e) => setSlotFormItem({ ...slotFormItem, label: e.target.value })} />
+                <input className="adm-input square" placeholder="e.g. Main Course, Dessert" value={slotFormItem.label} onChange={(e) => setSlotFormItem({ ...slotFormItem, label: e.target.value })} />
               </div>
               <div className="form-row">
                 <label>Choose Count (How many dishes?)</label>
-                <input className="adm-input" type="number" min={1} value={slotFormItem.chooseCount} onChange={(e) => setSlotFormItem({ ...slotFormItem, chooseCount: Number(e.target.value) || 1 })} />
+                <input className="adm-input square" type="number" min={1} value={slotFormItem.chooseCount} onChange={(e) => setSlotFormItem({ ...slotFormItem, chooseCount: Number(e.target.value) || 1 })} />
               </div>
               <div className="form-row">
                 <label>Display Order</label>
-                <input className="adm-input" type="number" min={1} value={slotFormItem.displayOrder} onChange={(e) => setSlotFormItem({ ...slotFormItem, displayOrder: Number(e.target.value) || 1 })} />
+                <input className="adm-input square" type="number" min={1} value={slotFormItem.displayOrder} onChange={(e) => setSlotFormItem({ ...slotFormItem, displayOrder: Number(e.target.value) || 1 })} />
               </div>
               <div className="form-row"></div>
 
@@ -640,11 +645,11 @@ export function AdminPackagesTab() {
               <div className="form-row full">
                 <label>Allowed Categories (Dishes customer can pick from)</label>
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <select className="adm-input" style={{ flex: 1 }} value={catInputItem} onChange={(e) => setCatInputItem(e.target.value)}>
+                  <select className="adm-input square" style={{ flex: 1 }} value={catInputItem} onChange={(e) => setCatInputItem(e.target.value)}>
                     <option value="">Any Item Category</option>
                     {uniqueItemCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  <select className="adm-input" style={{ flex: 1 }} value={catInputCourse} onChange={(e) => setCatInputCourse(e.target.value)}>
+                  <select className="adm-input square" style={{ flex: 1 }} value={catInputCourse} onChange={(e) => setCatInputCourse(e.target.value)}>
                     <option value="">Any Course Category</option>
                     {uniqueCourseCategories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -671,6 +676,6 @@ export function AdminPackagesTab() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

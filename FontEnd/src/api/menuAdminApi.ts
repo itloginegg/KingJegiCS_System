@@ -108,7 +108,7 @@ async function getJson<T>(path: string, token: string): Promise<T> {
 export type AdminMenuItemPayload = Omit<AdminMenuItem, 'id' | 'isActive'> & {
   imageFile?: File | null;
 };
-export type AdminMenuTrayPayload = Omit<AdminMenuTray, 'id' | 'isActive' | 'dishes'> & { dishIds: string[] };
+export type AdminMenuTrayPayload = Omit<AdminMenuTray, 'id' | 'isActive' | 'dishes'> & { dishItemIds: string[] };
 
 export function fetchMenuItems(token: string): Promise<AdminMenuItem[]> {
   return getJson<AdminMenuItem[]>('/api/Menuitems', token);

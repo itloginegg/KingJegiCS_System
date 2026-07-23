@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System_ApiTest.Models;
 
 namespace System_ApiTest.DTOs
@@ -36,6 +36,9 @@ namespace System_ApiTest.DTOs
         [Required(ErrorMessage = "Venue/delivery address is required.")]
         [MaxLength(500)]
         public string VenueAddress { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string? ContactNumber { get; set; }
 
         /// <summary>Guest count — required for FullService, ignored for FoodDelivery.</summary>
         public int? GuestCount { get; set; }
@@ -84,6 +87,9 @@ namespace System_ApiTest.DTOs
     {
         [Required, MaxLength(200)]
         public string BookingName { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string? ContactNumber { get; set; }
 
         [Required]
         public DateOnly EventDate { get; set; }
@@ -144,6 +150,7 @@ namespace System_ApiTest.DTOs
         TimeOnly? EndTime,
         string? EventType,
         string VenueAddress,
+        string? ContactNumber,
         int? GuestCount,
         string Status,
         string DepositStatus,
@@ -220,6 +227,11 @@ namespace System_ApiTest.DTOs
     public record BookingPackageSelectionDto(
         Guid SlotId,
         string SlotLabel,
-        Guid ItemId,
-        string ItemName);
+        Guid MenuItemId,
+        string MenuItemName);
+
+    public class SetPackageDto
+    {
+        public Guid? MenuPackageId { get; set; }
+    }
 }

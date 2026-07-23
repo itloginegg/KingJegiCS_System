@@ -140,42 +140,6 @@ async function sendFormData<T>(path: string, method: string, token: string, form
 
   return (await res.json()) as T;
 }
-
-async function sendJson<T>(path: string, method: string, token: string, body: unknown): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE_URL}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    throw new RentalApiError(
-      'Unable to reach the server. Make sure the backend is running, then try again.',
-    );
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    throw new RentalApiError(
-      'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
-      res.status,
-    );
-  }
-
-  if (!res.ok) {
-    const message = await readErrorMessage(res);
-    throw new RentalApiError(
-      message ?? `The server responded with an error (HTTP ${res.status}).`,
-      res.status,
-    );
-  }
-
-  return (await res.json()) as T;
-}
-
 export function fetchRentalItems(token: string): Promise<AdminRentalItem[]> {
   return getJson<AdminRentalItem[]>('/api/Rentalitems', token);
 }

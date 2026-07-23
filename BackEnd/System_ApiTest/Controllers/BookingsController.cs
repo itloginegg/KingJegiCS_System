@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -125,26 +125,27 @@ namespace System_ApiTest.Controllers
             {
                 var booking = await _bookings.CreateAsync(
                     customerId, dto.BookingType, dto.EventDate, dto.StartTime, dto.EndDate, dto.EndTime,
-                    dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId);
+                    dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber);
                 return CreatedAtAction(nameof(GetById), new { id = booking.Id }, ToDto(booking));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
-        [Authorize(Roles = "Owner,Assistant")]
         [HttpPut("{id:guid}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] BookingUpdateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            var adminId = CurrentUserId();
-            if (adminId is null) return Unauthorized();
+            var (ok, error) = await AuthorizeWrite(id);
+            if (!ok) return error!;
 
             try
             {
+                var currentUserId = CurrentUserId() ?? Guid.Empty;
+                var changedById = (User.IsInRole("Owner") || User.IsInRole("Assistant")) ? (Guid?)currentUserId : null;
                 var booking = await _bookings.UpdateAsync(
-                    id, adminId.Value, dto.BookingName, dto.EventDate, dto.StartTime, dto.EndDate,
-                    dto.EndTime, dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId);
+                    id, changedById, dto.BookingName, dto.EventDate, dto.StartTime, dto.EndDate,
+                    dto.EndTime, dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber);
                 return Ok(ToDto(booking));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -286,6 +287,33 @@ namespace System_ApiTest.Controllers
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
+        [HttpPost("{id:guid}/package")]
+        public async Task<IActionResult> SetPackage(Guid id, [FromBody] SetPackageDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var (ok, error) = await AuthorizeWrite(id);
+            if (!ok) return error!;
+
+            try
+            {
+                var booking = await _db.Bookings.FindAsync(id);
+                if (booking is null) return NotFound();
+
+                if (dto.MenuPackageId is not null)
+                {
+                    var pkg = await _db.MenuPackages.FindAsync(dto.MenuPackageId.Value);
+                    if (pkg is null)
+                        throw new BookingRuleException($"Menu package with ID '{dto.MenuPackageId.Value}' was not found.");
+                }
+
+                booking.MenuPackageId = dto.MenuPackageId;
+                await _db.SaveChangesAsync();
+                await _bookings.RecomputeTotalAsync(id);
+                return await Refreshed(id);
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
         /// <summary>The customer's current package slot selections for this booking.</summary>
         [HttpGet("{id:guid}/package-selections")]
         public async Task<IActionResult> GetPackageSelections(Guid id)
@@ -381,7 +409,7 @@ namespace System_ApiTest.Controllers
         private static BookingResponseDto ToDto(Booking b) => new(
             b.Id, b.BookingName, b.CustomerId, b.BookingType.ToString(),
             b.EventDate, b.StartTime, b.EndDate, b.EndTime,
-            b.EventType?.ToString(), b.VenueAddress, b.GuestCount, b.Status.ToString(),
+            b.EventType?.ToString(), b.VenueAddress, b.ContactNumber, b.GuestCount, b.Status.ToString(),
             b.DepositStatus.ToString(), b.TotalAmount, b.MenuPackageId,
             b.CancellationRequested, b.CancellationRequestReason, b.CreatedAt);
     }

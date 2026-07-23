@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace System_ApiTest.Models
 {
@@ -106,6 +106,9 @@ namespace System_ApiTest.Models
         [Required]
         [MaxLength(500)]
         public string VenueAddress { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string? ContactNumber { get; set; }
 
         /// <summary>Guest count for a catered event. Null for FoodDelivery.</summary>
         public int? GuestCount { get; set; }
