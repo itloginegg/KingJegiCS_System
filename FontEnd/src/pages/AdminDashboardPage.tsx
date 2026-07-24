@@ -42,7 +42,10 @@ import {
   confirmBooking,
   completeBooking,
   cancelBooking,
+  getRecentPayments,
+  BookingApiError,
   type BookingResponse,
+  type AdminPaymentRecord,
 } from '../api/bookingApi';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -53,60 +56,6 @@ import {
 const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
 type ResStatus = 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
-
-
-
-type OrderStatus = 'pending_dp' | 'dp_paid' | 'fully_paid' | 'cancelled';
-
-type Order = {
-  id: string;
-  customerName: string;
-  email: string;
-  eventType: string;
-  eventDate: string;
-  createdAt: string;
-  status: OrderStatus;
-  overdue?: boolean;
-  note?: string;
-  items: { id: number; name: string; qty: number; price: number }[];
-};
-
-const INITIAL_ORDERS: Order[] = [
-  {
-    id: 'ORD-3301', customerName: 'Santos Family', email: 'santos@example.com', eventType: 'Wedding', eventDate: '2026-09-12', createdAt: '2026-07-02', status: 'pending_dp', overdue: true,
-    items: [
-      { id: 1, name: 'Wedding Package', qty: 1, price: 80000 },
-      { id: 2, name: 'Lechon de Leche (per head)', qty: 150, price: 350 },
-      { id: 3, name: 'Sound System Package', qty: 1, price: 1800 },
-    ],
-  },
-  {
-    id: 'ORD-3287', customerName: 'Garcia Inc', email: 'admin@garcia.ph', eventType: 'Annual Gala', eventDate: '2026-07-28', createdAt: '2026-07-08', status: 'dp_paid', note: 'Waiting for final headcount before balance invoice.',
-    items: [
-      { id: 1, name: 'Custom Package', qty: 1, price: 90000 },
-      { id: 2, name: 'Party Lights Set', qty: 2, price: 400 },
-      { id: 3, name: 'Projector & Screen', qty: 1, price: 900 },
-    ],
-  },
-  {
-    id: 'ORD-3255', customerName: 'Lim Family', email: 'lim@example.com', eventType: 'Birthday', eventDate: '2026-06-20', createdAt: '2026-05-30', status: 'fully_paid',
-    items: [
-      { id: 1, name: 'Birthday Package', qty: 1, price: 65000 },
-      { id: 2, name: 'Fairy Light Strand (10m)', qty: 4, price: 60 },
-    ],
-  },
-  {
-    id: 'ORD-3210', customerName: 'Mendoza Family', email: 'mendoza@example.com', eventType: 'Family Reunion', eventDate: '2026-06-14', createdAt: '2026-05-28', status: 'fully_paid',
-    items: [
-      { id: 1, name: 'Handaan Tray Set', qty: 2, price: 3999 },
-      { id: 2, name: 'Tiffany Chairs', qty: 100, price: 35 },
-    ],
-  },
-  {
-    id: 'ORD-3198', customerName: 'Tan Family', email: 'tan@example.com', eventType: 'Debut', eventDate: '2026-05-30', createdAt: '2026-04-20', status: 'cancelled', note: 'Client moved abroad.',
-    items: [{ id: 1, name: 'Custom Package', qty: 1, price: 82000 }],
-  },
-];
 
 
 
@@ -141,12 +90,18 @@ const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
   Cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
 
-const ORDER_STATUS: Record<OrderStatus, { label: string; color: string }> = {
-  pending_dp: { label: 'Pending DP', color: 'var(--accent)' },
-  dp_paid: { label: '50% DP Paid', color: '#4a90d9' },
-  fully_paid: { label: 'Fully Paid', color: 'var(--primary)' },
-  cancelled: { label: 'Cancelled', color: 'var(--danger)' },
+type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' | 'Refunded';
+
+const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }> = {
+  Pending: { label: 'Pending', color: 'var(--accent)' },
+  Success: { label: 'Success', color: 'var(--primary)' },
+  Failed: { label: 'Failed', color: 'var(--danger)' },
+  PartiallyRefunded: { label: 'Partially Refunded', color: '#4a90d9' },
+  Refunded: { label: 'Refunded', color: '#4a90d9' },
 };
+
+const paymentStatusMeta = (status: string) =>
+  PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-dim)' };
 
 const TESTI_STATUS: Record<TestiStatus, { label: string; color: string }> = {
   pending: { label: 'Pending', color: 'var(--accent)' },
@@ -163,7 +118,15 @@ const fmtDate = (iso: string) => {
   }
 };
 
-const orderTotal = (o: Order) => o.items.reduce((s, i) => s + i.price * i.qty, 0);
+const fmtDateTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleString('en-PH', {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+};
 
 export function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
@@ -231,8 +194,38 @@ export function AdminDashboardPage() {
       console.error(err);
     }
   };
-  const [orders, setOrders] = useState(INITIAL_ORDERS);
   const [testimonials, setTestimonials] = useState(INITIAL_TESTIMONIALS);
+
+  /* payments — live data from /api/Payments/recent */
+  const [payments, setPayments] = useState<AdminPaymentRecord[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [paymentsAuthError, setPaymentsAuthError] = useState(false);
+
+  const loadPayments = async () => {
+    const session = readSession();
+    if (!session) {
+      setPaymentsError('You are not signed in. Sign in with an Owner or Assistant account to load payments.');
+      setPaymentsAuthError(true);
+      return;
+    }
+    setPaymentsLoading(true);
+    setPaymentsError(null);
+    setPaymentsAuthError(false);
+    try {
+      const data = await getRecentPayments(session.token);
+      setPayments(data);
+    } catch (err) {
+      if (err instanceof BookingApiError) {
+        setPaymentsError(err.message);
+        setPaymentsAuthError(err.isAuthError);
+      } else {
+        setPaymentsError('Something went wrong while loading payments. Please try again.');
+      }
+    } finally {
+      setPaymentsLoading(false);
+    }
+  };
 
   /* menus & dishes tab — live data from /api/Menuitems + /api/Menutrays */
   const [menuItems, setMenuItems] = useState<AdminMenuItem[]>([]);
@@ -382,10 +375,8 @@ export function AdminDashboardPage() {
   const [cancelReason, setCancelReason] = useState('');
 
   /* payments tab state */
-  const [orderFilter, setOrderFilter] = useState<'all' | OrderStatus>('all');
-  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
-  const [noteOrderId, setNoteOrderId] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentStatusKey>('all');
+  const [expandedPayment, setExpandedPayment] = useState<string | null>(null);
 
   /* packages tab state */
 
@@ -400,12 +391,11 @@ export function AdminDashboardPage() {
   });
 
   /* ── derived metrics ── */
-  const totalRevenue = orders.filter((o) => o.status === 'fully_paid').reduce((s, o) => s + orderTotal(o), 0);
-  const pendingPayOrders = orders.filter((o) => o.status === 'pending_dp' || o.status === 'dp_paid');
-  const pendingPayTotal = pendingPayOrders.reduce((s, o) => {
-    const total = orderTotal(o);
-    return s + (o.status === 'dp_paid' ? total * 0.5 : total);
-  }, 0);
+  const totalRevenue = payments
+    .filter((p) => p.status === 'Success' || p.status === 'PartiallyRefunded' || p.status === 'Refunded')
+    .reduce((s, p) => s + (p.amountPaid - p.refundedAmount), 0);
+  const pendingPayments = payments.filter((p) => p.status === 'Pending');
+  const pendingPayTotal = pendingPayments.reduce((s, p) => s + p.amountPaid, 0);
   const pendingRes = reservations.filter((r) => r.status === 'Pending');
   const now = new Date();
   const in30 = new Date(now);
@@ -442,7 +432,7 @@ export function AdminDashboardPage() {
       .sort((a, b) => +new Date(a.eventDate) - +new Date(b.eventDate));
   }, [reservations, resFilter, resSearch]);
 
-  const filteredOrders = orders.filter((o) => orderFilter === 'all' || o.status === orderFilter);
+  const filteredPayments = payments.filter((p) => paymentFilter === 'all' || p.status === paymentFilter);
 
   const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
 
@@ -474,24 +464,6 @@ export function AdminDashboardPage() {
       alert(err.message || 'Failed to cancel booking.');
     }
   };
-
-  const advanceOrder = (o: Order) => {
-    const next: Partial<Record<OrderStatus, OrderStatus>> = { pending_dp: 'dp_paid', dp_paid: 'fully_paid' };
-    const to = next[o.status];
-    if (!to) return;
-    setOrders((prev) => prev.map((x) => (x.id === o.id ? { ...x, status: to, overdue: false } : x)));
-  };
-
-  const cancelOrder = (id: string) =>
-    setOrders((prev) => prev.map((x) => (x.id === id ? { ...x, status: 'cancelled' as const } : x)));
-
-  const saveNote = (id: string) => {
-    setOrders((prev) => prev.map((x) => (x.id === id ? { ...x, note: noteText.trim() || undefined } : x)));
-    setNoteOrderId(null);
-    setNoteText('');
-  };
-
-
 
   const setTestiStatus = (id: number, status: TestiStatus) =>
     setTestimonials((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
@@ -922,6 +894,7 @@ export function AdminDashboardPage() {
 
   /* refetch every time the tab is opened so admin edits elsewhere show up */
   useEffect(() => {
+    if (tab === 'overview' || tab === 'payments') void loadPayments();
     if (tab === 'bookings') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
     if (tab === 'rentals') void loadRentalCatalog();
@@ -954,7 +927,7 @@ export function AdminDashboardPage() {
   const NAV: { id: Tab; label: string; icon: string; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: '▦' },
     { id: 'bookings', label: 'Bookings', icon: '🗓', badge: pendingRes.length },
-    { id: 'payments', label: 'Payments', icon: '₱', badge: pendingPayOrders.length },
+    { id: 'payments', label: 'Payments', icon: '₱', badge: pendingPayments.length },
     { id: 'packages', label: 'Packages', icon: '📦' },
     { id: 'testimonials', label: 'Testimonials', icon: '★', badge: pendingTesti },
   ];
@@ -1396,8 +1369,8 @@ export function AdminDashboardPage() {
                 {/* metrics */}
                 <div className="adm-metrics">
                   {[
-                    { label: 'Total Revenue', value: fmt(totalRevenue), sub: 'from fully paid orders', color: 'var(--primary)' },
-                    { label: 'Pending Payments', value: String(pendingPayOrders.length), sub: `${fmt(pendingPayTotal)} outstanding`, color: 'var(--accent)' },
+                    { label: 'Total Revenue', value: fmt(totalRevenue), sub: 'from confirmed payments', color: 'var(--primary)' },
+                    { label: 'Pending Payments', value: String(pendingPayments.length), sub: `${fmt(pendingPayTotal)} awaiting confirmation`, color: 'var(--accent)' },
                     { label: 'Upcoming Events', value: String(upcomingCount), sub: 'within the next 30 days', color: '#4a90d9' },
                     { label: 'Pending Reservations', value: String(pendingRes.length), sub: 'awaiting your review', color: 'var(--accent)' },
                   ].map((m) => (
@@ -1615,103 +1588,122 @@ export function AdminDashboardPage() {
               </div>
             )}
 
-            {/* ══════════ PAYMENTS ══════════ */}
+            {/* ══════════ PAYMENTS (live backend data) ══════════ */}
             {tab === 'payments' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <h2 className="adm-title">Payments</h2>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 className="adm-title">Payments</h2>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
+                    </p>
+                  </div>
+                  <button type="button" className="adm-btn outline" onClick={() => void loadPayments()} disabled={paymentsLoading}>
+                    {paymentsLoading ? 'Refreshing…' : '↻ Refresh'}
+                  </button>
+                </div>
 
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'pending_dp', 'dp_paid', 'fully_paid', 'cancelled'] as const).map((k) => {
-                    const count = k === 'all' ? orders.length : orders.filter((o) => o.status === k).length;
+                  {(['all', 'Pending', 'Success', 'Failed', 'PartiallyRefunded', 'Refunded'] as const).map((k) => {
+                    const count = k === 'all' ? payments.length : payments.filter((p) => p.status === k).length;
                     return (
-                      <button key={k} type="button" className={`adm-pill${orderFilter === k ? ' active' : ''}`} onClick={() => setOrderFilter(k)}>
-                        {k === 'all' ? 'All Orders' : ORDER_STATUS[k].label}
+                      <button key={k} type="button" className={`adm-pill${paymentFilter === k ? ' active' : ''}`} onClick={() => setPaymentFilter(k)}>
+                        {k === 'all' ? 'All Payments' : PAYMENT_STATUS[k].label}
                         <span className="count">{count}</span>
                       </button>
                     );
                   })}
                 </div>
 
-                {filteredOrders.length === 0 ? (
-                  <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                    No orders match this filter.
+                {/* ── error state ── */}
+                {paymentsError && !paymentsLoading && (
+                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                      Couldn't load payments
+                    </h3>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                      {paymentsError}
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      <button type="button" className="adm-btn outline" onClick={() => void loadPayments()}>Try Again</button>
+                      {paymentsAuthError && <Link to="/login" className="adm-btn primary">Go to Sign In</Link>}
+                    </div>
                   </div>
-                ) : (
-                  filteredOrders.map((o) => {
-                    const st = ORDER_STATUS[o.status];
-                    const total = orderTotal(o);
-                    const open = expandedOrder === o.id;
-                    const noting = noteOrderId === o.id;
-                    return (
-                      <div key={o.id} className="adm-card" style={{ overflow: 'hidden' }}>
-                        <button
-                          type="button"
-                          onClick={() => setExpandedOrder(open ? null : o.id)}
-                          aria-expanded={open}
-                          style={{
-                            all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: '100%',
-                            padding: '1.3rem 1.5rem',
-                            display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
-                          }}
-                        >
-                          <div style={{ flex: 1, minWidth: 220 }}>
-                            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                              {o.customerName}
-                            </div>
-                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                              #{o.id} · {o.eventType} · event {fmtDate(o.eventDate)} · ordered {fmtDate(o.createdAt)}
-                            </div>
-                            {o.note && (
-                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontStyle: 'italic', color: 'var(--text-muted)', marginTop: '0.4rem', background: 'var(--accent-muted)', padding: '0.35rem 0.7rem', borderRadius: 'var(--r-lg)', borderLeft: '2px solid var(--accent)', display: 'inline-block' }}>
-                                Note: {o.note}
-                              </div>
-                            )}
-                          </div>
-                          {o.overdue && o.status !== 'cancelled' && <StatusBadge label="⚠ Overdue" color="var(--danger)" />}
-                          <StatusBadge label={st.label} color={st.color} />
-                          <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(total)}</span>
-                          <span style={{ color: 'var(--text-dim)', fontSize: '0.68rem', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s' }}>▼</span>
-                        </button>
+                )}
 
-                        {open && (
-                          <div style={{ borderTop: '1px solid var(--border)', padding: '1.15rem 1.5rem', background: 'var(--bg-subtle)' }}>
-                            {o.items.map((it) => (
-                              <div key={it.id} className="adm-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '0.45rem 0', fontFamily: 'var(--font-body)', fontSize: '0.78rem' }}>
-                                <span style={{ color: 'var(--text-muted)', fontWeight: 300 }}>{it.name} × {it.qty}</span>
-                                <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmt(it.price * it.qty)}</span>
-                              </div>
-                            ))}
-                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
-                              {o.status === 'pending_dp' && (
-                                <button type="button" className="adm-btn info" onClick={() => advanceOrder(o)}>Mark 50% DP Received</button>
-                              )}
-                              {o.status === 'dp_paid' && (
-                                <button type="button" className="adm-btn success" onClick={() => advanceOrder(o)}>Mark Fully Paid</button>
-                              )}
-                              {o.status !== 'cancelled' && o.status !== 'fully_paid' && (
-                                <button type="button" className="adm-btn danger" onClick={() => cancelOrder(o.id)}>Cancel Order</button>
-                              )}
-                              <button type="button" className="adm-btn outline" onClick={() => { setNoteOrderId(o.id); setNoteText(o.note ?? ''); }}>
-                                {o.note ? 'Edit Note' : 'Add Note'}
-                              </button>
-                            </div>
-                            {noting && (
-                              <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.9rem' }}>
-                                <div style={{ flex: 1, minWidth: 220 }}>
-                                  <FieldLabel text="Admin note" />
-                                  <input className="adm-input square" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                  <button type="button" className="adm-btn primary" onClick={() => saveNote(o.id)}>Save</button>
-                                  <button type="button" className="adm-btn outline" onClick={() => setNoteOrderId(null)}>Cancel</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
+                {/* ── loading skeleton ── */}
+                {paymentsLoading && (
+                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                    <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 3 ? '1px solid var(--border)' : 'none' }}>
+                        <div style={{ flex: 1 }}>
+                          <div className="adm-skel" style={{ height: '0.9rem', width: '40%', marginBottom: '0.45rem' }} />
+                          <div className="adm-skel" style={{ height: '0.6rem', width: '68%' }} />
+                        </div>
+                        <div className="adm-skel" style={{ height: '1.4rem', width: 84, borderRadius: 'var(--r-full)' }} />
+                        <div className="adm-skel" style={{ height: '1.4rem', width: 70, borderRadius: 'var(--r-full)' }} />
                       </div>
-                    );
-                  })
+                    ))}
+                  </div>
+                )}
+
+                {!paymentsLoading && !paymentsError && (
+                  filteredPayments.length === 0 ? (
+                    <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                      {payments.length === 0 ? 'No customer payments recorded yet.' : 'No payments match this filter.'}
+                    </div>
+                  ) : (
+                    filteredPayments.map((p) => {
+                      const st = paymentStatusMeta(p.status);
+                      const open = expandedPayment === p.id;
+                      return (
+                        <div key={p.id} className="adm-card" style={{ overflow: 'hidden' }}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedPayment(open ? null : p.id)}
+                            aria-expanded={open}
+                            style={{
+                              all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: '100%',
+                              padding: '1.3rem 1.5rem',
+                              display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 220 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                                {p.customerName}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                                {p.bookingName} · {p.method} · paid {fmtDateTime(p.paymentDateTime)}
+                              </div>
+                            </div>
+                            {p.refundRequested && <StatusBadge label="Refund Requested" color="var(--accent)" />}
+                            <StatusBadge label={st.label} color={st.color} />
+                            <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(p.amountPaid)}</span>
+                            <span style={{ color: 'var(--text-dim)', fontSize: '0.68rem', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s' }}>▼</span>
+                          </button>
+
+                          {open && (
+                            <div style={{ borderTop: '1px solid var(--border)', padding: '1.15rem 1.5rem', background: 'var(--bg-subtle)' }}>
+                              {[
+                                { label: 'Customer', value: `${p.customerName} · ${p.customerEmail}` },
+                                { label: 'Booking', value: `${p.bookingName}${p.eventType ? ` · ${p.eventType}` : ''} · event ${fmtDate(p.eventDate)}` },
+                                { label: 'Method', value: p.gatewayProvider ? `${p.method} via ${p.gatewayProvider}` : p.method },
+                                { label: 'Transaction Reference', value: p.transactionReference ?? '—' },
+                                ...(p.refundedAmount > 0 ? [{ label: 'Refunded', value: fmt(p.refundedAmount) }] : []),
+                              ].map((row) => (
+                                <div key={row.label} className="adm-row" style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.45rem 0', fontFamily: 'var(--font-body)', fontSize: '0.78rem' }}>
+                                  <span style={{ color: 'var(--text-muted)', fontWeight: 300 }}>{row.label}</span>
+                                  <span style={{ color: 'var(--text-secondary)', fontWeight: 500, textAlign: 'right' }}>{row.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )
                 )}
               </div>
             )}

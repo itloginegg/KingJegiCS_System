@@ -76,6 +76,26 @@ namespace System_ApiTest.DTOs
         string? RefundRequestReason,
         string? RefundRequestDecision);
 
+    /// <summary>Owner list item: a customer payment with its booking + customer context.</summary>
+    public record AdminPaymentListItemDto(
+        Guid Id,
+        Guid InvoiceId,
+        decimal AmountPaid,
+        decimal RefundedAmount,
+        DateTime PaymentDateTime,
+        string Method,
+        string Status,
+        string? TransactionReference,
+        string? GatewayProvider,
+        bool RefundRequested,
+        Guid BookingId,
+        string BookingName,
+        string? EventType,
+        DateOnly EventDate,
+        Guid CustomerId,
+        string CustomerName,
+        string CustomerEmail);
+
     /// <summary>Owner review queue item: an open refund request with its booking context.</summary>
     public record RefundRequestQueueItemDto(
         Guid PaymentId,

@@ -125,6 +125,38 @@ export interface PackageSelectionResponse {
   itemName: string;
 }
 
+
+export interface PaymentMilestoneDto {
+  label: string;
+  dueDate: string;
+  amountDue: number;
+  cumulativeDue: number;
+  paidToDate: number;
+  status: string; // 'Paid' | 'Overdue' | 'Upcoming'
+}
+
+export interface PaymentScheduleDto {
+  bookingId: string;
+  grandTotal: number;
+  paidTotal: number;
+  balance: number;
+  milestones: PaymentMilestoneDto[];
+}
+
+export interface InvoiceResponseDto {
+  id: string;
+  bookingId: string;
+  issueDate: string;
+  dueDate: string;
+  foodTotal: number;
+  rentalTotal: number;
+  serviceTotal: number;
+  taxAmount: number;
+  grandTotal: number;
+  status: string;
+  paidTotal: number;
+}
+
 // ── Internal helpers ───────────────────────────────────────────────────
 
 async function readErrorMessage(res: Response): Promise<string | null> {
@@ -354,4 +386,50 @@ export function completeBooking(token: string, bookingId: string): Promise<Booki
 
 export function cancelBooking(token: string, bookingId: string): Promise<BookingResponse> {
   return request<BookingResponse>(`/api/Bookings/${bookingId}/cancel`, 'POST', token);
+}
+
+
+// ── Payments and Invoices ──────────────────────────────────────────────
+
+export function getPaymentSchedule(token: string, bookingId: string): Promise<PaymentScheduleDto> {
+  return request<PaymentScheduleDto>(`/api/Bookings/${bookingId}/payment-schedule`, 'GET', token);
+}
+
+export function getInvoiceByBooking(token: string, bookingId: string): Promise<InvoiceResponseDto> {
+  return request<InvoiceResponseDto>(`/api/Invoices/booking/${bookingId}`, 'GET', token);
+}
+
+export interface CheckoutPayload {
+  invoiceId: string;
+  amount: number;
+}
+
+/** Matches AdminPaymentListItemDto — returned by GET /api/Payments/recent. */
+export interface AdminPaymentRecord {
+  id: string;
+  invoiceId: string;
+  amountPaid: number;
+  refundedAmount: number;
+  paymentDateTime: string;
+  method: string;
+  status: string;
+  transactionReference: string | null;
+  gatewayProvider: string | null;
+  refundRequested: boolean;
+  bookingId: string;
+  bookingName: string;
+  eventType: string | null;
+  eventDate: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+}
+
+/** Owner/Assistant: most recent customer payments across all bookings, newest first. */
+export function getRecentPayments(token: string, take = 50): Promise<AdminPaymentRecord[]> {
+  return request<AdminPaymentRecord[]>(`/api/Payments/recent?take=${take}`, 'GET', token);
+}
+
+export function checkout(token: string, payload: CheckoutPayload): Promise<{ payment: any, checkoutUrl: string }> {
+  return request<any>(`/api/Payments/checkout`, 'POST', token, payload);
 }

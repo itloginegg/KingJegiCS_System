@@ -10,6 +10,7 @@ using System_ApiTest.Data;
 using System_ApiTest.Seeding;
 using System_ApiTest.Services;
 using System_ApiTest.Workers;
+using System_ApiTest.Hubs;
 using static System_ApiTest.Services.Jwttokenservice;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,8 +37,10 @@ builder.Services.AddCors(options =>
                   return uri.Host is "localhost" or "127.0.0.1";
               })
               .AllowAnyHeader()
-              .AllowAnyMethod());
+              .AllowAnyMethod()
+              .AllowCredentials());
 });
+builder.Services.AddSignalR();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -94,6 +97,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
         options.Events = new JwtBearerEvents
         {
+            OnMessageReceived = ctx =>
+            {
+                var accessToken = ctx.Request.Query["access_token"];
+                var path = ctx.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/payment"))
+                {
+                    ctx.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            },
             OnTokenValidated = async ctx =>
             {
                 var jti = ctx.Principal?.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
@@ -133,6 +146,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<PaymentHub>("/hubs/payment");
 
 await DbSeeder.SeedAsync(app.Services);
 

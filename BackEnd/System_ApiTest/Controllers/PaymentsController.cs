@@ -262,6 +262,33 @@ namespace System_ApiTest.Controllers
             return Ok(rows);
         }
 
+        /// <summary>
+        /// Owner view: the most recent customer payments across all bookings, newest
+        /// first, with their booking + customer context for the admin dashboard.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("recent")]
+        public async Task<IActionResult> Recent([FromQuery] int take = 50)
+        {
+            take = Math.Clamp(take, 1, 200);
+            var rows = await _db.Payments
+                .Join(_db.Invoices, p => p.InvoiceId, i => i.Id, (p, i) => new { p, i })
+                .Join(_db.Bookings, x => x.i.BookingId, b => b.Id, (x, b) => new { x.p, b })
+                .Join(_db.Customers, x => x.b.CustomerId, c => c.Id, (x, c) => new { x.p, x.b, c })
+                .OrderByDescending(x => x.p.PaymentDateTime)
+                .Take(take)
+                .Select(x => new AdminPaymentListItemDto(
+                    x.p.Id, x.p.InvoiceId, x.p.AmountPaid, x.p.RefundedAmount,
+                    x.p.PaymentDateTime, x.p.Method.ToString(), x.p.Status.ToString(),
+                    x.p.TransactionReference, x.p.GatewayProvider, x.p.RefundRequested,
+                    x.b.Id, x.b.BookingName,
+                    x.b.EventType == null ? null : x.b.EventType.ToString(),
+                    x.b.EventDate,
+                    x.c.Id, x.c.FullName, x.c.Email))
+                .ToListAsync();
+            return Ok(rows);
+        }
+
         [HttpGet("invoice/{invoiceId:guid}")]
         public async Task<IActionResult> GetByInvoice(Guid invoiceId)
         {

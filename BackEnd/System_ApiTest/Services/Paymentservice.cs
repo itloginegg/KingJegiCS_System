@@ -1,6 +1,8 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using System_ApiTest.Data;
 using System_ApiTest.Models;
+using System_ApiTest.Hubs;
 
 namespace System_ApiTest.Services
 {
@@ -11,16 +13,18 @@ namespace System_ApiTest.Services
         private readonly Systemsettingsservice _settings;
         private readonly Bookingservice _bookings;
         private readonly PayMongoservice _payMongo;
+        private readonly IHubContext<PaymentHub> _hubContext;
 
         public Paymentservice(AppDbContext db, Invoiceservice invoices,
                               Systemsettingsservice settings, Bookingservice bookings,
-                              PayMongoservice payMongo)
+                              PayMongoservice payMongo, IHubContext<PaymentHub> hubContext)
         {
             _db = db;
             _invoices = invoices;
             _settings = settings;
             _bookings = bookings;
             _payMongo = payMongo;
+            _hubContext = hubContext;
         }
 
         /// <summary>
@@ -273,6 +277,7 @@ namespace System_ApiTest.Services
             try
             {
                 await MarkSuccessAsync(payment.Id, today);
+                await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
                 return "confirmed";
             }
             catch (BookingRuleException ex)
@@ -282,6 +287,7 @@ namespace System_ApiTest.Services
                 // loudly for the owner instead of silently dropping paid money.
                 payment.GatewayStatusRaw = $"paid — NEEDS ATTENTION: {ex.Message}";
                 await _db.SaveChangesAsync();
+                await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
                 return $"paid but not confirmable: {ex.Message}";
             }
         }
@@ -299,6 +305,7 @@ namespace System_ApiTest.Services
             payment.Status = PaymentStatus.Failed;
             payment.GatewayStatusRaw = rawStatus ?? "failed";
             await _db.SaveChangesAsync();
+            await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
             return "marked failed";
         }
 

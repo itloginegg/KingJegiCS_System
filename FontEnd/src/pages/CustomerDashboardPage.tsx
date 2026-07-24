@@ -1,187 +1,169 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { ChatWidget } from '../components/landing/ChatWidget';
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Static content — design reference only, no backend calls.
-───────────────────────────────────────────────────────────────────────── */
-
-/* Fallback persona for the booking data below; the signed-in account's name
-   and email (from AuthContext) take precedence everywhere they're shown. */
-const FALLBACK_USER = { name: 'Maria Santos', email: 'maria.santos@example.com' };
-
-type BookingStatus = 'pending' | 'pending_fee' | 'secured' | 'cancelled';
-type OrderStatus = 'pending_dp' | 'dp_paid' | 'fully_paid';
-
-type Booking = {
+import { HubConnectionBuilder } from '@microsoft/signalr';
+import { 
+  LayoutDashboard, CalendarDays, CreditCard, MessageSquare, Package, 
+  Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake,
+  Cake, PartyPopper, Building2, Smartphone, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
+} from 'lucide-react';
+export interface InvoiceResponseDto {
   id: string;
-  eventType: 'wedding' | 'birthday' | 'debut' | 'corporate';
-  eventDate: string;
+  bookingId: string;
+  issueDate: string;
+  dueDate: string;
+  foodTotal: number;
+  rentalTotal: number;
+  serviceTotal: number;
+  taxAmount: number;
+  grandTotal: number;
+  status: string;
+  paidTotal: number;
+}
+
+export interface PaymentMilestoneDto {
+  label: string;
+  dueDate: string;
+  amountDue: number;
+  cumulativeDue: number;
+  paidToDate: number;
+  status: string;
+}
+
+
+export interface BookingResponseDto {
+  id: string;
+  bookingName: string;
+  customerId: string;
+  bookingType: string;
+  eventDate: string | null;
+  startTime: string | null;
+  endDate: string | null;
+  endTime: string | null;
+  eventType: string | null;
+  venueAddress: string;
+  contactNumber: string;
   guestCount: number;
-  location: string;
-  pkg: string;
-  status: BookingStatus;
-  services: string[];
-  notes?: string;
-  submittedAt: string;
-  orderId?: string;
-};
-
-type OrderItem = { id: number; name: string; type: string; qty: number; price: number };
-
-type Order = {
-  id: string;
-  eventLabel: string;
-  eventDate: string;
-  status: OrderStatus;
+  status: string;
+  depositStatus: string;
+  totalAmount: number;
+  menuPackageId: string | null;
+  cancellationRequested: boolean;
+  cancellationRequestReason: string | null;
   createdAt: string;
-  items: OrderItem[];
-};
-
-type Txn = {
+}
+export interface BookingPackageSummaryDto {
   id: string;
-  orderId: string;
-  date: string;
-  amount: number;
-  method: 'e_wallet' | 'bank_transfer' | 'credit_card';
-  eventLabel: string;
+  packageName: string;
+  basePrice: number;
+  inclusions: string[];
+}
+
+export interface BookingRentalLineDto {
+  id: string;
+  rentalItemId: string;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  deliveryStatus: string;
+}
+
+export interface BookingServiceLineDto {
+  id: string;
+  serviceItemId: string;
+  serviceName: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface BookingMenuItemLineDto {
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  capturedPrice: number;
+  lineTotal: number;
+}
+
+export interface BookingMenuTrayLineDto {
+  trayId: string;
+  trayName: string;
+  quantity: number;
+  capturedPrice: number;
+  lineTotal: number;
+}
+
+export interface BookingDetailDto {
+  booking: BookingResponseDto;
+  package: BookingPackageSummaryDto | null;
+  rentals: BookingRentalLineDto[];
+  services: BookingServiceLineDto[];
+  menuItems: BookingMenuItemLineDto[];
+  menuTrays: BookingMenuTrayLineDto[];
+}
+
+export interface BookingPackageSelectionDto {
+  slotId: string;
+  slotLabel: string;
+  menuItemId: string;
+  menuItemName: string;
+}
+
+
+const normalizeType = (ty: string | null) => {
+  if (!ty) return 'wedding';
+  const l = ty.toLowerCase();
+  if (l.includes('wed')) return 'wedding';
+  if (l.includes('birth')) return 'birthday';
+  if (l.includes('debut')) return 'debut';
+  if (l.includes('corp')) return 'corporate';
+  return 'wedding';
+};
+const normalizeStatus = (st: string | null) => {
+  if (!st) return 'pending';
+  const l = st.toLowerCase();
+  if (l.includes('cancel')) return 'cancelled';
+  if (l.includes('secur')) return 'secured';
+  if (l.includes('fee')) return 'pending_fee';
+  return 'pending';
 };
 
-const EVENT_META: Record<Booking['eventType'], { label: string; glyph: string }> = {
-  wedding: { label: 'Wedding Event', glyph: '◇' },
-  birthday: { label: 'Birthday Celebration', glyph: '◎' },
-  debut: { label: 'Debut Celebration', glyph: '✦' },
-  corporate: { label: 'Corporate Event', glyph: '◈' },
+export interface PaymentScheduleDto {
+  bookingId: string;
+  grandTotal: number;
+  paidTotal: number;
+  balance: number;
+  milestones: PaymentMilestoneDto[];
+}
+
+
+const EVENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  wedding: { label: 'Wedding Event', icon: <HeartHandshake size={16} /> },
+  birthday: { label: 'Birthday Celebration', icon: <Cake size={16} /> },
+  debut: { label: 'Debut Celebration', icon: <PartyPopper size={16} /> },
+  corporate: { label: 'Corporate Event', icon: <Building2 size={16} /> },
 };
 
-const BOOKING_STATUS: Record<BookingStatus, { label: string; color: string }> = {
+const BOOKING_STATUS: Record<string, { label: string; color: string }> = {
   pending: { label: 'Pending Approval', color: 'var(--accent)' },
   pending_fee: { label: 'Awaiting Fee', color: 'var(--accent)' },
   secured: { label: 'Secured', color: 'var(--primary)' },
   cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
 
-const ORDER_STATUS: Record<OrderStatus, { label: string; color: string }> = {
-  pending_dp: { label: 'Pending Down Payment', color: 'var(--accent)' },
-  dp_paid: { label: '50% DP Paid', color: '#4a90d9' },
-  fully_paid: { label: 'Fully Paid', color: 'var(--primary)' },
+const METHOD_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  e_wallet: { label: 'E-Wallet', icon: <Smartphone size={16} /> },
+  bank_transfer: { label: 'Bank Transfer', icon: <Landmark size={16} /> },
+  credit_card: { label: 'Credit Card', icon: <CreditCard size={16} /> },
 };
 
-const METHOD_META: Record<Txn['method'], { label: string; icon: string }> = {
-  e_wallet: { label: 'E-Wallet', icon: '📱' },
-  bank_transfer: { label: 'Bank Transfer', icon: '🏦' },
-  credit_card: { label: 'Credit Card', icon: '💳' },
-};
-
-const INITIAL_BOOKINGS: Booking[] = [
-  {
-    id: 'BK-2107',
-    eventType: 'wedding',
-    eventDate: '2026-09-12',
-    guestCount: 150,
-    location: 'Hacienda Isabella, Calamba',
-    pkg: 'Wedding Package',
-    status: 'secured',
-    services: ['Full Catering', 'Floral Styling', 'Sound System'],
-    notes: 'Motif is sage green and gold. Ceremony starts 3 PM; dinner service by 6 PM.',
-    submittedAt: '2026-06-20',
-    orderId: 'OR-3301',
-  },
-  {
-    id: 'BK-2093',
-    eventType: 'birthday',
-    eventDate: '2026-08-02',
-    guestCount: 60,
-    location: 'Private Residence, Canlubang',
-    pkg: 'Birthday Package',
-    status: 'pending_fee',
-    services: ['Full Catering', 'Balloon Styling'],
-    submittedAt: '2026-07-10',
-    orderId: 'OR-3287',
-  },
-  {
-    id: 'BK-2088',
-    eventType: 'corporate',
-    eventDate: '2026-07-28',
-    guestCount: 80,
-    location: 'Carmelray Business Park',
-    pkg: 'Custom Package',
-    status: 'pending',
-    services: ['Plated Catering', 'AV Setup'],
-    notes: 'Quarterly town hall — needs projector and two wireless mics.',
-    submittedAt: '2026-07-05',
-  },
-  {
-    id: 'BK-2051',
-    eventType: 'debut',
-    eventDate: '2026-05-30',
-    guestCount: 100,
-    location: 'Solenad Events Hall',
-    pkg: 'Custom Package',
-    status: 'cancelled',
-    services: ['Full Catering'],
-    submittedAt: '2026-04-02',
-  },
-];
-
-const ORDERS: Order[] = [
-  {
-    id: 'OR-3301',
-    eventLabel: 'Wedding Event — Sep 12, 2026',
-    eventDate: '2026-09-12',
-    status: 'dp_paid',
-    createdAt: '2026-06-24',
-    items: [
-      { id: 1, name: 'Wedding Package', type: 'package', qty: 1, price: 80000 },
-      { id: 2, name: 'Lechon de Leche (per head)', type: 'menu', qty: 150, price: 350 },
-      { id: 3, name: 'Sound System Package', type: 'rental', qty: 1, price: 1800 },
-    ],
-  },
-  {
-    id: 'OR-3287',
-    eventLabel: 'Birthday Celebration — Aug 2, 2026',
-    eventDate: '2026-08-02',
-    status: 'pending_dp',
-    createdAt: '2026-07-11',
-    items: [
-      { id: 1, name: 'Birthday Package', type: 'package', qty: 1, price: 65000 },
-      { id: 2, name: 'Party Lights Set', type: 'rental', qty: 1, price: 400 },
-    ],
-  },
-  {
-    id: 'OR-3210',
-    eventLabel: 'Family Reunion — Jun 14, 2026',
-    eventDate: '2026-06-14',
-    status: 'fully_paid',
-    createdAt: '2026-05-28',
-    items: [
-      { id: 1, name: 'Handaan Tray Set', type: 'tray', qty: 2, price: 3999 },
-      { id: 2, name: 'Tiffany Chairs', type: 'rental', qty: 100, price: 35 },
-    ],
-  },
-];
-
-const TRANSACTIONS: Txn[] = [
-  { id: 'TXN-88121', orderId: 'OR-3301', date: '2026-07-02', amount: 67650, method: 'e_wallet', eventLabel: 'Wedding Event — Sep 12, 2026' },
-  { id: 'TXN-87554', orderId: 'OR-3210', date: '2026-06-10', amount: 11498, method: 'bank_transfer', eventLabel: 'Family Reunion — Jun 14, 2026' },
-];
-
-const MESSAGES = [
-  { id: 1, from: 'admin', text: "Hi Maria! Your wedding down payment is confirmed — we've locked in September 12. 🎉", at: '2026-07-02' },
-  { id: 2, from: 'admin', text: 'Reminder: the reservation fee for your birthday booking is due within 48 hours to secure the date.', at: '2026-07-11' },
-  { id: 3, from: 'me', text: 'Thank you! Can we schedule the food tasting for the wedding sometime in early August?', at: '2026-07-12' },
-  { id: 4, from: 'admin', text: 'Of course — our coordinator will message you tasting slots this week.', at: '2026-07-12' },
-];
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Helpers
-───────────────────────────────────────────────────────────────────────── */
-
-const fmt = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 0 })}`;
+const fmt = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n);
 
 const fmtDate = (iso: string) => {
+
   try {
     return new Date(iso).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
   } catch {
@@ -189,17 +171,10 @@ const fmtDate = (iso: string) => {
   }
 };
 
-const orderTotal = (o: Order) => o.items.reduce((s, i) => s + i.price * i.qty, 0);
-const orderPaid = (o: Order) =>
-  o.status === 'fully_paid' ? orderTotal(o) : o.status === 'dp_paid' ? orderTotal(o) * 0.5 : 0;
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Small pieces
-───────────────────────────────────────────────────────────────────────── */
-
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
     <span
+
       style={{
         fontFamily: 'var(--font-body)', fontSize: '0.56rem',
         letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 500,
@@ -231,14 +206,18 @@ function FieldLabel({ text }: { text: string }) {
 
 const PIPELINE_STEPS = ['Unpaid', 'Reserved', 'Partial', 'Paid'];
 
-function pipelineStep(booking: Booking, order?: Order) {
-  if (order?.status === 'fully_paid') return 3;
-  if (order?.status === 'dp_paid') return 2;
-  if (booking.status === 'secured' || order?.status === 'pending_dp') return 1;
-  return 0;
+function pipelineStep(booking: BookingResponseDto) {
+  switch (booking.depositStatus) {
+    case 'Paid': return 3;
+    case 'Partial': return 2;
+    case 'Reserved': return 1;
+    case 'Unpaid':
+    default: return 0;
+  }
 }
 
 function Pipeline({ current, cancelled }: { current: number; cancelled: boolean }) {
+
   return (
     <div className="cds-pipeline" aria-label="Booking progress">
       {PIPELINE_STEPS.map((step, idx) => {
@@ -265,86 +244,222 @@ function Pipeline({ current, cancelled }: { current: number; cancelled: boolean 
 
 /* ─────────────────────────────────────────────────────────────────────────
    Modals
-───────────────────────────────────────────────────────────────────────── */
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
-function BookingDetailModal({ booking, onClose }: { booking: Booking; onClose: () => void }) {
-  const meta = EVENT_META[booking.eventType];
-  const st = BOOKING_STATUS[booking.status];
+function BookingDetailModal({ booking, onClose, statusBadge }: { booking: BookingResponseDto; onClose: () => void; statusBadge?: { label: string; color: string } }) {
+  const [detail, setDetail] = useState<BookingDetailDto | null>(null);
+  const [selections, setSelections] = useState<BookingPackageSelectionDto[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchDetail = async () => {
+      try {
+        const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
+        const headers = { Authorization: `Bearer ${token}` };
+        
+        const [dRes, sRes] = await Promise.all([
+          fetch(`http://localhost:5258/api/Bookings/${booking.id}`, { headers }),
+          fetch(`http://localhost:5258/api/Bookings/${booking.id}/package-selections`, { headers })
+        ]);
+        
+        if (dRes.ok) {
+          const dData = await dRes.json();
+          setDetail(dData);
+        }
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          setSelections(sData);
+        }
+      } catch (err) {
+        console.error('Failed to fetch details:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchDetail();
+  }, [booking.id]);
+
+  const meta = EVENT_META[normalizeType(booking.eventType)] || EVENT_META.wedding;
+  const st = statusBadge || BOOKING_STATUS[normalizeStatus(booking.status)] || BOOKING_STATUS.pending;
   return (
     <div className="cds-overlay" onClick={onClose}>
-      <div className="cds-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${meta.label} details`}>
-        <div className="cds-modal-head">
+      <div className="cds-modal" style={{ maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${meta.label} details`}>
+        <div className="cds-modal-head" style={{ flexShrink: 0 }}>
           <div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
               {meta.label}
+
             </h2>
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-dim)', marginTop: '0.3rem', letterSpacing: '0.08em' }}>
               #{booking.id}
             </p>
           </div>
-          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">✕</button>
+          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">├ù</button>
         </div>
 
-        <div className="cds-modal-body">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.1rem' }}>
-            <div><FieldLabel text="Event Date" /><strong className="cds-value">{fmtDate(booking.eventDate)}</strong></div>
-            <div><FieldLabel text="Status" /><StatusBadge label={st.label} color={st.color} /></div>
-            <div><FieldLabel text="Guests" /><strong className="cds-value">{booking.guestCount} pax</strong></div>
-            <div><FieldLabel text="Package" /><strong className="cds-value">{booking.pkg}</strong></div>
+        <div className="cds-modal-body" style={{ overflowY: 'auto', padding: '1.6rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.1rem', marginBottom: '1.5rem' }}>
+            <div><FieldLabel text="Event Date" /><strong className="cds-value">{(booking.eventDate ? fmtDate(booking.eventDate) : 'TBD')}</strong></div>
+            <div><FieldLabel text="Status" /><strong className="cds-value" style={{ color: st.color }}>{st.label}</strong></div>
+            <div><FieldLabel text="Venue" /><strong className="cds-value">{booking.venueAddress}</strong></div>
+            <div><FieldLabel text="Guests" /><strong className="cds-value">{booking.guestCount}</strong></div>
           </div>
 
-          <div><FieldLabel text="Location" /><strong className="cds-value">{booking.location}</strong></div>
+          {loading ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>Loading additional details...</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              
+              {/* Package Details */}
+              {detail?.package && (
+                <div>
+                  <FieldLabel text="Selected Package" />
+                  <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '1rem', background: 'var(--bg-card)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                      <strong style={{ color: 'var(--text-primary)', fontSize: '0.9rem' }}>{detail.package.packageName}</strong>
+                      <strong style={{ color: 'var(--text-primary)' }}>{fmt(detail.package.basePrice)}</strong>
+                    </div>
+                    {detail.package.inclusions && detail.package.inclusions.length > 0 && (
+                      <ul style={{ margin: 0, paddingLeft: '1.2rem', color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: 1.6 }}>
+                        {detail.package.inclusions.map((inc, i) => (
+                          <li key={i}>{inc}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
 
-          <div>
-            <FieldLabel text="Selected Services" />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-              {booking.services.map((s) => (
-                <span key={s} className="cds-tag">{s}</span>
-              ))}
-            </div>
-          </div>
+              {/* Package Dish Selections */}
+              {selections && selections.length > 0 && (
+                <div>
+                  <FieldLabel text="Package Dish Selections" />
+                  <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
+                    {selections.map(sel => (
+                      <div key={sel.slotId + sel.menuItemId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{sel.slotLabel}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{sel.menuItemName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-          {booking.notes && (
-            <div>
-              <FieldLabel text="Notes" />
-              <p
-                style={{
-                  fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300,
-                  color: 'var(--text-muted)', lineHeight: 1.7,
-                  background: 'var(--bg-subtle)', padding: '0.85rem 1rem',
-                  borderRadius: 'var(--r-lg)', borderLeft: '2px solid var(--border-accent)',
-                }}
-              >
-                {booking.notes}
-              </p>
+              {/* A La Carte Items */}
+              {((detail?.menuItems && detail.menuItems.length > 0) || (detail?.menuTrays && detail.menuTrays.length > 0)) && (
+                <div>
+                  <FieldLabel text="A La Carte Food & Trays" />
+                  <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
+                    {detail?.menuItems.map(mi => (
+                      <div key={mi.itemId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mi.itemName} ├ù {mi.quantity}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(mi.lineTotal)}</span>
+                      </div>
+                    ))}
+                    {detail?.menuTrays.map(mt => (
+                      <div key={mt.trayId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mt.trayName} ├ù {mt.quantity}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(mt.lineTotal)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Rentals */}
+              {detail?.rentals && detail.rentals.length > 0 && (
+                <div>
+                  <FieldLabel text="Rentals" />
+                  <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
+                    {detail.rentals.map(r => (
+                      <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{r.itemName} ├ù {r.quantity}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(r.subtotal)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Services */}
+              {detail?.services && detail.services.length > 0 && (
+                <div>
+                  <FieldLabel text="Services" />
+                  <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
+                    {detail.services.map(s => (
+                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{s.serviceName} ├ù {s.quantity}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(s.totalCost)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
-
-          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', borderTop: '1px solid var(--border)', paddingTop: '0.9rem' }}>
-            Submitted on {fmtDate(booking.submittedAt)}
-          </p>
         </div>
       </div>
     </div>
   );
 }
 
-function InvoiceModal({
-  order,
-  customer,
-  onClose,
-}: {
-  order: Order;
-  customer: { name: string; email: string };
-  onClose: () => void;
-}) {
-  const st = ORDER_STATUS[order.status];
-  const total = orderTotal(order);
-  const paid = orderPaid(order);
-  const remaining = total - paid;
+function InvoiceModal({ order, customer, onClose }: { order: any; customer: { name: string; email: string }; onClose: () => void; }) {
+  const [invoice, setInvoice] = useState<InvoiceResponseDto | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const fetchInvoice = async () => {
+    try {
+      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
+      const res = await fetch(`http://localhost:5258/api/Invoices/${order.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setInvoice(await res.json());
+      } else {
+        setError('Invoice pending generation by admin.');
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Invoice pending generation by admin.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (order?.id) fetchInvoice();
+  }, [order?.id]);
+
+  if (isLoading) {
+    return (
+      <div className="cds-overlay" onClick={onClose}>
+        <div className="cds-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '2rem', textAlign: 'center' }}>
+          Loading invoice...
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !invoice) {
+    return (
+      <div className="cds-overlay" onClick={onClose}>
+        <div className="cds-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '2rem', textAlign: 'center' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '1rem' }}>{error || 'Not found'}</div>
+          <button className="cds-btn outline" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  const remaining = invoice.grandTotal - invoice.paidTotal;
+  const isPaid = invoice.status === 'Paid';
+  const stColor = isPaid ? 'var(--success)' : 'var(--text-dim)';
 
   return (
     <div className="cds-overlay" onClick={onClose}>
+
       <div id="cds-invoice" className="cds-modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Invoice">
         <div className="cds-modal-head" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '0.15rem' }}>
           <button className="cds-modal-close" onClick={onClose} aria-label="Close invoice" style={{ position: 'absolute', top: '1.1rem', right: '1.1rem' }}>✕</button>
@@ -352,12 +467,13 @@ function InvoiceModal({
             KING JEGI
           </span>
           <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.52rem', letterSpacing: '0.4em', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 500 }}>
-            Events &amp; Catering
+            Events & Catering
           </span>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.8rem' }}>
-            Invoice · #{order.id}
+            Invoice ┬╖ #{invoice.id.substring(0,8)}
           </span>
         </div>
+
 
         <div className="cds-modal-body">
           <div
@@ -368,30 +484,38 @@ function InvoiceModal({
               fontFamily: 'var(--font-body)', fontSize: '0.78rem',
             }}
           >
-            <span style={{ color: 'var(--text-dim)' }}>Client: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer.name}</strong></span>
-            <span style={{ color: 'var(--text-dim)' }}>Event date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(order.eventDate)}</strong></span>
-            <span style={{ color: 'var(--text-dim)' }}>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer.email}</strong></span>
-            <span style={{ color: 'var(--text-dim)' }}>Issued: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(order.createdAt)}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Client: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer?.name}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Issued: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{invoice.issueDate}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{customer?.email}</strong></span>
+            <span style={{ color: 'var(--text-dim)' }}>Due: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{invoice.dueDate}</strong></span>
           </div>
 
           <table className="cds-table">
             <thead>
               <tr>
-                <th>Item</th><th>Type</th><th>Qty</th><th>Unit</th><th style={{ textAlign: 'right' }}>Total</th>
+                <th>Category</th><th style={{ textAlign: 'right' }}>Total</th>
               </tr>
             </thead>
             <tbody>
-              {order.items.map((it) => (
-                <tr key={it.id}>
-                  <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>{it.name}</td>
-                  <td style={{ textTransform: 'capitalize', color: 'var(--text-muted)' }}>{it.type}</td>
-                  <td>{it.qty}</td>
-                  <td style={{ color: 'var(--text-muted)' }}>{fmt(it.price)}</td>
-                  <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 600, color: 'var(--primary)' }}>{fmt(it.price * it.qty)}</td>
-                </tr>
-              ))}
+              <tr>
+                <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Food & Catering</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.foodTotal)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Rentals & Equipment</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.rentalTotal)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Services & Add-ons</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.serviceTotal)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Tax</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.taxAmount)}</td>
+              </tr>
             </tbody>
           </table>
+
 
           <div
             style={{
@@ -401,24 +525,26 @@ function InvoiceModal({
             }}
           >
             <div style={{ display: 'flex', gap: '1.75rem', alignItems: 'baseline' }}>
-              <FieldLabel text="Total" />
-              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(total)}</span>
+              <FieldLabel text="Grand Total" />
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(invoice.grandTotal)}</span>
             </div>
             <div style={{ display: 'flex', gap: '1.75rem', alignItems: 'baseline', fontFamily: 'var(--font-body)', fontSize: '0.85rem' }}>
               <FieldLabel text="Paid" />
-              <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(paid)}</span>
+              <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(invoice.paidTotal)}</span>
             </div>
             <div style={{ display: 'flex', gap: '1.75rem', alignItems: 'baseline', fontFamily: 'var(--font-body)', fontSize: '0.85rem' }}>
               <FieldLabel text="Remaining" />
+
               <span style={{ color: remaining > 0 ? 'var(--danger)' : 'var(--text-dim)', fontWeight: 600 }}>{fmt(remaining)}</span>
             </div>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-            <StatusBadge label={st.label} color={st.color} />
+            <StatusBadge label={invoice.status} color={stColor} />
             <div style={{ display: 'flex', gap: '0.6rem' }}>
               <button className="cds-btn outline" onClick={onClose}>Close</button>
               <button className="cds-btn primary" onClick={() => window.print()}>Print</button>
+
             </div>
           </div>
         </div>
@@ -427,18 +553,222 @@ function InvoiceModal({
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Main component
-───────────────────────────────────────────────────────────────────────── */
+
+function PaymentScheduleModal({ order, invoice, onClose }: { order: any; invoice: any; onClose: () => void; }) {
+  const [schedule, setSchedule] = useState<PaymentScheduleDto | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const remaining = invoice ? (invoice.grandTotal - invoice.paidTotal) : 0;
+  const [amount, setAmount] = useState<number>(remaining);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+
+  const fetchSchedule = async () => {
+    try {
+      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
+      const res = await fetch(`http://localhost:5258/api/Bookings/${order.id}/payment-schedule`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setSchedule(await res.json());
+      } else {
+        setError('Schedule not available yet.');
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Schedule not available yet.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (order?.id) fetchSchedule();
+  }, [order?.id]);
+
+  useEffect(() => {
+    if (invoice) {
+      setAmount(invoice.grandTotal - invoice.paidTotal);
+    }
+  }, [invoice]);
+
+  const handleCheckout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invoice) return;
+    if (amount <= 0 || amount > remaining) {
+      setCheckoutError(`Amount must be between 1 and ${remaining}`);
+      return;
+    }
+    
+    setIsSubmitting(true);
+    setCheckoutError('');
+    
+    try {
+      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
+      const res = await fetch(`http://localhost:5258/api/Payments/checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          amount: amount
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (res.ok && data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+      } else {
+        setCheckoutError(data.message || 'Failed to initiate checkout.');
+        setIsSubmitting(false);
+      }
+    } catch (err) {
+      console.error(err);
+      setCheckoutError('An error occurred while connecting to the payment gateway.');
+      setIsSubmitting(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="cds-overlay" onClick={onClose}>
+        <div className="cds-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '2rem', textAlign: 'center' }}>
+          Loading payment schedule...
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !schedule) {
+    return (
+      <div className="cds-overlay" onClick={onClose}>
+        <div className="cds-modal" onClick={(e) => e.stopPropagation()} style={{ padding: '2rem', textAlign: 'center' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '1rem' }}>{error || 'Not found'}</div>
+          <button className="cds-btn outline" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
+  const milestones = schedule.milestones || [];
+
+  return (
+    <div className="cds-overlay" onClick={onClose}>
+      <div className="cds-modal" style={{ maxWidth: 560, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Payment Schedule and Checkout">
+        <div className="cds-modal-head" style={{ flexShrink: 0 }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              Payment Schedule
+            </h2>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+              Booking #{order.id.substring(0, 8)}
+            </p>
+          </div>
+          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">├ù</button>
+        </div>
+
+        <form onSubmit={handleCheckout} className="cds-modal-body" style={{ overflowY: 'auto', padding: '1.6rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+            <div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Grand Total</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(schedule.grandTotal)}</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Remaining Balance</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(schedule.balance)}</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', margin: '1.5rem 0' }}>
+            {milestones.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-dim)' }}>
+                No active schedule yet.
+              </div>
+            ) : milestones.map((m, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-subtle)', border: '1px solid var(--border)',
+                borderRadius: 'var(--r-md)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+              }}>
+                <div>
+                  <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{m.label}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Due: {m.dueDate}</div>
+                </div>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(m.amountDue)}</div>
+                  {m.status === 'Paid' ? (
+                    <StatusBadge label="Paid" color="var(--success)" />
+                  ) : (
+                    <StatusBadge label={m.status} color="var(--accent)" />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {invoice && remaining > 0 && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
+              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '1rem', marginTop: 0 }}>Checkout</h3>
+              
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
+                  Payment Amount
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="1"
+                  max={remaining}
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.8rem',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: '1rem',
+                    border: '1px solid var(--border)',
+                    borderRadius: '0.3rem',
+                    background: 'var(--bg-card)',
+                    color: 'var(--text-primary)'
+                  }}
+                  required
+                  disabled={isSubmitting}
+                />
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '0.4rem' }}>
+                  You may enter a partial amount to pay.
+                </p>
+              </div>
+
+              {checkoutError && <div style={{ color: 'var(--accent)', fontSize: '0.8rem', marginBottom: '1rem', textAlign: 'center' }}>{checkoutError}</div>}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.8rem', paddingTop: '0.5rem' }}>
+            <button type="button" className="cds-btn outline" onClick={onClose} disabled={isSubmitting}>Close</button>
+            {invoice && remaining > 0 && (
+              <button type="submit" className="cds-btn primary" disabled={isSubmitting}>
+                {isSubmitting ? 'Processing...' : '₱ Pay Balance'}
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 
 type Tab = 'overview' | 'bookings' | 'payments' | 'messages';
-
-const NAV_ITEMS: { id: Tab; label: string; icon: string }[] = [
-  { id: 'overview', label: 'Overview', icon: '▦' },
-  { id: 'bookings', label: 'My Bookings', icon: '🗓' },
-  { id: 'payments', label: 'Payments', icon: '₱' },
-  { id: 'messages', label: 'Messages', icon: '💬' },
+const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={20} /> },
+  { id: 'bookings', label: 'My Bookings', icon: <CalendarDays size={20} /> },
+  { id: 'payments', label: 'Payments', icon: <CreditCard size={20} /> },
+  { id: 'messages', label: 'Messages', icon: <MessageSquare size={20} /> },
 ];
+
 
 export function CustomerDashboardPage() {
   const { theme, toggleTheme } = useTheme();
@@ -446,68 +776,137 @@ export function CustomerDashboardPage() {
 
   /* the signed-in account; static persona only as a dev fallback */
   const account = {
-    name: authUser?.name ?? FALLBACK_USER.name,
-    email: authUser?.email ?? FALLBACK_USER.email,
+    name: authUser?.name ?? 'Maria Santos',
+    email: authUser?.email ?? 'maria.santos@example.com',
   };
 
   const [tab, setTab] = useState<Tab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [bookings, setBookings] = useState<Booking[]>(INITIAL_BOOKINGS);
+  
+  const [bookings, setBookings] = useState<BookingResponseDto[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceResponseDto[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
 
-  const [detailBooking, setDetailBooking] = useState<Booking | null>(null);
-  const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
+      const headers = { Authorization: `Bearer ${token}` };
+      
+      const bRes = await fetch('http://localhost:5258/api/Bookings', { headers });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        const safeBookings = Array.isArray(bData) ? bData : [];
+        setBookings(safeBookings);
+        
+        const invPromises = safeBookings.map(async (b: BookingResponseDto) => {
+          const iRes = await fetch(`http://localhost:5258/api/Invoices/booking/${b.id}`, { headers });
+          if (iRes.ok) return iRes.json();
+          return null;
+        });
+        
+        const invData = await Promise.all(invPromises);
+        setInvoices(Array.isArray(invData) ? invData.filter(i => i !== null) : []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsFetching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboard();
+  }, [fetchDashboard]);
+
+  useEffect(() => {
+    const conn = new HubConnectionBuilder()
+      .withUrl('http://localhost:5258/hubs/payments')
+      .withAutomaticReconnect()
+      .build();
+
+    conn.on('PaymentUpdated', () => {
+      fetchDashboard();
+    });
+
+    conn.start().catch((err) => console.error('SignalR error:', err));
+
+    return () => {
+      conn.stop();
+    };
+  }, [fetchDashboard]);
+
+
+  const [detailBooking, setDetailBooking] = useState<BookingResponseDto | null>(null);
+    const [invoiceOrder, setInvoiceOrder] = useState<any>(null);
+  const [paymentScheduleOrder, setPaymentScheduleOrder] = useState<any>(null);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | BookingStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
 
   /* Escape closes whichever layer is open */
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       setDetailBooking(null);
-      setInvoiceOrder(null);
+              setInvoiceOrder(null);
       setConfirmCancel(null);
       setSidebarOpen(false);
     };
+
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   /* derived */
-  const orderOf = (b: Booking) => ORDERS.find((o) => o.id === b.orderId);
+  const invoiceOf = (b: BookingResponseDto) => invoices.find((i) => i.bookingId === b.id);
+  const deriveBookingStatus = (b: BookingResponseDto) => {
+    if (b.status === 'cancelled') return { label: 'Cancelled', color: 'var(--danger)' };
+    const order = invoiceOf(b);
+    if (!order) return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
+    if (order.status === 'Unpaid') return { label: 'Pending', color: 'var(--accent)' };
+    if (order.status === 'Partial' || order.status === 'Reserved') return { label: 'Confirmed', color: 'var(--primary)' };
+    if (order.status === 'Paid') return { label: 'Completed', color: 'var(--success)' };
+    return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
+  };
 
   const activeBookings = bookings.filter((b) => b.status !== 'cancelled');
   const confirmedCount = bookings.filter((b) => b.status === 'secured').length;
-  const pendingCount = bookings.filter((b) => b.status === 'pending' || b.status === 'pending_fee').length;
+
+
 
   const nextBooking = [...activeBookings]
-    .filter((b) => new Date(b.eventDate) >= new Date())
-    .sort((a, b) => +new Date(a.eventDate) - +new Date(b.eventDate))[0];
+    .filter((b) => new Date(b.eventDate || '') >= new Date())
+    .sort((a, b) => +new Date(a.eventDate || '') - +new Date(b.eventDate || ''))[0];
 
-  const totalValue = ORDERS.reduce((s, o) => s + orderTotal(o), 0);
-  const totalPaid = ORDERS.reduce((s, o) => s + orderPaid(o), 0);
+  const totalValue = invoices.reduce((s, i) => s + i.grandTotal, 0);
+  const totalPaid = invoices.reduce((s, i) => s + i.paidTotal, 0);
   const totalDue = totalValue - totalPaid;
   const paidPct = totalValue > 0 ? Math.round((totalPaid / totalValue) * 100) : 0;
+
 
   const filteredBookings = useMemo(() => {
     const q = query.trim().toLowerCase();
     return bookings
       .filter((b) => statusFilter === 'all' || b.status === statusFilter)
-      .filter(
-        (b) =>
+      .filter((b) => {
+        const meta = EVENT_META[normalizeType(b.eventType) as keyof typeof EVENT_META] || EVENT_META.wedding;
+        return (
           q === '' ||
           b.id.toLowerCase().includes(q) ||
-          EVENT_META[b.eventType].label.toLowerCase().includes(q) ||
-          b.location.toLowerCase().includes(q),
-      )
+          meta.label.toLowerCase().includes(q) ||
+          (b.venueAddress?.toLowerCase().includes(q) ?? false)
+        );
+      })
       .sort((a, b) => {
-        const d = +new Date(a.submittedAt) - +new Date(b.submittedAt);
+        const d = +new Date(a.createdAt) - +new Date(b.createdAt);
         return sortBy === 'newest' ? -d : d;
       });
   }, [bookings, query, statusFilter, sortBy]);
+
 
   const cancelBooking = (id: string) => {
     setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: 'cancelled' as const } : b)));
@@ -874,9 +1273,9 @@ export function CustomerDashboardPage() {
             ))}
 
             <span className="cds-nav-caption" style={{ marginTop: '0.9rem' }}>Explore</span>
-            <Link to="/packages" className="cds-nav-item"><span className="cds-nav-icon">📦</span>Packages</Link>
-            <Link to="/menus" className="cds-nav-item"><span className="cds-nav-icon">🍽️</span>Menus</Link>
-            <Link to="/rentals" className="cds-nav-item"><span className="cds-nav-icon">🎪</span>Rentals</Link>
+            <Link to="/packages" className="cds-nav-item"><span className="cds-nav-icon"><Package size={20} /></span>Packages</Link>
+            <Link to="/menus" className="cds-nav-item"><span className="cds-nav-icon"><Utensils size={20} /></span>Menus</Link>
+            <Link to="/rentals" className="cds-nav-item"><span className="cds-nav-icon"><Tent size={20} /></span>Rentals</Link>
           </nav>
 
           <div className="cds-sidebar-foot">
@@ -892,11 +1291,11 @@ export function CustomerDashboardPage() {
               </div>
             </div>
             <Link to="/" className="cds-nav-item">
-              <span className="cds-nav-icon">←</span>
+              <span className="cds-nav-icon"><LogOut size={20} style={{ transform: 'rotate(180deg)' }} /></span>
               Back to Site
             </Link>
             <button type="button" className="cds-nav-item" onClick={() => void logout()}>
-              <span className="cds-nav-icon">⎋</span>
+              <span className="cds-nav-icon"><LogOut size={20} /></span>
               Sign Out
             </button>
           </div>
@@ -923,16 +1322,7 @@ export function CustomerDashboardPage() {
               aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               style={{ color: 'var(--accent)' }}
             >
-              {theme === 'dark' ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="16" height="16" aria-hidden="true">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden="true">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-              )}
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
             <div className="cds-avatar" title={account.name}>{account.name.charAt(0)}</div>
           </div>
@@ -959,7 +1349,7 @@ export function CustomerDashboardPage() {
                 <div className="cds-stats">
                   <div className="cds-card cds-stat">
                     <div className="cds-stat-top">
-                      <span className="cds-stat-icon">🗓</span>
+                      <span className="cds-stat-icon"><Calendar size={18} /></span>
                       <span className="cds-stat-label">Total Events</span>
                     </div>
                     <div>
@@ -969,22 +1359,22 @@ export function CustomerDashboardPage() {
                   </div>
                   <div className="cds-card cds-stat">
                     <div className="cds-stat-top">
-                      <span className="cds-stat-icon">✓</span>
-                      <span className="cds-stat-label" style={{ color: 'var(--primary)' }}>Confirmed</span>
+                      <span className="cds-stat-icon" style={{ background: 'var(--primary-muted)', color: 'var(--primary)' }}><CheckCircle size={18} /></span>
+                      <span className="cds-stat-label" style={{ color: 'var(--primary)' }}>Secured Bookings</span>
                     </div>
                     <div>
                       <div className="cds-stat-num" style={{ color: 'var(--primary)' }}>{confirmedCount}</div>
-                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>Secured bookings</div>
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>Confirmed and reserved</div>
                     </div>
                   </div>
                   <div className="cds-card cds-stat">
                     <div className="cds-stat-top">
-                      <span className="cds-stat-icon" style={{ background: 'var(--accent-muted)' }}>⏳</span>
-                      <span className="cds-stat-label" style={{ color: 'var(--accent)' }}>Pending</span>
+                      <span className="cds-stat-icon" style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}><Clock size={18} /></span>
+                      <span className="cds-stat-label" style={{ color: 'var(--accent)' }}>Outstanding Balance</span>
                     </div>
                     <div>
-                      <div className="cds-stat-num" style={{ color: 'var(--accent)' }}>{pendingCount}</div>
-                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>Awaiting approval or fee</div>
+                      <div className="cds-stat-num" style={{ color: 'var(--accent)' }}>{fmt(invoices.reduce((sum, inv) => sum + (inv.grandTotal - inv.paidTotal), 0))}</div>
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>Total unpaid fees across all events</div>
                     </div>
                   </div>
                 </div>
@@ -994,27 +1384,28 @@ export function CustomerDashboardPage() {
                   <div className="cds-card cds-upcoming">
                     <div className="cds-datebox">
                       <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>
-                        {new Date(nextBooking.eventDate).toLocaleDateString('en-PH', { month: 'short' }).toUpperCase()}
+                        {new Date(nextBooking.eventDate || '').toLocaleDateString('en-PH', { month: 'short' }).toUpperCase()}
                       </span>
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: '2.6rem', fontWeight: 600, color: '#fff', lineHeight: 1 }}>
-                        {new Date(nextBooking.eventDate).getDate()}
+                        {new Date(nextBooking.eventDate || '').getDate()}
                       </span>
                       <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', letterSpacing: '0.2em', color: 'rgba(255,255,255,0.6)' }}>
-                        {new Date(nextBooking.eventDate).getFullYear()}
+                        {new Date(nextBooking.eventDate || '').getFullYear()}
                       </span>
                     </div>
                     <div style={{ flex: 1, padding: '1.4rem 1.75rem', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '0.5rem' }}>
-                      <div><StatusBadge label={BOOKING_STATUS[nextBooking.status].label} color={BOOKING_STATUS[nextBooking.status].color} /></div>
+                      <div><StatusBadge label={deriveBookingStatus(nextBooking).label} color={deriveBookingStatus(nextBooking).color} /></div>
                       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.45rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0, lineHeight: 1.15 }}>
-                        {EVENT_META[nextBooking.eventType].label}
+                        {(EVENT_META[normalizeType(nextBooking.eventType)] || EVENT_META.wedding).label}
                       </h3>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem 1.4rem', fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                        <span>📍 {nextBooking.location}</span>
-                        <span>👥 {nextBooking.guestCount} guests</span>
-                        <span>✦ {nextBooking.pkg}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MapPin size={12} /> {nextBooking.venueAddress}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Users size={12} /> {nextBooking.guestCount} guests</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><ListTodo size={12} /> {nextBooking.bookingName}</span>
                       </div>
                     </div>
                     <div style={{ padding: '1.4rem', display: 'flex', alignItems: 'center', borderLeft: '1px solid var(--border)' }}>
+
                       <button type="button" className="cds-btn primary" onClick={() => setDetailBooking(nextBooking)}>
                         View Details →
                       </button>
@@ -1061,20 +1452,20 @@ export function CustomerDashboardPage() {
                           Recent Bookings
                         </h3>
                       </div>
-                      <button type="button" className="cds-btn soft" onClick={() => setTab('bookings')}>View All →</button>
+                      <button type="button" className="cds-btn soft" onClick={() => setTab('bookings')}>View All &rarr;</button>
                     </div>
                     {bookings.slice(0, 4).map((b) => (
                       <div key={b.id} className="cds-row">
-                        <div className="cds-glyph">{EVENT_META[b.eventType].glyph}</div>
+                        <div className="cds-glyph">{EVENT_META[normalizeType(b.bookingType) as keyof typeof EVENT_META].icon}</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {EVENT_META[b.eventType].label}
+                            {EVENT_META[normalizeType(b.bookingType) as keyof typeof EVENT_META].label}
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.1rem' }}>
-                            {fmtDate(b.eventDate)} · {b.guestCount} guests
+                            {fmtDate(b.eventDate || '')} · {b.guestCount} guests
                           </div>
                         </div>
-                        <StatusBadge label={BOOKING_STATUS[b.status].label} color={BOOKING_STATUS[b.status].color} />
+                        <StatusBadge label={deriveBookingStatus(b).label} color={deriveBookingStatus(b).color} />
                         <button
                           type="button"
                           className="cds-iconbtn"
@@ -1089,6 +1480,7 @@ export function CustomerDashboardPage() {
                   </div>
                 </div>
               </div>
+
             )}
 
             {/* ══════════ BOOKINGS ══════════ */}
@@ -1134,50 +1526,53 @@ export function CustomerDashboardPage() {
                     </button>
                   </div>
                 ) : (
-                  filteredBookings.map((b) => {
-                    const order = orderOf(b);
-                    const meta = EVENT_META[b.eventType];
-                    const st = BOOKING_STATUS[b.status];
+                  isFetching ? (
+    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading bookings...</div>
+  ) : isFetching ? (
+    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading bookings...</div>
+  ) : filteredBookings.map((b) => {
+                    const order = invoiceOf(b);
+                    const meta = EVENT_META[normalizeType(b.eventType) as keyof typeof EVENT_META] || EVENT_META.wedding;
+                    const st = deriveBookingStatus(b);
                     const cancellable = b.status === 'pending' || b.status === 'pending_fee';
                     return (
                       <div key={b.id} className="cds-card" style={{ overflow: 'hidden' }}>
+
                         <div style={{ padding: '1.4rem 1.6rem', display: 'flex', alignItems: 'center', gap: '1.1rem', flexWrap: 'wrap' }}>
-                          <div className="cds-glyph" style={{ width: 46, height: 46, fontSize: '1.25rem' }}>{meta.glyph}</div>
+                          <div className="cds-glyph" style={{ width: 46, height: 46 }}>{meta.icon}</div>
                           <div style={{ flex: 1, minWidth: 220 }}>
                             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
                               {meta.label}
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem 1.25rem', fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                               <span>#{b.id}</span>
-                              <span>📅 {fmtDate(b.eventDate)}</span>
-                              <span>👥 {b.guestCount} guests</span>
-                              <span>📍 {b.location}</span>
-                              {order && <span>💰 {fmt(orderTotal(order))}</span>}
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><CalendarDays size={12} /> {b.eventDate ? (b.eventDate ? fmtDate(b.eventDate) : 'TBD') : 'TBD'}</span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Users size={12} /> {b.guestCount} guests</span>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MapPin size={12} /> {b.venueAddress}</span>
+                              {order && <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Landmark size={12} /> {fmt(order.grandTotal)}</span>}
                             </div>
                           </div>
                           <StatusBadge label={st.label} color={st.color} />
                         </div>
 
-                        <Pipeline current={pipelineStep(b, order)} cancelled={b.status === 'cancelled'} />
+                        <Pipeline current={pipelineStep(b)} cancelled={b.status === 'cancelled'} />
 
                         <div style={{ borderTop: '1px solid var(--border)', padding: '1.1rem 1.6rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.9rem' }}>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                            {b.services.map((s) => <span key={s} className="cds-tag">{s}</span>)}
+                            {/* Removed static services tag map */}
                           </div>
                           <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
                             {cancellable && (
+
                               <button type="button" className="cds-btn dangerghost" onClick={() => setConfirmCancel(b.id)}>
                                 Cancel
                               </button>
                             )}
-                            {order && b.status !== 'cancelled' && orderPaid(order) < orderTotal(order) && (
-                              <button type="button" className="cds-btn primary" onClick={() => { setTab('payments'); setExpandedOrder(order.id); }}>
-                                ₱ Pay Balance
-                              </button>
-                            )}
+                            
                             <button type="button" className="cds-btn outline" onClick={() => setDetailBooking(b)}>
                               Details
                             </button>
+
                           </div>
                         </div>
                       </div>
@@ -1187,16 +1582,24 @@ export function CustomerDashboardPage() {
               </div>
             )}
 
-            {/* ══════════ PAYMENTS ══════════ */}
+            {/* ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ PAYMENTS ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ */}
             {tab === 'payments' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                {ORDERS.map((o) => {
-                  const st = ORDER_STATUS[o.status];
-                  const total = orderTotal(o);
-                  const paid = orderPaid(o);
+                {isFetching ? (
+    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading payments...</div>
+  ) : invoices.map((inv) => {
+    const b = bookings.find(bk => bk.id === inv.bookingId);
+    if (!b) return null;
+    const o = inv;
+  
+                  const stColor = inv.status === 'Paid' ? 'var(--success)' : 'var(--accent)';
+                    const st = { label: inv.status, color: stColor };
+                  const total = inv.grandTotal;
+                  const paid = inv.paidTotal;
                   const remaining = total - paid;
                   const open = expandedOrder === o.id;
                   return (
+
                     <div key={o.id} className="cds-card" style={{ overflow: 'hidden' }}>
                       <button
                         type="button"
@@ -1220,13 +1623,14 @@ export function CustomerDashboardPage() {
                         </div>
                         <div style={{ flex: 1, minWidth: 200 }}>
                           <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
-                            {o.eventLabel}
+                            {b?.bookingName || 'Event'}
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                            #{o.id} · {o.items.length} item{o.items.length === 1 ? '' : 's'} · ordered {fmtDate(o.createdAt)}
+                            #{o.id} ┬╖ {o.issueDate}
                           </div>
                         </div>
                         <StatusBadge label={st.label} color={st.color} />
+
                         <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(total)}</span>
                         <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s' }}>▼</span>
                       </button>
@@ -1251,19 +1655,15 @@ export function CustomerDashboardPage() {
                           </div>
                           <div style={{ padding: '1.1rem 1.6rem' }}>
                             <FieldLabel text="Order Items" />
-                            {o.items.map((it) => (
-                              <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)', fontFamily: 'var(--font-body)', fontSize: '0.8rem' }}>
-                                <span style={{ color: 'var(--text-muted)', fontWeight: 300 }}>{it.name} × {it.qty}</span>
-                                <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(it.price * it.qty)}</span>
-                              </div>
-                            ))}
+                            {/* Items map removed */}
                           </div>
                           <div style={{ padding: '0 1.6rem 1.35rem', display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
                             {remaining > 0 && (
-                              <a href="/#availability" className="cds-btn primary">₱ Settle Balance</a>
+                              <button type="button" className="cds-btn primary" onClick={() => setPaymentScheduleOrder(b)} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><CreditCard size={14} /> Settle Balance</button>
                             )}
                             <button type="button" className="cds-btn outline" onClick={() => setInvoiceOrder(o)}>View Invoice</button>
                           </div>
+
                         </div>
                       )}
                     </div>
@@ -1289,10 +1689,11 @@ export function CustomerDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {TRANSACTIONS.map((tx) => (
+                      {([] as any[]).map((tx) => (
                         <tr key={tx.id}>
                           <td style={{ padding: '0.8rem 1.4rem' }}>
                             <div style={{ fontWeight: 500 }}>{tx.eventLabel}</div>
+
                             <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: '0.12rem', fontWeight: 300 }}>{tx.id} · #{tx.orderId}</div>
                           </td>
                           <td style={{ color: 'var(--text-muted)' }}>{fmtDate(tx.date)}</td>
@@ -1319,10 +1720,11 @@ export function CustomerDashboardPage() {
                   </div>
                 </div>
                 <div style={{ padding: '1.5rem 1.6rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-                  {MESSAGES.map((m) => (
+                  {([] as any[]).map((m) => (
                     <div key={m.id} className={`cds-bubble ${m.from}`}>
                       {m.text}
                       <div style={{ fontSize: '0.58rem', opacity: 0.6, marginTop: '0.35rem', letterSpacing: '0.06em' }}>{fmtDate(m.at)}</div>
+
                     </div>
                   ))}
                 </div>
@@ -1344,10 +1746,12 @@ export function CustomerDashboardPage() {
       </div>
 
       {/* modals */}
-      {detailBooking && <BookingDetailModal booking={detailBooking} onClose={() => setDetailBooking(null)} />}
+      {detailBooking && <BookingDetailModal booking={detailBooking} onClose={() => setDetailBooking(null)} statusBadge={deriveBookingStatus(detailBooking)} />}
+      {paymentScheduleOrder && <PaymentScheduleModal order={paymentScheduleOrder} invoice={invoiceOf(paymentScheduleOrder)} onClose={() => setPaymentScheduleOrder(null)} />}
       {invoiceOrder && <InvoiceModal order={invoiceOrder} customer={account} onClose={() => setInvoiceOrder(null)} />}
 
       {/* cancel confirmation */}
+
       {confirmCancel && (
         <div className="cds-overlay" onClick={() => setConfirmCancel(null)}>
           <div className="cds-modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()} role="alertdialog" aria-label="Confirm cancellation">
