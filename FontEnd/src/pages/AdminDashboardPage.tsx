@@ -42,11 +42,23 @@ import {
   confirmBooking,
   completeBooking,
   cancelBooking,
-  getRecentPayments,
+  generateInvoice,
   BookingApiError,
   type BookingResponse,
-  type AdminPaymentRecord,
 } from '../api/bookingApi';
+import {
+  getRecentPayments,
+  fetchRefundRequests,
+  confirmPayment,
+  rejectPayment,
+  refundPayment,
+  denyRefund,
+  PaymentApiError,
+  type AdminPaymentRecord,
+  type RefundRequestQueueItem,
+} from '../api/paymentAdminApi';
+import { fetchAuditLogs, AuditApiError, type AuditLogEntry } from '../api/auditApi';
+import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
@@ -168,9 +180,9 @@ export function FieldLabel({ text }: { text: string }) {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'placeholder';
+type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'audit' | 'placeholder';
 
-const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support', 'Audit Log'];
+const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support'];
 
 export function AdminDashboardPage() {
   const { user: authUser, logout } = useAuth();
@@ -196,11 +208,17 @@ export function AdminDashboardPage() {
   };
   const [testimonials, setTestimonials] = useState(INITIAL_TESTIMONIALS);
 
-  /* payments — live data from /api/Payments/recent */
+  const { toasts, notify, dismiss } = useToasts();
+
+  /* payments — live data from /api/Payments/recent + /api/Payments/refund-requests */
   const [payments, setPayments] = useState<AdminPaymentRecord[]>([]);
+  const [refundQueue, setRefundQueue] = useState<RefundRequestQueueItem[]>([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
   const [paymentsAuthError, setPaymentsAuthError] = useState(false);
+  const [paymentActionBusy, setPaymentActionBusy] = useState<string | null>(null);
+  const [denyTargetId, setDenyTargetId] = useState<string | null>(null);
+  const [denyReason, setDenyReason] = useState('');
 
   const loadPayments = async () => {
     const session = readSession();
@@ -213,10 +231,14 @@ export function AdminDashboardPage() {
     setPaymentsError(null);
     setPaymentsAuthError(false);
     try {
-      const data = await getRecentPayments(session.token);
-      setPayments(data);
+      const [recent, queue] = await Promise.all([
+        getRecentPayments(session.token),
+        fetchRefundRequests(session.token),
+      ]);
+      setPayments(recent);
+      setRefundQueue(queue);
     } catch (err) {
-      if (err instanceof BookingApiError) {
+      if (err instanceof PaymentApiError) {
         setPaymentsError(err.message);
         setPaymentsAuthError(err.isAuthError);
       } else {
@@ -224,6 +246,98 @@ export function AdminDashboardPage() {
       }
     } finally {
       setPaymentsLoading(false);
+    }
+  };
+
+  /* Owner decisions on a payment; refetches the list afterwards so totals stay honest. */
+  const runPaymentAction = async (
+    paymentId: string,
+    action: 'confirm' | 'reject' | 'refund' | 'deny',
+    extra?: { amount?: number; reason?: string },
+  ) => {
+    const session = readSession();
+    if (!session) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setPaymentActionBusy(paymentId);
+    try {
+      if (action === 'confirm') {
+        await confirmPayment(session.token, paymentId);
+        notify('success', 'Payment confirmed — invoice and deposit updated.');
+      } else if (action === 'reject') {
+        await rejectPayment(session.token, paymentId);
+        notify('success', 'Payment rejected.');
+      } else if (action === 'refund') {
+        await refundPayment(session.token, paymentId, extra?.amount);
+        notify('success', 'Refund issued.');
+      } else {
+        await denyRefund(session.token, paymentId, extra?.reason ?? '');
+        notify('success', 'Refund request denied.');
+        setDenyTargetId(null);
+        setDenyReason('');
+      }
+      await loadPayments();
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof PaymentApiError ? err.message : 'The payment action failed. Please try again.',
+      );
+    } finally {
+      setPaymentActionBusy(null);
+    }
+  };
+
+  /* audit log — live data from /api/Auditlogs (Owner-only endpoint) */
+  const AUDIT_PAGE_SIZE = 25;
+  const [auditRows, setAuditRows] = useState<AuditLogEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditPage, setAuditPage] = useState(1);
+
+  const loadAuditLogs = async (page: number) => {
+    const session = readSession();
+    if (!session) {
+      setAuditError('You are not signed in. Sign in as the Owner to view the audit trail.');
+      return;
+    }
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      setAuditRows(await fetchAuditLogs(session.token, { page, pageSize: AUDIT_PAGE_SIZE }));
+      setAuditPage(page);
+    } catch (err) {
+      setAuditError(
+        err instanceof AuditApiError ? err.message : 'Unable to load the audit trail. Please try again.',
+      );
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  /* one-click invoice for a Confirmed booking: issued today, due on the event date */
+  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
+
+  const generateInvoiceFor = async (b: BookingResponse) => {
+    const session = readSession();
+    if (!session) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setInvoiceBusyId(b.id);
+    try {
+      const d = new Date();
+      const p2 = (n: number) => String(n).padStart(2, '0');
+      const issueDate = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+      await generateInvoice(session.token, b.id, issueDate, b.eventDate);
+      notify('success', `Invoice generated for ${b.bookingName || 'this booking'} — due ${b.eventDate}.`);
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof BookingApiError ? err.message : 'Could not generate the invoice. Please try again.',
+      );
+    } finally {
+      setInvoiceBusyId(null);
     }
   };
 
@@ -447,8 +561,9 @@ export function AdminDashboardPage() {
       else updated = await cancelBooking(session.token, id);
       
       setReservations((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notify('success', `Booking ${st.toLowerCase()}.`);
     } catch (err: any) {
-      alert(err.message || `Failed to set status to ${st}`);
+      notify('error', err.message || `Failed to set status to ${st}`);
     }
   };
 
@@ -460,8 +575,9 @@ export function AdminDashboardPage() {
       setReservations((prev) => prev.map((r) => (r.id === id ? updated : r)));
       setCancelResId(null);
       setCancelReason('');
+      notify('success', 'Booking cancelled.');
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel booking.');
+      notify('error', err.message || 'Failed to cancel booking.');
     }
   };
 
@@ -895,6 +1011,7 @@ export function AdminDashboardPage() {
   /* refetch every time the tab is opened so admin edits elsewhere show up */
   useEffect(() => {
     if (tab === 'overview' || tab === 'payments') void loadPayments();
+    if (tab === 'audit') void loadAuditLogs(1);
     if (tab === 'bookings') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
     if (tab === 'rentals') void loadRentalCatalog();
@@ -1237,6 +1354,7 @@ export function AdminDashboardPage() {
         }
       `}</style>
 
+      <ToastViewport toasts={toasts} onDismiss={dismiss} />
       <div className="adm-shell">
 
         {/* ═══════════════════════ SIDEBAR ═══════════════════════ */}
@@ -1310,6 +1428,14 @@ export function AdminDashboardPage() {
               </span>
               Booking Histories
             </Link>
+            <button
+              type="button"
+              className={`adm-nav-item${tab === 'audit' ? ' active' : ''}`}
+              onClick={() => openTab('audit')}
+            >
+              <span className="adm-nav-icon">🧾</span>
+              Audit Log
+            </button>
             {PLACEHOLDER_ITEMS.map((name) => (
               <button
                 key={name}
@@ -1341,7 +1467,7 @@ export function AdminDashboardPage() {
               </svg>
             </button>
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : NAV.find((n) => n.id === tab)?.label}
+              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }} className="adm-hide-sm">
@@ -1562,6 +1688,16 @@ export function AdminDashboardPage() {
                           {r.status === 'Confirmed' && (
                             <button type="button" className="adm-btn info" onClick={() => setResStatus(r.id, 'Completed')}>Mark Completed</button>
                           )}
+                          {r.status === 'Confirmed' && (
+                            <button
+                              type="button"
+                              className="adm-btn outline"
+                              disabled={invoiceBusyId === r.id}
+                              onClick={() => void generateInvoiceFor(r)}
+                            >
+                              {invoiceBusyId === r.id ? 'Generating…' : 'Generate Invoice'}
+                            </button>
+                          )}
                           {(r.status === 'Pending' || r.status === 'Confirmed') && !cancelling && (
                             <button type="button" className="adm-btn danger" onClick={() => { setCancelResId(r.id); setCancelReason(''); }}>Cancel</button>
                           )}
@@ -1614,6 +1750,68 @@ export function AdminDashboardPage() {
                     );
                   })}
                 </div>
+
+                {/* ── refund request queue ── */}
+                {!paymentsLoading && !paymentsError && refundQueue.length > 0 && (
+                  <div className="adm-card" style={{ padding: '1.3rem 1.5rem' }}>
+                    <FieldLabel text={`Refund Requests · ${refundQueue.length} awaiting review`} />
+                    {refundQueue.map((rq) => {
+                      const busy = paymentActionBusy === rq.paymentId;
+                      const denying = denyTargetId === rq.paymentId;
+                      return (
+                        <div key={rq.paymentId} className="adm-row" style={{ padding: '0.85rem 0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: 220 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                {rq.bookingName || 'Booking'} · requesting {fmt(rq.requestedAmount)}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+                                paid {fmt(rq.amountPaid)} · refundable {fmt(rq.refundableRemaining)} · booking {rq.bookingStatus}
+                                {rq.cancellationRequested ? ' · cancellation requested' : ''}
+                                {rq.reason ? ` · "${rq.reason}"` : ''}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="adm-btn success"
+                              disabled={busy}
+                              onClick={() => void runPaymentAction(rq.paymentId, 'refund', { amount: rq.requestedAmount })}
+                            >
+                              {busy ? 'Working…' : `Approve ${fmt(rq.requestedAmount)}`}
+                            </button>
+                            <button
+                              type="button"
+                              className="adm-btn danger"
+                              disabled={busy}
+                              onClick={() => { setDenyTargetId(denying ? null : rq.paymentId); setDenyReason(''); }}
+                            >
+                              Deny
+                            </button>
+                          </div>
+                          {denying && (
+                            <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.8rem' }}>
+                              <div style={{ flex: 1, minWidth: 220 }}>
+                                <FieldLabel text="Reason shown to the customer" />
+                                <input className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                  type="button"
+                                  className="adm-btn danger"
+                                  disabled={!denyReason.trim() || busy}
+                                  onClick={() => void runPaymentAction(rq.paymentId, 'deny', { reason: denyReason.trim() })}
+                                >
+                                  Confirm Denial
+                                </button>
+                                <button type="button" className="adm-btn outline" onClick={() => setDenyTargetId(null)}>Back</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* ── error state ── */}
                 {paymentsError && !paymentsLoading && (
@@ -1698,12 +1896,134 @@ export function AdminDashboardPage() {
                                   <span style={{ color: 'var(--text-secondary)', fontWeight: 500, textAlign: 'right' }}>{row.value}</span>
                                 </div>
                               ))}
+                              {(p.status === 'Pending' ||
+                                ((p.status === 'Success' || p.status === 'PartiallyRefunded') && p.amountPaid - p.refundedAmount > 0)) && (
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
+                                  {p.status === 'Pending' && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="adm-btn success"
+                                        disabled={paymentActionBusy === p.id}
+                                        onClick={() => void runPaymentAction(p.id, 'confirm')}
+                                      >
+                                        {paymentActionBusy === p.id ? 'Working…' : '✓ Confirm Received'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="adm-btn danger"
+                                        disabled={paymentActionBusy === p.id}
+                                        onClick={() => void runPaymentAction(p.id, 'reject')}
+                                      >
+                                        ✕ Reject
+                                      </button>
+                                    </>
+                                  )}
+                                  {(p.status === 'Success' || p.status === 'PartiallyRefunded') && p.amountPaid - p.refundedAmount > 0 && (
+                                    <button
+                                      type="button"
+                                      className="adm-btn outline"
+                                      disabled={paymentActionBusy === p.id}
+                                      onClick={() => void runPaymentAction(p.id, 'refund')}
+                                    >
+                                      {paymentActionBusy === p.id ? 'Working…' : `Refund ${fmt(p.amountPaid - p.refundedAmount)}`}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
                       );
                     })
                   )
+                )}
+              </div>
+            )}
+
+            {/* ══════════ AUDIT LOG (live backend data, Owner-only) ══════════ */}
+            {tab === 'audit' && (
+              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 className="adm-title">Audit Log</h2>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Auditlogs</code> · Owner only
+                    </p>
+                  </div>
+                  <button type="button" className="adm-btn outline" onClick={() => void loadAuditLogs(auditPage)} disabled={auditLoading}>
+                    {auditLoading ? 'Refreshing…' : '↻ Refresh'}
+                  </button>
+                </div>
+
+                {auditError && !auditLoading && (
+                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                      Couldn't load the audit trail
+                    </h3>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                      {auditError}
+                    </p>
+                    <button type="button" className="adm-btn outline" onClick={() => void loadAuditLogs(auditPage)}>Try Again</button>
+                  </div>
+                )}
+
+                {auditLoading && (
+                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                    <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
+                        <div style={{ flex: 1 }}>
+                          <div className="adm-skel" style={{ height: '0.9rem', width: '35%', marginBottom: '0.45rem' }} />
+                          <div className="adm-skel" style={{ height: '0.6rem', width: '60%' }} />
+                        </div>
+                        <div className="adm-skel" style={{ height: '1.4rem', width: 84, borderRadius: 'var(--r-full)' }} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!auditLoading && !auditError && (
+                  <>
+                    {auditRows.length === 0 ? (
+                      <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                        {auditPage === 1 ? 'No audit entries recorded yet.' : 'No more entries.'}
+                      </div>
+                    ) : (
+                      <div className="adm-card" style={{ padding: '0.4rem 1.5rem' }}>
+                        {auditRows.map((row) => {
+                          const actionColor =
+                            row.action === 'CREATE' ? 'var(--primary)'
+                            : row.action === 'DELETE' ? 'var(--danger)'
+                            : 'var(--accent)';
+                          return (
+                            <div key={row.id} className="adm-row" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', padding: '0.85rem 0' }}>
+                              <div style={{ flex: 1, minWidth: 240 }}>
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                  {row.targetTable}
+                                  <span style={{ color: 'var(--text-dim)', fontWeight: 300 }}> · {row.targetId.substring(0, 8)}</span>
+                                </div>
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+                                  {fmtDateTime(row.changedAt)} · admin {row.adminId.substring(0, 8)}
+                                </div>
+                              </div>
+                              <StatusBadge label={row.action} color={actionColor} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <button type="button" className="adm-btn outline" disabled={auditPage <= 1} onClick={() => void loadAuditLogs(auditPage - 1)}>
+                        ‹ Newer
+                      </button>
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-dim)' }}>Page {auditPage}</span>
+                      <button type="button" className="adm-btn outline" disabled={auditRows.length < AUDIT_PAGE_SIZE} onClick={() => void loadAuditLogs(auditPage + 1)}>
+                        Older ›
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}

@@ -14,7 +14,7 @@
  *   GET    /api/MenuPackages/{id}/template            → slots + eligible items
  */
 
-const API_BASE_URL = (
+export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
 ).replace(/\/+$/, '');
 
@@ -118,11 +118,29 @@ export interface PackageTemplateResponse {
   slots: TemplateSlot[];
 }
 
+/** Matches BookingPackageSelectionDto on the backend. */
 export interface PackageSelectionResponse {
   slotId: string;
   slotLabel: string;
-  itemId: string;
-  itemName: string;
+  menuItemId: string;
+  menuItemName: string;
+}
+
+/** Matches PaymentResponseDto — one recorded payment against an invoice. */
+export interface PaymentRecord {
+  id: string;
+  invoiceId: string;
+  amountPaid: number;
+  refundedAmount: number;
+  refundableRemaining: number;
+  paymentDateTime: string;
+  method: string;
+  status: string;
+  transactionReference: string | null;
+  refundRequested: boolean;
+  refundRequestedAmount: number | null;
+  refundRequestReason: string | null;
+  refundRequestDecision: string | null;
 }
 
 
@@ -388,6 +406,40 @@ export function cancelBooking(token: string, bookingId: string): Promise<Booking
   return request<BookingResponse>(`/api/Bookings/${bookingId}/cancel`, 'POST', token);
 }
 
+/**
+ * Customer files a cancellation request for their CONFIRMED booking
+ * (Draft/Pending bookings should use cancelBooking directly).
+ */
+export function requestCancellation(
+  token: string,
+  bookingId: string,
+  reason?: string,
+): Promise<{ message?: string }> {
+  return request<{ message?: string }>(
+    `/api/Bookings/${bookingId}/request-cancellation`,
+    'POST',
+    token,
+    { reason: reason ?? null },
+  );
+}
+
+/** Owner/Assistant: generate the invoice for a Confirmed booking. */
+export function generateInvoice(
+  token: string,
+  bookingId: string,
+  issueDate: string,
+  dueDate: string,
+): Promise<InvoiceResponseDto> {
+  return request<InvoiceResponseDto>('/api/Invoices', 'POST', token, {
+    bookingId, issueDate, dueDate,
+  });
+}
+
+/** Owner/Assistant: mark a Draft invoice as Sent to the customer. */
+export function sendInvoice(token: string, invoiceId: string): Promise<InvoiceResponseDto> {
+  return request<InvoiceResponseDto>(`/api/Invoices/${invoiceId}/send`, 'POST', token);
+}
+
 
 // ── Payments and Invoices ──────────────────────────────────────────────
 
@@ -404,30 +456,26 @@ export interface CheckoutPayload {
   amount: number;
 }
 
-/** Matches AdminPaymentListItemDto — returned by GET /api/Payments/recent. */
-export interface AdminPaymentRecord {
-  id: string;
-  invoiceId: string;
-  amountPaid: number;
-  refundedAmount: number;
-  paymentDateTime: string;
-  method: string;
-  status: string;
-  transactionReference: string | null;
-  gatewayProvider: string | null;
-  refundRequested: boolean;
-  bookingId: string;
-  bookingName: string;
-  eventType: string | null;
-  eventDate: string;
-  customerId: string;
-  customerName: string;
-  customerEmail: string;
+/** Invoice by its own id (customers may only read their own booking's invoice). */
+export function getInvoiceById(token: string, invoiceId: string): Promise<InvoiceResponseDto> {
+  return request<InvoiceResponseDto>(`/api/Invoices/${invoiceId}`, 'GET', token);
 }
 
-/** Owner/Assistant: most recent customer payments across all bookings, newest first. */
-export function getRecentPayments(token: string, take = 50): Promise<AdminPaymentRecord[]> {
-  return request<AdminPaymentRecord[]>(`/api/Payments/recent?take=${take}`, 'GET', token);
+/** All payments recorded against one invoice, oldest first. */
+export function getPaymentsByInvoice(token: string, invoiceId: string): Promise<PaymentRecord[]> {
+  return request<PaymentRecord[]>(`/api/Payments/invoice/${invoiceId}`, 'GET', token);
+}
+
+/** Customer files a refund request on their payment (omit amount = full remaining). */
+export function requestRefund(
+  token: string,
+  paymentId: string,
+  payload: { amount?: number; reason?: string } = {},
+): Promise<PaymentRecord> {
+  return request<PaymentRecord>(`/api/Payments/${paymentId}/request-refund`, 'POST', token, {
+    amount: payload.amount ?? null,
+    reason: payload.reason ?? null,
+  });
 }
 
 export function checkout(token: string, payload: CheckoutPayload): Promise<{ payment: any, checkoutUrl: string }> {

@@ -7,110 +7,31 @@ import { HubConnectionBuilder } from '@microsoft/signalr';
 import { 
   LayoutDashboard, CalendarDays, CreditCard, MessageSquare, Package, 
   Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake,
-  Cake, PartyPopper, Building2, Smartphone, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
+  Cake, PartyPopper, Building2, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
 } from 'lucide-react';
-export interface InvoiceResponseDto {
-  id: string;
-  bookingId: string;
-  issueDate: string;
-  dueDate: string;
-  foodTotal: number;
-  rentalTotal: number;
-  serviceTotal: number;
-  taxAmount: number;
-  grandTotal: number;
-  status: string;
-  paidTotal: number;
-}
-
-export interface PaymentMilestoneDto {
-  label: string;
-  dueDate: string;
-  amountDue: number;
-  cumulativeDue: number;
-  paidToDate: number;
-  status: string;
-}
-
-
-export interface BookingResponseDto {
-  id: string;
-  bookingName: string;
-  customerId: string;
-  bookingType: string;
-  eventDate: string | null;
-  startTime: string | null;
-  endDate: string | null;
-  endTime: string | null;
-  eventType: string | null;
-  venueAddress: string;
-  contactNumber: string;
-  guestCount: number;
-  status: string;
-  depositStatus: string;
-  totalAmount: number;
-  menuPackageId: string | null;
-  cancellationRequested: boolean;
-  cancellationRequestReason: string | null;
-  createdAt: string;
-}
-export interface BookingPackageSummaryDto {
-  id: string;
-  packageName: string;
-  basePrice: number;
-  inclusions: string[];
-}
-
-export interface BookingRentalLineDto {
-  id: string;
-  rentalItemId: string;
-  itemName: string;
-  quantity: number;
-  unitPrice: number;
-  subtotal: number;
-  deliveryStatus: string;
-}
-
-export interface BookingServiceLineDto {
-  id: string;
-  serviceItemId: string;
-  serviceName: string;
-  quantity: number;
-  unitCost: number;
-  totalCost: number;
-}
-
-export interface BookingMenuItemLineDto {
-  itemId: string;
-  itemName: string;
-  quantity: number;
-  capturedPrice: number;
-  lineTotal: number;
-}
-
-export interface BookingMenuTrayLineDto {
-  trayId: string;
-  trayName: string;
-  quantity: number;
-  capturedPrice: number;
-  lineTotal: number;
-}
-
-export interface BookingDetailDto {
-  booking: BookingResponseDto;
-  package: BookingPackageSummaryDto | null;
-  rentals: BookingRentalLineDto[];
-  services: BookingServiceLineDto[];
-  menuItems: BookingMenuItemLineDto[];
-  menuTrays: BookingMenuTrayLineDto[];
-}
-
-export interface BookingPackageSelectionDto {
-  slotId: string;
-  slotLabel: string;
-  menuItemId: string;
-  menuItemName: string;
-}
+import {
+  getAllBookings,
+  getBookingDetail,
+  getPackageSelections,
+  getInvoiceByBooking,
+  getInvoiceById,
+  getPaymentSchedule,
+  getPaymentsByInvoice,
+  checkout,
+  cancelBooking as cancelBookingRequest,
+  requestCancellation,
+  requestRefund,
+  BookingApiError,
+  API_BASE_URL,
+  type BookingResponse as BookingResponseDto,
+  type BookingDetailResponse as BookingDetailDto,
+  type PackageSelectionResponse as BookingPackageSelectionDto,
+  type InvoiceResponseDto,
+  type PaymentScheduleDto,
+  type PaymentRecord,
+} from '../api/bookingApi';
+import { readSession } from '../lib/tokenStorage';
+import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 
 const normalizeType = (ty: string | null) => {
@@ -131,14 +52,6 @@ const normalizeStatus = (st: string | null) => {
   return 'pending';
 };
 
-export interface PaymentScheduleDto {
-  bookingId: string;
-  grandTotal: number;
-  paidTotal: number;
-  balance: number;
-  milestones: PaymentMilestoneDto[];
-}
-
 
 const EVENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
   wedding: { label: 'Wedding Event', icon: <HeartHandshake size={16} /> },
@@ -152,12 +65,6 @@ const BOOKING_STATUS: Record<string, { label: string; color: string }> = {
   pending_fee: { label: 'Awaiting Fee', color: 'var(--accent)' },
   secured: { label: 'Secured', color: 'var(--primary)' },
   cancelled: { label: 'Cancelled', color: 'var(--danger)' },
-};
-
-const METHOD_META: Record<string, { label: string; icon: React.ReactNode }> = {
-  e_wallet: { label: 'E-Wallet', icon: <Smartphone size={16} /> },
-  bank_transfer: { label: 'Bank Transfer', icon: <Landmark size={16} /> },
-  credit_card: { label: 'Credit Card', icon: <CreditCard size={16} /> },
 };
 
 const fmt = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n);
@@ -253,30 +160,25 @@ function BookingDetailModal({ booking, onClose, statusBadge }: { booking: Bookin
 
   useEffect(() => {
     const fetchDetail = async () => {
+      const session = readSession();
+      if (!session) {
+        setLoading(false);
+        return;
+      }
       try {
-        const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
-        const headers = { Authorization: `Bearer ${token}` };
-        
-        const [dRes, sRes] = await Promise.all([
-          fetch(`http://localhost:5258/api/Bookings/${booking.id}`, { headers }),
-          fetch(`http://localhost:5258/api/Bookings/${booking.id}/package-selections`, { headers })
+        const [dData, sData] = await Promise.all([
+          getBookingDetail(session.token, booking.id),
+          getPackageSelections(session.token, booking.id),
         ]);
-        
-        if (dRes.ok) {
-          const dData = await dRes.json();
-          setDetail(dData);
-        }
-        if (sRes.ok) {
-          const sData = await sRes.json();
-          setSelections(sData);
-        }
+        setDetail(dData);
+        setSelections(sData);
       } catch (err) {
         console.error('Failed to fetch details:', err);
       } finally {
         setLoading(false);
       }
     };
-    fetchDetail();
+    void fetchDetail();
   }, [booking.id]);
 
   const meta = EVENT_META[normalizeType(booking.eventType)] || EVENT_META.wedding;
@@ -372,7 +274,7 @@ function BookingDetailModal({ booking, onClose, statusBadge }: { booking: Bookin
                   <FieldLabel text="Rentals" />
                   <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
                     {detail.rentals.map(r => (
-                      <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                      <div key={r.lineId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
                         <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{r.itemName} ├ù {r.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(r.subtotal)}</span>
                       </div>
@@ -387,7 +289,7 @@ function BookingDetailModal({ booking, onClose, statusBadge }: { booking: Bookin
                   <FieldLabel text="Services" />
                   <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
                     {detail.services.map(s => (
-                      <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+                      <div key={s.lineId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
                         <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{s.serviceName} ├ù {s.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(s.totalCost)}</span>
                       </div>
@@ -404,25 +306,22 @@ function BookingDetailModal({ booking, onClose, statusBadge }: { booking: Bookin
   );
 }
 
-function InvoiceModal({ order, customer, onClose }: { order: any; customer: { name: string; email: string }; onClose: () => void; }) {
+function InvoiceModal({ order, customer, onClose }: { order: InvoiceResponseDto; customer: { name: string; email: string }; onClose: () => void; }) {
   const [invoice, setInvoice] = useState<InvoiceResponseDto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
   const fetchInvoice = async () => {
+    const session = readSession();
+    if (!session) {
+      setError('You are signed out. Please sign in again.');
+      setIsLoading(false);
+      return;
+    }
     try {
-      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
-      const res = await fetch(`http://localhost:5258/api/Invoices/${order.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setInvoice(await res.json());
-      } else {
-        setError('Invoice pending generation by admin.');
-      }
+      setInvoice(await getInvoiceById(session.token, order.id));
     } catch (e) {
-      console.error(e);
-      setError('Invoice pending generation by admin.');
+      setError(e instanceof BookingApiError ? e.message : 'Invoice pending generation by admin.');
     } finally {
       setIsLoading(false);
     }
@@ -554,7 +453,7 @@ function InvoiceModal({ order, customer, onClose }: { order: any; customer: { na
 }
 
 
-function PaymentScheduleModal({ order, invoice, onClose }: { order: any; invoice: any; onClose: () => void; }) {
+function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingResponseDto; invoice: InvoiceResponseDto | undefined; onClose: () => void; }) {
   const [schedule, setSchedule] = useState<PaymentScheduleDto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -565,19 +464,16 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: any; invoice
   const [checkoutError, setCheckoutError] = useState('');
 
   const fetchSchedule = async () => {
+    const session = readSession();
+    if (!session) {
+      setError('You are signed out. Please sign in again.');
+      setIsLoading(false);
+      return;
+    }
     try {
-      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
-      const res = await fetch(`http://localhost:5258/api/Bookings/${order.id}/payment-schedule`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setSchedule(await res.json());
-      } else {
-        setError('Schedule not available yet.');
-      }
+      setSchedule(await getPaymentSchedule(session.token, order.id));
     } catch (e) {
-      console.error(e);
-      setError('Schedule not available yet.');
+      setError(e instanceof BookingApiError ? e.message : 'Schedule not available yet.');
     } finally {
       setIsLoading(false);
     }
@@ -603,32 +499,28 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: any; invoice
     
     setIsSubmitting(true);
     setCheckoutError('');
-    
+
+    const session = readSession();
+    if (!session) {
+      setCheckoutError('You are signed out. Please sign in again.');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
-      const res = await fetch(`http://localhost:5258/api/Payments/checkout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          invoiceId: invoice.id,
-          amount: amount
-        })
-      });
-      
-      const data = await res.json();
-      
-      if (res.ok && data.checkoutUrl) {
+      const data = await checkout(session.token, { invoiceId: invoice.id, amount });
+      if (data.checkoutUrl) {
         window.location.href = data.checkoutUrl;
       } else {
-        setCheckoutError(data.message || 'Failed to initiate checkout.');
+        setCheckoutError('Failed to initiate checkout.');
         setIsSubmitting(false);
       }
     } catch (err) {
-      console.error(err);
-      setCheckoutError('An error occurred while connecting to the payment gateway.');
+      setCheckoutError(
+        err instanceof BookingApiError
+          ? err.message
+          : 'An error occurred while connecting to the payment gateway.',
+      );
       setIsSubmitting(false);
     }
   };
@@ -782,56 +674,70 @@ export function CustomerDashboardPage() {
 
   const [tab, setTab] = useState<Tab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+
+  const { toasts, notify, dismiss } = useToasts();
+
   const [bookings, setBookings] = useState<BookingResponseDto[]>([]);
   const [invoices, setInvoices] = useState<InvoiceResponseDto[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [isFetching, setIsFetching] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchDashboard = useCallback(async () => {
+    const session = readSession();
+    if (!session) {
+      setLoadError('You are signed out. Please sign in again to load your dashboard.');
+      setIsFetching(false);
+      return;
+    }
+    setLoadError(null);
     try {
-      const token = (localStorage.getItem('kj_auth_token') || sessionStorage.getItem('kj_auth_token')) || '';
-      const headers = { Authorization: `Bearer ${token}` };
-      
-      const bRes = await fetch('http://localhost:5258/api/Bookings', { headers });
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        const safeBookings = Array.isArray(bData) ? bData : [];
-        setBookings(safeBookings);
-        
-        const invPromises = safeBookings.map(async (b: BookingResponseDto) => {
-          const iRes = await fetch(`http://localhost:5258/api/Invoices/booking/${b.id}`, { headers });
-          if (iRes.ok) return iRes.json();
-          return null;
-        });
-        
-        const invData = await Promise.all(invPromises);
-        setInvoices(Array.isArray(invData) ? invData.filter(i => i !== null) : []);
-      }
+      const bookingList = await getAllBookings(session.token);
+      setBookings(bookingList);
+
+      // Invoices don't exist until the caterer generates them — a missing one is normal.
+      const invoiceList = (
+        await Promise.all(
+          bookingList.map((b) => getInvoiceByBooking(session.token, b.id).catch(() => null)),
+        )
+      ).filter((i): i is InvoiceResponseDto => i !== null);
+      setInvoices(invoiceList);
+
+      const paymentLists = await Promise.all(
+        invoiceList.map((inv) => getPaymentsByInvoice(session.token, inv.id).catch(() => [] as PaymentRecord[])),
+      );
+      setPayments(paymentLists.flat());
     } catch (err) {
-      console.error(err);
+      setLoadError(
+        err instanceof BookingApiError
+          ? err.message
+          : 'Something went wrong while loading your dashboard. Please try again.',
+      );
     } finally {
       setIsFetching(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchDashboard();
+    void fetchDashboard();
   }, [fetchDashboard]);
 
+  /* Live refresh: the backend broadcasts "PaymentUpdated" on /hubs/payment
+     whenever a payment lands, fails, or is confirmed. */
   useEffect(() => {
     const conn = new HubConnectionBuilder()
-      .withUrl('http://localhost:5258/hubs/payments')
+      .withUrl(`${API_BASE_URL}/hubs/payment`)
       .withAutomaticReconnect()
       .build();
 
     conn.on('PaymentUpdated', () => {
-      fetchDashboard();
+      void fetchDashboard();
     });
 
     conn.start().catch((err) => console.error('SignalR error:', err));
 
     return () => {
-      conn.stop();
+      void conn.stop();
     };
   }, [fetchDashboard]);
 
@@ -852,8 +758,9 @@ export function CustomerDashboardPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       setDetailBooking(null);
-              setInvoiceOrder(null);
+      setInvoiceOrder(null);
       setConfirmCancel(null);
+      setRefundTarget(null);
       setSidebarOpen(false);
     };
 
@@ -864,7 +771,7 @@ export function CustomerDashboardPage() {
   /* derived */
   const invoiceOf = (b: BookingResponseDto) => invoices.find((i) => i.bookingId === b.id);
   const deriveBookingStatus = (b: BookingResponseDto) => {
-    if (b.status === 'cancelled') return { label: 'Cancelled', color: 'var(--danger)' };
+    if (b.status.toLowerCase().includes('cancel')) return { label: 'Cancelled', color: 'var(--danger)' };
     const order = invoiceOf(b);
     if (!order) return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
     if (order.status === 'Unpaid') return { label: 'Pending', color: 'var(--accent)' };
@@ -873,8 +780,8 @@ export function CustomerDashboardPage() {
     return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
   };
 
-  const activeBookings = bookings.filter((b) => b.status !== 'cancelled');
-  const confirmedCount = bookings.filter((b) => b.status === 'secured').length;
+  const activeBookings = bookings.filter((b) => !b.status.toLowerCase().includes('cancel'));
+  const confirmedCount = bookings.filter((b) => b.status.toLowerCase() === 'confirmed').length;
 
 
 
@@ -908,9 +815,66 @@ export function CustomerDashboardPage() {
   }, [bookings, query, statusFilter, sortBy]);
 
 
-  const cancelBooking = (id: string) => {
-    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: 'cancelled' as const } : b)));
-    setConfirmCancel(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [refundTarget, setRefundTarget] = useState<PaymentRecord | null>(null);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundBusy, setRefundBusy] = useState(false);
+
+  /* Draft/Pending bookings cancel directly; a Confirmed booking files a
+     cancellation request the owner reviews. */
+  const cancelBooking = async (id: string) => {
+    const session = readSession();
+    if (!session) {
+      notify('error', 'You are signed out. Please sign in again.');
+      return;
+    }
+    const target = bookings.find((b) => b.id === id);
+    const needsRequest = (target?.status ?? '').toLowerCase() === 'confirmed';
+    setCancelBusy(true);
+    try {
+      if (needsRequest) {
+        await requestCancellation(session.token, id, cancelReason.trim() || undefined);
+        notify('success', 'Cancellation request sent — the caterer will review it shortly.');
+      } else {
+        await cancelBookingRequest(session.token, id);
+        notify('success', 'Your booking has been cancelled.');
+      }
+      setConfirmCancel(null);
+      setCancelReason('');
+      await fetchDashboard();
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof BookingApiError ? err.message : 'Could not cancel this booking. Please try again.',
+      );
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const submitRefundRequest = async () => {
+    if (!refundTarget) return;
+    const session = readSession();
+    if (!session) {
+      notify('error', 'You are signed out. Please sign in again.');
+      return;
+    }
+    setRefundBusy(true);
+    try {
+      await requestRefund(session.token, refundTarget.id, { reason: refundReason.trim() || undefined });
+      notify('success', 'Refund request sent — the caterer will review it shortly.');
+      setRefundTarget(null);
+      setRefundReason('');
+      await fetchDashboard();
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof BookingApiError ? err.message : 'Could not send the refund request. Please try again.',
+      );
+    } finally {
+      setRefundBusy(false);
+    }
   };
 
   const switchTab = (t: Tab) => {
@@ -1342,6 +1306,25 @@ export function CustomerDashboardPage() {
             </div>
 
             {/* ══════════ OVERVIEW ══════════ */}
+            {loadError && !isFetching && (
+              <div
+                className="cds-card"
+                style={{
+                  padding: '1rem 1.3rem', marginBottom: '1.25rem',
+                  borderColor: 'color-mix(in srgb, var(--danger) 35%, transparent)',
+                  display: 'flex', alignItems: 'center', gap: '0.8rem', flexWrap: 'wrap',
+                }}
+                role="alert"
+              >
+                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', color: 'var(--danger)', flex: 1, minWidth: 200 }}>
+                  {loadError}
+                </span>
+                <button type="button" className="cds-btn outline" onClick={() => { setIsFetching(true); void fetchDashboard(); }}>
+                  Try Again
+                </button>
+              </div>
+            )}
+
             {tab === 'overview' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
@@ -1528,13 +1511,13 @@ export function CustomerDashboardPage() {
                 ) : (
                   isFetching ? (
     <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading bookings...</div>
-  ) : isFetching ? (
-    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading bookings...</div>
   ) : filteredBookings.map((b) => {
                     const order = invoiceOf(b);
                     const meta = EVENT_META[normalizeType(b.eventType) as keyof typeof EVENT_META] || EVENT_META.wedding;
                     const st = deriveBookingStatus(b);
-                    const cancellable = b.status === 'pending' || b.status === 'pending_fee';
+                    const rawStatus = b.status.toLowerCase();
+                    const cancellable = rawStatus === 'draft' || rawStatus === 'pending';
+                    const canRequestCancel = rawStatus === 'confirmed' && !b.cancellationRequested;
                     return (
                       <div key={b.id} className="cds-card" style={{ overflow: 'hidden' }}>
 
@@ -1562,10 +1545,17 @@ export function CustomerDashboardPage() {
                             {/* Removed static services tag map */}
                           </div>
                           <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
+                            {b.cancellationRequested && (
+                              <StatusBadge label="Cancellation Requested" color="var(--accent)" />
+                            )}
                             {cancellable && (
-
                               <button type="button" className="cds-btn dangerghost" onClick={() => setConfirmCancel(b.id)}>
                                 Cancel
+                              </button>
+                            )}
+                            {canRequestCancel && (
+                              <button type="button" className="cds-btn dangerghost" onClick={() => setConfirmCancel(b.id)}>
+                                Request Cancellation
                               </button>
                             )}
                             
@@ -1679,30 +1669,66 @@ export function CustomerDashboardPage() {
                   <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                 </div>
                 <div className="cds-card" style={{ overflow: 'hidden', overflowX: 'auto' }}>
-                  <table className="cds-table" style={{ minWidth: 620 }}>
+                  <table className="cds-table" style={{ minWidth: 680 }}>
                     <thead>
                       <tr style={{ background: 'var(--bg-subtle)' }}>
-                        <th style={{ padding: '0.8rem 1.4rem' }}>Event / Order</th>
+                        <th style={{ padding: '0.8rem 1.4rem' }}>Event / Invoice</th>
                         <th>Date</th>
                         <th>Amount</th>
                         <th>Method</th>
+                        <th>Status</th>
+                        <th aria-label="Actions" />
                       </tr>
                     </thead>
                     <tbody>
-                      {([] as any[]).map((tx) => (
-                        <tr key={tx.id}>
-                          <td style={{ padding: '0.8rem 1.4rem' }}>
-                            <div style={{ fontWeight: 500 }}>{tx.eventLabel}</div>
-
-                            <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: '0.12rem', fontWeight: 300 }}>{tx.id} · #{tx.orderId}</div>
-                          </td>
-                          <td style={{ color: 'var(--text-muted)' }}>{fmtDate(tx.date)}</td>
-                          <td style={{ fontFamily: 'var(--font-display)', fontWeight: 600, color: 'var(--primary)', fontSize: '0.95rem' }}>{fmt(tx.amount)}</td>
-                          <td style={{ color: 'var(--text-muted)' }}>
-                            {METHOD_META[tx.method].icon} {METHOD_META[tx.method].label}
+                      {payments.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} style={{ padding: '1.6rem 1.4rem', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 300 }}>
+                            No payments recorded yet.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        [...payments]
+                          .sort((a, z) => +new Date(z.paymentDateTime) - +new Date(a.paymentDateTime))
+                          .map((p) => {
+                            const inv = invoices.find((i) => i.id === p.invoiceId);
+                            const bk = inv ? bookings.find((x) => x.id === inv.bookingId) : undefined;
+                            const stColor =
+                              p.status === 'Success' ? 'var(--primary)'
+                              : p.status === 'Failed' ? 'var(--danger)'
+                              : p.status === 'Pending' ? 'var(--accent)'
+                              : '#4a90d9';
+                            const refundable =
+                              (p.status === 'Success' || p.status === 'PartiallyRefunded') &&
+                              p.refundableRemaining > 0 && !p.refundRequested;
+                            return (
+                              <tr key={p.id}>
+                                <td style={{ padding: '0.8rem 1.4rem' }}>
+                                  <div style={{ fontWeight: 500 }}>{bk?.bookingName ?? 'Event'}</div>
+                                  <div style={{ fontSize: '0.64rem', color: 'var(--text-dim)', marginTop: '0.12rem', fontWeight: 300 }}>
+                                    #{p.id.substring(0, 8)}{p.transactionReference ? ` · ${p.transactionReference}` : ''}
+                                  </div>
+                                </td>
+                                <td style={{ color: 'var(--text-muted)' }}>{fmtDate(p.paymentDateTime)}</td>
+                                <td style={{ fontFamily: 'var(--font-display)', fontWeight: 600, color: 'var(--primary)', fontSize: '0.95rem' }}>{fmt(p.amountPaid)}</td>
+                                <td style={{ color: 'var(--text-muted)' }}>{p.method}</td>
+                                <td>
+                                  <StatusBadge
+                                    label={p.refundRequested ? 'Refund Requested' : p.status}
+                                    color={p.refundRequested ? 'var(--accent)' : stColor}
+                                  />
+                                </td>
+                                <td style={{ paddingRight: '1.4rem', textAlign: 'right' }}>
+                                  {refundable && (
+                                    <button type="button" className="cds-btn outline" onClick={() => setRefundTarget(p)}>
+                                      Request Refund
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1752,26 +1778,79 @@ export function CustomerDashboardPage() {
 
       {/* cancel confirmation */}
 
-      {confirmCancel && (
-        <div className="cds-overlay" onClick={() => setConfirmCancel(null)}>
-          <div className="cds-modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()} role="alertdialog" aria-label="Confirm cancellation">
+      {confirmCancel && (() => {
+        const target = bookings.find((b) => b.id === confirmCancel);
+        const needsRequest = (target?.status ?? '').toLowerCase() === 'confirmed';
+        return (
+          <div className="cds-overlay" onClick={() => setConfirmCancel(null)}>
+            <div className="cds-modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()} role="alertdialog" aria-label="Confirm cancellation">
+              <div className="cds-modal-body" style={{ textAlign: 'center', gap: '0.9rem', padding: '2rem 1.75rem' }}>
+                <div style={{ fontSize: '1.6rem' }}>⚠️</div>
+                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                  {needsRequest ? 'Request cancellation?' : `Cancel booking #${confirmCancel.substring(0, 8)}?`}
+                </h3>
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+                  {needsRequest
+                    ? 'This booking is already confirmed, so the caterer must review your cancellation. The reservation fee is non-refundable.'
+                    : "This releases your reserved date. You can always book again, but availability isn't guaranteed."}
+                </p>
+                {needsRequest && (
+                  <input
+                    className="cds-input"
+                    style={{ width: '100%' }}
+                    placeholder="Reason (optional)"
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    aria-label="Cancellation reason"
+                  />
+                )}
+                <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', marginTop: '0.4rem' }}>
+                  <button type="button" className="cds-btn soft" onClick={() => setConfirmCancel(null)}>Keep Booking</button>
+                  <button
+                    type="button"
+                    className="cds-btn"
+                    disabled={cancelBusy}
+                    style={{ background: 'var(--danger)', color: '#fff', borderColor: 'var(--danger)', opacity: cancelBusy ? 0.6 : 1 }}
+                    onClick={() => void cancelBooking(confirmCancel)}
+                  >
+                    {cancelBusy ? 'Working…' : needsRequest ? 'Send Request' : 'Yes, Cancel'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* refund request */}
+      {refundTarget && (
+        <div className="cds-overlay" onClick={() => setRefundTarget(null)}>
+          <div className="cds-modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Request a refund">
             <div className="cds-modal-body" style={{ textAlign: 'center', gap: '0.9rem', padding: '2rem 1.75rem' }}>
-              <div style={{ fontSize: '1.6rem' }}>⚠️</div>
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-                Cancel booking #{confirmCancel}?
+                Request a refund?
               </h3>
               <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-                This releases your reserved date. You can always book again, but availability isn't guaranteed.
+                This asks the caterer to refund {fmt(refundTarget.refundableRemaining)} from your payment of {fmt(refundTarget.amountPaid)}. They will review it and respond.
               </p>
+              <input
+                className="cds-input"
+                style={{ width: '100%' }}
+                placeholder="Reason (optional)"
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                aria-label="Refund reason"
+              />
               <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', marginTop: '0.4rem' }}>
-                <button type="button" className="cds-btn soft" onClick={() => setConfirmCancel(null)}>Keep Booking</button>
+                <button type="button" className="cds-btn soft" onClick={() => setRefundTarget(null)}>Never Mind</button>
                 <button
                   type="button"
-                  className="cds-btn"
-                  style={{ background: 'var(--danger)', color: '#fff', borderColor: 'var(--danger)' }}
-                  onClick={() => cancelBooking(confirmCancel)}
+                  className="cds-btn primary"
+                  disabled={refundBusy}
+                  style={{ opacity: refundBusy ? 0.6 : 1 }}
+                  onClick={() => void submitRefundRequest()}
                 >
-                  Yes, Cancel
+                  {refundBusy ? 'Sending…' : 'Send Request'}
                 </button>
               </div>
             </div>
@@ -1779,6 +1858,7 @@ export function CustomerDashboardPage() {
         </div>
       )}
 
+      <ToastViewport toasts={toasts} onDismiss={dismiss} />
       <ChatWidget />
     </>
   );
