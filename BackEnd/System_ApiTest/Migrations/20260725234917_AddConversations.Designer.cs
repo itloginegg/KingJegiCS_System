@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System_ApiTest.Data;
 
@@ -11,9 +12,11 @@ using System_ApiTest.Data;
 namespace System_ApiTest.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260725234917_AddConversations")]
+    partial class AddConversations
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1061,72 +1064,6 @@ namespace System_ApiTest.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Supportmessage", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("ReadByAdminAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("ReadByCustomerAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Sender")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.Property<Guid>("SenderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Text")
-                        .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("nvarchar(4000)");
-
-                    b.Property<Guid>("ThreadId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ThreadId", "CreatedAt");
-
-                    b.ToTable("SupportMessages");
-                });
-
-            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("CustomerId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("LastMessageAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CustomerId")
-                        .IsUnique();
-
-                    b.ToTable("SupportThreads");
-                });
-
             modelBuilder.Entity("System_ApiTest.Models.Systemsettings", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1474,28 +1411,6 @@ namespace System_ApiTest.Migrations
                     b.Navigation("Slot");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Supportmessage", b =>
-                {
-                    b.HasOne("System_ApiTest.Models.Supportthread", "Thread")
-                        .WithMany("Messages")
-                        .HasForeignKey("ThreadId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Thread");
-                });
-
-            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
-                {
-                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
-                        .WithMany()
-                        .HasForeignKey("CustomerId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Customer");
-                });
-
             modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
                 {
                     b.Navigation("CreatedAssistants");
@@ -1576,11 +1491,6 @@ namespace System_ApiTest.Migrations
             modelBuilder.Entity("System_ApiTest.Models.Serviceitem", b =>
                 {
                     b.Navigation("Services");
-                });
-
-            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
-                {
-                    b.Navigation("Messages");
                 });
 #pragma warning restore 612, 618
         }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
+import { PlanByBudget } from '../components/suggestions/PlanByBudget';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
@@ -49,16 +51,19 @@ const formatTime12h = (time24: string) => {
   return `${hour.toString().padStart(2, '0')}:${m} ${ampm}`;
 };
 
-type ServiceFlow = 'event' | 'rentals' | 'menu';
+type ServiceFlow = 'event' | 'rentals';
 
 /* ── component ────────────────────────────────────────────────────────── */
 
 export function BookingPage() {
   const { user } = useAuth();
 
+  const navigate = useNavigate();
+
   /* ── wizard state ── */
   const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(null);
   const [step, setStep] = useState(0);
+  const [planMode, setPlanMode] = useState(false);   // Step-0 "Plan by Budget" card
 
   // Step 1 — Contact
   const [fullName, setFullName] = useState('');
@@ -77,8 +82,6 @@ export function BookingPage() {
   const [endTime, setEndTime] = useState('');
 
   // Delivery (rentals/menu flows)
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [deliveryTime, setDeliveryTime] = useState('');
 
   // API state
   const [bookingId, setBookingId] = useState<string | null>(null);
@@ -135,17 +138,19 @@ export function BookingPage() {
 
   /* ── load catalog on step 3 ── */
   const loadCatalog = useCallback(async () => {
-    const session = readSession();
-    if (!session) { setCatalogError('Please sign in to continue.'); return; }
+    // The catalog GETs are anonymous (item 1); the login gate lives at
+    // handleCreateBooking. Step 3 is only reached post-create, so a token is
+    // normally present — fall back to '' so browsing never hard-blocks on it.
+    const token = readSession()?.token ?? '';
     setCatalogLoading(true);
     setCatalogError(null);
     try {
       const [pkgs, items, trays, rentals, services] = await Promise.all([
-        fetchPackages(session.token),
-        fetchMenuItems(session.token),
-        fetchMenuTrays(session.token),
-        fetchRentalItems(session.token),
-        fetchServiceItems(session.token),
+        fetchPackages(token),
+        fetchMenuItems(token),
+        fetchMenuTrays(token),
+        fetchRentalItems(token),
+        fetchServiceItems(token),
       ]);
       setPackages(pkgs);
       setMenuItems(items);
@@ -190,14 +195,13 @@ export function BookingPage() {
   /* ── derived ── */
   const contactComplete = fullName.trim() && email.trim() && phone.trim();
 
-  const eventComplete = serviceFlow === 'event'
-    ? eventType && guests >= 1 && eventDate && startTime && endDate && endTime
-    : deliveryDate && deliveryTime;
+  // Both remaining flows ('event' and 'rentals') create a FullService booking, so both
+  // must supply the fields CreateAsync requires: event type, guests, dates, and times.
+  const eventComplete = eventType && guests >= 1 && eventDate && startTime && endDate && endTime;
 
   const stepLabels = useMemo(() => {
     if (serviceFlow === 'event') return ['Contact', 'Event Details', 'Package & Add‑ons', 'Review'];
-    if (serviceFlow === 'rentals') return ['Contact', 'Delivery Details', 'Rentals & Add‑ons', 'Review'];
-    if (serviceFlow === 'menu') return ['Contact', 'Delivery Details', 'Menu & Add‑ons', 'Review'];
+    if (serviceFlow === 'rentals') return ['Contact', 'Event Details', 'Rentals & Add‑ons', 'Review'];
     return [];
   }, [serviceFlow]);
 
@@ -279,14 +283,16 @@ export function BookingPage() {
 
     const payload: BookingCreatePayload = {
       customerId: user.id,
-      bookingType: serviceFlow === 'event' ? 'FullService' : 'FoodDelivery',
-      eventDate: serviceFlow === 'event' ? eventDate : deliveryDate,
-      startTime: (serviceFlow === 'event' ? startTime : deliveryTime) + ':00',
-      endDate: serviceFlow === 'event' && endDate ? endDate : null,
-      endTime: serviceFlow === 'event' && endTime ? endTime + ':00' : null,
-      eventType: serviceFlow === 'event' ? eventType : null,
+      // 'rentals' is FullService too — a rental line can't sit on a FoodDelivery booking
+      // (EnsureNotDeliveryAsync). Both flows now send the full event fields.
+      bookingType: 'FullService',
+      eventDate,
+      startTime: startTime + ':00',
+      endDate: endDate || null,
+      endTime: endTime ? endTime + ':00' : null,
+      eventType,
       venueAddress: venueAddress || 'To be provided',
-      guestCount: serviceFlow === 'event' ? guests : null,
+      guestCount: guests,
       contactNumber: phone || null,
     };
 
@@ -411,8 +417,15 @@ export function BookingPage() {
   return (
     <>
       <style>{`
+        /* ── blobs & animation ── */
+        .blob { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.18; pointer-events: none; animation: blobDrift 18s ease-in-out infinite alternate; }
+        .blob-primary { background: var(--primary); }
+        .blob-accent { background: var(--accent); }
+        @keyframes blobDrift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(30px,-20px) scale(1.08); } 100% { transform: translate(-20px,15px) scale(0.95); } }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-up { animation: fadeUp 0.7s ease both; }
+
         /* ── page layout ── */
-        .bk-page{min-height:100vh;background:var(--bg-subtle);padding:2.5rem 1.5rem 5rem}
         .bk-container{max-width:880px;margin:0 auto}
 
         /* ── stepper ── */
@@ -427,8 +440,8 @@ export function BookingPage() {
         .bk-step-line.done{background:var(--primary)}
 
         /* ── card ── */
-        .bk-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:2rem 2.25rem;box-shadow:var(--shadow-md);transition:border-color .3s,box-shadow .3s}
-        .bk-card:hover{border-color:var(--border-accent)}
+        .bk-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:2rem 2.25rem;box-shadow:var(--shadow-md);transition:border-color .25s,box-shadow .25s,transform .25s}
+        .bk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow-lg)}
         .bk-heading{font-family:var(--font-display);font-size:1.5rem;font-weight:600;color:var(--text-primary);margin:0 0 .35rem}
         .bk-sub{font-family:var(--font-body);font-size:.8rem;font-weight:300;color:var(--text-muted);margin:0 0 1.6rem}
 
@@ -446,37 +459,37 @@ export function BookingPage() {
 
         /* ── event type cards ── */
         .bk-type-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:.75rem}
-        .bk-type-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--r-lg);padding:.9rem .7rem;display:flex;flex-direction:column;align-items:center;gap:.35rem;cursor:pointer;transition:all .25s;text-align:center}
-        .bk-type-card:hover{border-color:var(--border-accent);transform:translateY(-2px);box-shadow:var(--shadow-md)}
-        .bk-type-card.active{border-color:var(--primary);background:var(--primary-muted)}
+        .bk-type-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:1.1rem .7rem;display:flex;flex-direction:column;align-items:center;gap:.35rem;cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .25s;text-align:center}
+        .bk-type-card:hover{border-color:var(--border-accent);transform:translateY(-3px);box-shadow:var(--shadow-md)}
+        .bk-type-card.active{border-color:var(--primary);background:var(--primary-muted);box-shadow:0 0 0 3px var(--primary-muted),var(--shadow-md)}
         .bk-type-icon{font-size:1.5rem}
         .bk-type-label{font-family:var(--font-body);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;font-weight:500;color:var(--text-primary)}
 
         /* ── buttons ── */
         .bk-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.8rem}
-        .bk-btn{font-family:var(--font-body);font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;padding:.65rem 1.4rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:.45rem;transition:all .25s}
+        .bk-btn{font-family:var(--font-body);font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;padding:.85rem 1.4rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:.45rem;transition:all .25s}
         .bk-btn:disabled{opacity:.4;cursor:not-allowed}
         .bk-btn.primary{background:var(--primary);color:var(--primary-text);border-color:var(--primary)}
-        .bk-btn.primary:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-1px)}
-        .bk-btn.outline{background:transparent;color:var(--text-muted);border-color:var(--border)}
-        .bk-btn.outline:hover:not(:disabled){border-color:var(--border-accent);color:var(--text-primary)}
+        .bk-btn.primary:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-2px);box-shadow:var(--shadow-green)}
+        .bk-btn.outline{background:transparent;color:var(--primary);border-color:var(--border-accent)}
+        .bk-btn.outline:hover:not(:disabled){background:var(--primary-muted);border-color:var(--primary);transform:translateY(-2px)}
         .bk-btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
 
         /* ── mode cards ── */
         .bk-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.2rem 0}
         @media(max-width:600px){.bk-mode-grid{grid-template-columns:1fr}}
-        .bk-mode-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--r-xl);padding:1.6rem 1.4rem;cursor:pointer;transition:all .3s;text-align:center}
+        .bk-mode-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:1.6rem 1.4rem;cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .25s;text-align:center}
         .bk-mode-card:hover{border-color:var(--border-accent);transform:translateY(-3px);box-shadow:var(--shadow-md)}
-        .bk-mode-card.active{border-color:var(--primary);background:var(--primary-muted)}
+        .bk-mode-card.active{border-color:var(--primary);background:var(--primary-muted);box-shadow:0 0 0 3px var(--primary-muted),var(--shadow-md)}
         .bk-mode-icon{font-size:2.2rem;margin-bottom:.6rem}
         .bk-mode-title{font-family:var(--font-display);font-size:1.1rem;font-weight:600;color:var(--text-primary);margin-bottom:.3rem}
         .bk-mode-desc{font-family:var(--font-body);font-size:.75rem;color:var(--text-muted)}
 
         /* ── catalog cards ── */
         .bk-catalog-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;margin-top:1rem}
-        .bk-catalog-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--r-lg);padding:1.1rem;cursor:pointer;transition:all .25s}
-        .bk-catalog-card:hover{border-color:var(--border-accent);transform:translateY(-2px);box-shadow:var(--shadow-md)}
-        .bk-catalog-card.selected{border-color:var(--primary);background:var(--primary-muted)}
+        .bk-catalog-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:1.1rem;cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .25s}
+        .bk-catalog-card:hover{border-color:var(--border-accent);transform:translateY(-3px);box-shadow:var(--shadow-md)}
+        .bk-catalog-card.selected{border-color:var(--primary);background:var(--primary-muted);box-shadow:0 0 0 3px var(--primary-muted),var(--shadow-md)}
         .bk-catalog-name{font-family:var(--font-display);font-size:.95rem;font-weight:600;color:var(--text-primary);margin-bottom:.3rem}
         .bk-catalog-meta{font-family:var(--font-body);font-size:.72rem;color:var(--text-muted)}
         .bk-catalog-price{font-family:var(--font-display);font-size:1rem;font-weight:600;color:var(--primary);margin-top:.4rem}
@@ -484,35 +497,36 @@ export function BookingPage() {
         /* ── tabs ── */
         .bk-tabs{display:flex;gap:.5rem;margin-bottom:1.2rem;flex-wrap:wrap}
         .bk-tab{font-family:var(--font-body);font-size:.6rem;letter-spacing:.15em;text-transform:uppercase;font-weight:500;padding:.5rem 1rem;border-radius:var(--r-full);border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;transition:all .25s}
-        .bk-tab:hover{border-color:var(--border-accent);color:var(--text-primary)}
+        .bk-tab:hover{border-color:var(--border-accent);color:var(--primary)}
         .bk-tab.active{background:var(--primary);color:var(--primary-text);border-color:var(--primary)}
 
         /* ── qty stepper ── */
-        .bk-qty{display:flex;align-items:center;gap:.5rem;margin-top:.5rem}
-        .bk-qty-btn{width:28px;height:28px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--text-primary);font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
-        .bk-qty-btn:hover{border-color:var(--primary);color:var(--primary)}
-        .bk-qty-val{font-family:var(--font-body);font-size:.85rem;font-weight:500;color:var(--text-primary);min-width:24px;text-align:center}
+        .bk-qty{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--r-full);background:var(--bg-subtle);overflow:hidden;margin-top:.5rem;width:fit-content}
+        .bk-qty-btn{border:none;background:transparent;cursor:pointer;width:26px;height:26px;line-height:1;color:var(--primary);font-size:.9rem;font-weight:600;display:flex;align-items:center;justify-content:center;transition:background .15s}
+        .bk-qty-btn:hover{background:var(--primary-muted)}
+        .bk-qty-val{min-width:24px;text-align:center;font-family:var(--font-body);font-size:.72rem;font-weight:500;color:var(--text-primary)}
 
         /* ── slot selection ── */
-        .bk-slot-section{margin-top:1.5rem;padding:1.2rem;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-subtle)}
+        .bk-slot-section{margin-top:1.5rem;padding:1.2rem;border:1px solid var(--border);border-radius:var(--r-xl);background:var(--bg-subtle)}
         .bk-slot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem}
         .bk-slot-title{font-family:var(--font-display);font-size:1rem;font-weight:600;color:var(--text-primary)}
         .bk-slot-badge{font-family:var(--font-body);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;padding:.25rem .6rem;border-radius:var(--r-full);background:var(--primary-muted);color:var(--primary);font-weight:500}
         .bk-slot-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.6rem}
-        .bk-slot-item{padding:.7rem;border:2px solid var(--border);border-radius:var(--r-lg);cursor:pointer;transition:all .2s;background:var(--surface)}
-        .bk-slot-item:hover{border-color:var(--border-accent)}
-        .bk-slot-item.chosen{border-color:var(--primary);background:var(--primary-muted)}
+        .bk-slot-item{padding:.7rem;border:1px solid var(--border);border-radius:var(--r-lg);cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .25s;background:var(--surface)}
+        .bk-slot-item:hover{border-color:var(--border-accent);transform:translateY(-2px);box-shadow:var(--shadow-md)}
+        .bk-slot-item.chosen{border-color:var(--primary);background:var(--primary-muted);box-shadow:0 0 0 2px var(--primary-muted)}
         .bk-slot-item-name{font-family:var(--font-body);font-size:.8rem;font-weight:500;color:var(--text-primary)}
         .bk-slot-item-cat{font-family:var(--font-body);font-size:.65rem;color:var(--text-muted)}
 
         /* ── service flow picker ── */
         .bk-flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2rem;margin:2rem 0}
         @media(max-width:700px){.bk-flow-grid{grid-template-columns:1fr}}
-        .bk-flow-card{background:var(--surface);border:2px solid var(--border);border-radius:var(--r-xl);padding:2rem 1.5rem;cursor:pointer;transition:all .3s;text-align:center}
-        .bk-flow-card:hover{border-color:var(--primary);transform:translateY(-4px);box-shadow:var(--shadow-lg)}
-        .bk-flow-icon{font-size:2.5rem;margin-bottom:.8rem}
-        .bk-flow-title{font-family:var(--font-display);font-size:1.15rem;font-weight:600;color:var(--text-primary);margin-bottom:.4rem}
-        .bk-flow-desc{font-family:var(--font-body);font-size:.75rem;color:var(--text-muted);line-height:1.5}
+        .bk-flow-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:2.2rem 1.5rem;cursor:pointer;transition:border-color .25s,box-shadow .25s,transform .25s;text-align:center;display:flex;flex-direction:column;align-items:center}
+        .bk-flow-card:hover{border-color:var(--border-accent);transform:translateY(-4px);box-shadow:var(--shadow-lg)}
+        .bk-flow-icon{font-size:2.5rem;margin-bottom:.8rem;filter:saturate(0.85);transition:transform .4s}
+        .bk-flow-card:hover .bk-flow-icon{transform:scale(1.12)}
+        .bk-flow-title{font-family:var(--font-display);font-size:1.2rem;font-weight:600;color:var(--text-primary);margin-bottom:.4rem}
+        .bk-flow-desc{font-family:var(--font-body);font-size:.78rem;color:var(--text-muted);line-height:1.6}
 
         /* ── error/feedback ── */
         .bk-error{padding:.9rem 1rem;border:1px solid var(--danger);color:var(--danger);border-radius:var(--r-lg);margin-bottom:1rem;font-family:var(--font-body);font-size:.8rem}
@@ -535,53 +549,79 @@ export function BookingPage() {
         @keyframes bk-spin{to{transform:rotate(360deg)}}
 
         /* ── terms overlay ── */
-        .bk-terms-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem}
-        .bk-terms-panel{background:var(--surface);border-radius:var(--r-xl);max-width:600px;width:100%;max-height:80vh;overflow-y:auto;padding:2rem 2.25rem}
+        .bk-terms-overlay{position:fixed;inset:0;background:rgba(20,14,8,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:200;display:flex;align-items:center;justify-content:center;padding:1rem}
+        .bk-terms-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);max-width:600px;width:100%;max-height:80vh;overflow-y:auto;padding:2rem 2.25rem;box-shadow:var(--shadow-lg)}
         .bk-terms-panel h3{font-family:var(--font-display);font-size:1.3rem;margin-bottom:1rem;color:var(--text-primary)}
         .bk-terms-panel p,.bk-terms-panel li{font-family:var(--font-body);font-size:.78rem;color:var(--text-muted);line-height:1.7}
         .bk-terms-panel ol{padding-left:1.3rem;margin:.8rem 0}
 
         /* ── filter ── */
         .bk-filter-row{display:flex;align-items:center;gap:.8rem;margin-bottom:1rem}
-        .bk-select{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--r-lg);padding:.5rem .8rem;font-family:var(--font-body);font-size:.78rem;color:var(--text-primary);outline:none}
+        .bk-select{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--r-full);padding:.5rem .8rem;font-family:var(--font-body);font-size:.78rem;color:var(--text-primary);outline:none;transition:border-color .2s}
+        .bk-select:focus{border-color:var(--primary)}
       `}</style>
 
       <Navbar activePage="quotation" />
 
-      <div className="bk-page">
-        <div className="bk-container">
+      <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
+        
+        {/* ═══════════════════════ HERO (STEP 0) ═══════════════════════ */}
+        {step === 0 && !submitted && (
+          <section style={{ padding: '6rem 0', position: 'relative', paddingTop: 'calc(6rem + 80px)', paddingBottom: '4rem', overflow: 'hidden' }}>
+            <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
+            <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
+            
+            <div className="fade-up" style={{ maxWidth: 880, margin: '0 auto', padding: '0 2.5rem', position: 'relative' }}>
+              {!planMode ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', padding: '0.35rem 1rem', marginBottom: '1.5rem' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.58rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 500 }}>
+                      Start Here
+                    </span>
+                  </div>
+                  <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.8rem, 5.5vw, 4.5rem)', fontWeight: 400, lineHeight: 1.08, color: 'var(--text-primary)', marginBottom: '1.5rem' }}>
+                    Book Your <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Experience</em>
+                  </h1>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: 'var(--text-muted)', lineHeight: 1.75, maxWidth: 520, margin: '0 auto 2.5rem', fontWeight: 300 }}>
+                    Choose the service that fits your occasion. We'll guide you through every detail.
+                  </p>
 
-          {/* ═══════ STEP 0 — SERVICE FLOW PICKER ═══════ */}
-          {step === 0 && !submitted && (
-            <div style={{ textAlign: 'center' }}>
-              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '2.2rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '.5rem' }}>
-                Book Your Experience
-              </h1>
-              <p style={{ fontFamily: 'var(--font-body)', fontSize: '.9rem', color: 'var(--text-muted)', maxWidth: 520, margin: '0 auto 1rem' }}>
-                Choose the service that fits your occasion. We'll guide you through every detail.
-              </p>
-
-              <div className="bk-flow-grid">
-                <div className="bk-flow-card" onClick={() => pickService('event')}>
-                  <div className="bk-flow-icon">🎉</div>
-                  <div className="bk-flow-title">Full Event Catering</div>
-                  <div className="bk-flow-desc">Complete event packages with staff, styling, and curated menus for any occasion.</div>
+                  <div className="bk-flow-grid">
+                    <div className="bk-flow-card" onClick={() => pickService('event')}>
+                      <div className="bk-flow-icon">🎉</div>
+                      <div className="bk-flow-title">Full Event Catering</div>
+                      <div className="bk-flow-desc">Complete event packages with staff, styling, and curated menus for any occasion.</div>
+                    </div>
+                    <div className="bk-flow-card" onClick={() => pickService('rentals')}>
+                      <div className="bk-flow-icon">🪑</div>
+                      <div className="bk-flow-title">Rental Items Only</div>
+                      <div className="bk-flow-desc">Tables, chairs, linens, and decor — delivered to your venue.</div>
+                    </div>
+                    <div className="bk-flow-card" onClick={() => setPlanMode(true)}>
+                      <div className="bk-flow-icon">💡</div>
+                      <div className="bk-flow-title">Plan by Budget</div>
+                      <div className="bk-flow-desc">Tell us your budget — we'll suggest complete, kitchen-priced options you can book.</div>
+                    </div>
+                  </div>
                 </div>
-                <div className="bk-flow-card" onClick={() => pickService('rentals')}>
-                  <div className="bk-flow-icon">🪑</div>
-                  <div className="bk-flow-title">Rental Items Only</div>
-                  <div className="bk-flow-desc">Tables, chairs, linens, and decor — delivered to your venue.</div>
-                </div>
-                <div className="bk-flow-card" onClick={() => pickService('menu')}>
-                  <div className="bk-flow-icon">🍽️</div>
-                  <div className="bk-flow-title">Food Delivery</div>
-                  <div className="bk-flow-desc">Party trays and dishes delivered fresh — perfect for home gatherings.</div>
-                </div>
-              </div>
+              ) : (
+                <PlanByBudget
+                  onBack={() => setPlanMode(false)}
+                  onRequireLogin={() => navigate('/login')}
+                  onMaterialized={(bookingId) => navigate('/dashboard', { state: { pendingDraftId: bookingId } })}
+                />
+              )}
             </div>
-          )}
+          </section>
+        )}
 
-          {/* ═══════ SUBMITTED SUCCESS ═══════ */}
+        {/* ═══════════════════════ MAIN CONTENT (STEPS 1-4 & SUCCESS) ═══════════════════════ */}
+        {(step >= 1 || submitted) && (
+          <section style={{ background: 'var(--bg-subtle)', padding: '3.5rem 0 6rem', minHeight: 'calc(100vh - 6rem)' }}>
+            <div className="bk-container" style={{ padding: '0 1.5rem' }}>
+
+              {/* ═══════ SUBMITTED SUCCESS ═══════ */}
           {submitted && (
             <div className="bk-card bk-success-card">
               <div className="bk-success-icon">✅</div>
@@ -659,7 +699,7 @@ export function BookingPage() {
 
               <div style={{ marginTop: '1.2rem' }}>
                 <label className="bk-label" style={{ marginBottom: '.6rem', display: 'block' }}>
-                  {serviceFlow === 'event' ? 'Venue Address' : 'Delivery Address'}
+                  Venue Address
                 </label>
                 <div className="bk-grid-3">
                   <div className="bk-field">
@@ -687,7 +727,7 @@ export function BookingPage() {
               <div className="bk-nav">
                 <button className="bk-btn outline" onClick={() => { setStep(0); setServiceFlow(null); }}>← Change Service</button>
                 <button className="bk-btn primary" disabled={!contactComplete} onClick={() => setStep(2)}>
-                  Next → {serviceFlow === 'event' ? 'Event Details' : 'Delivery Details'}
+                  Next → Event Details
                 </button>
               </div>
             </div>
@@ -696,63 +736,47 @@ export function BookingPage() {
           {/* ═══════ STEP 2 — EVENT / DELIVERY ═══════ */}
           {step === 2 && !submitted && (
             <div className="bk-card">
-              {serviceFlow === 'event' ? (
-                <>
-                  <h2 className="bk-heading">Event Details</h2>
-                  <p className="bk-sub">Tell us about your celebration so we can prepare the perfect setup.</p>
+              <h2 className="bk-heading">Event Details</h2>
+              <p className="bk-sub">
+                {serviceFlow === 'rentals'
+                  ? 'Tell us about the event your rentals are for so we can schedule delivery and pickup.'
+                  : 'Tell us about your celebration so we can prepare the perfect setup.'}
+              </p>
 
-                  <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
-                    <label className="bk-label">Event Type</label>
-                    <div className="bk-type-grid">
-                      {EVENT_TYPES.map(t => (
-                        <div key={t.value} className={`bk-type-card${eventType === t.value ? ' active' : ''}`} onClick={() => setEventType(t.value)}>
-                          <span className="bk-type-icon">{t.icon}</span>
-                          <span className="bk-type-label">{t.label}</span>
-                        </div>
-                      ))}
+              <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
+                <label className="bk-label">Event Type</label>
+                <div className="bk-type-grid">
+                  {EVENT_TYPES.map(t => (
+                    <div key={t.value} className={`bk-type-card${eventType === t.value ? ' active' : ''}`} onClick={() => setEventType(t.value)}>
+                      <span className="bk-type-icon">{t.icon}</span>
+                      <span className="bk-type-label">{t.label}</span>
                     </div>
-                  </div>
+                  ))}
+                </div>
+              </div>
 
-                  <div className="bk-grid">
-                    <div className="bk-field">
-                      <label className="bk-label">Expected Guests</label>
-                      <input className="bk-input" type="number" min={1} value={guests} onChange={e => setGuests(Number(e.target.value) || 1)} />
-                    </div>
-                    <div className="bk-field">
-                      <label className="bk-label">Event Date</label>
-                      <input className="bk-input" type="date" min={today} value={eventDate} onChange={e => setEventDate(e.target.value)} />
-                    </div>
-                    <div className="bk-field">
-                      <label className="bk-label">Start Time</label>
-                      <input className="bk-input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
-                    </div>
-                    <div className="bk-field">
-                      <label className="bk-label">End Date</label>
-                      <input className="bk-input" type="date" min={eventDate || today} value={endDate} onChange={e => setEndDate(e.target.value)} />
-                    </div>
-                    <div className="bk-field">
-                      <label className="bk-label">End Time</label>
-                      <input className="bk-input" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <h2 className="bk-heading">Delivery Details</h2>
-                  <p className="bk-sub">When would you like us to deliver?</p>
-
-                  <div className="bk-grid">
-                    <div className="bk-field">
-                      <label className="bk-label">Delivery Date</label>
-                      <input className="bk-input" type="date" min={today} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-                    </div>
-                    <div className="bk-field">
-                      <label className="bk-label">Delivery Time</label>
-                      <input className="bk-input" type="time" value={deliveryTime} onChange={e => setDeliveryTime(e.target.value)} />
-                    </div>
-                  </div>
-                </>
-              )}
+              <div className="bk-grid">
+                <div className="bk-field">
+                  <label className="bk-label">Expected Guests</label>
+                  <input className="bk-input" type="number" min={1} value={guests} onChange={e => setGuests(Number(e.target.value) || 1)} />
+                </div>
+                <div className="bk-field">
+                  <label className="bk-label">Event Date</label>
+                  <input className="bk-input" type="date" min={today} value={eventDate} onChange={e => setEventDate(e.target.value)} />
+                </div>
+                <div className="bk-field">
+                  <label className="bk-label">Start Time</label>
+                  <input className="bk-input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                </div>
+                <div className="bk-field">
+                  <label className="bk-label">End Date</label>
+                  <input className="bk-input" type="date" min={eventDate || today} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                </div>
+                <div className="bk-field">
+                  <label className="bk-label">End Time</label>
+                  <input className="bk-input" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                </div>
+              </div>
 
               <div className="bk-nav">
                 <button className="bk-btn outline" onClick={() => setStep(1)}>← Back</button>
@@ -761,7 +785,7 @@ export function BookingPage() {
                   disabled={!eventComplete || creatingBooking}
                   onClick={handleCreateBooking}
                 >
-                  {creatingBooking ? <><span className="bk-spinner" /> Creating…</> : 'Next → Menu & Add‑ons'}
+                  {creatingBooking ? <><span className="bk-spinner" /> Creating…</> : 'Next → Rentals & Add‑ons'}
                 </button>
               </div>
             </div>
@@ -771,7 +795,7 @@ export function BookingPage() {
           {step === 3 && !submitted && (
             <div className="bk-card">
               <h2 className="bk-heading">
-                {serviceFlow === 'event' ? 'Package & Add‑ons' : serviceFlow === 'rentals' ? 'Rentals & Add‑ons' : 'Menu & Add‑ons'}
+                {serviceFlow === 'event' ? 'Package & Add‑ons' : 'Rentals & Add‑ons'}
               </h2>
               <p className="bk-sub">
                 {serviceFlow === 'event'
@@ -885,7 +909,7 @@ export function BookingPage() {
 
                       {/* Tabs */}
                       <div className="bk-tabs">
-                        {(serviceFlow === 'event' || serviceFlow === 'menu') && (
+                        {serviceFlow === 'event' && (
                           <>
                             <button className={`bk-tab${alacarteTab === 'dishes' ? ' active' : ''}`} onClick={() => setAlacarteTab('dishes')}>Dishes</button>
                             <button className={`bk-tab${alacarteTab === 'trays' ? ' active' : ''}`} onClick={() => setAlacarteTab('trays')}>Trays</button>
@@ -1037,20 +1061,11 @@ export function BookingPage() {
 
               {/* Event Summary */}
               <div className="bk-review-section">
-                <div className="bk-review-title">{serviceFlow === 'event' ? 'Event Details' : 'Delivery Details'}</div>
-                {serviceFlow === 'event' ? (
-                  <>
-                    <div className="bk-review-row"><span className="bk-review-label">Event Type</span><span className="bk-review-value">{eventType}</span></div>
-                    <div className="bk-review-row"><span className="bk-review-label">Guests</span><span className="bk-review-value">{guests}</span></div>
-                    <div className="bk-review-row"><span className="bk-review-label">Date</span><span className="bk-review-value">{eventDate}</span></div>
-                    <div className="bk-review-row"><span className="bk-review-label">Time</span><span className="bk-review-value">{formatTime12h(startTime)} — {formatTime12h(endTime)}</span></div>
-                  </>
-                ) : (
-                  <>
-                    <div className="bk-review-row"><span className="bk-review-label">Delivery Date</span><span className="bk-review-value">{deliveryDate}</span></div>
-                    <div className="bk-review-row"><span className="bk-review-label">Delivery Time</span><span className="bk-review-value">{formatTime12h(deliveryTime)}</span></div>
-                  </>
-                )}
+                <div className="bk-review-title">Event Details</div>
+                <div className="bk-review-row"><span className="bk-review-label">Event Type</span><span className="bk-review-value">{eventType}</span></div>
+                <div className="bk-review-row"><span className="bk-review-label">Guests</span><span className="bk-review-value">{guests}</span></div>
+                <div className="bk-review-row"><span className="bk-review-label">Date</span><span className="bk-review-value">{eventDate}</span></div>
+                <div className="bk-review-row"><span className="bk-review-label">Time</span><span className="bk-review-value">{formatTime12h(startTime)} — {formatTime12h(endTime)}</span></div>
               </div>
 
               {/* Selections Summary */}
@@ -1123,8 +1138,10 @@ export function BookingPage() {
             </div>
           )}
 
-        </div>
-      </div>
+            </div>
+          </section>
+        )}
+      </main>
 
       {/* ── TERMS MODAL ── */}
       {showTerms && (

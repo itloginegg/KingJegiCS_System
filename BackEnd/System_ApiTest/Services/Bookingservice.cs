@@ -11,6 +11,20 @@ namespace System_ApiTest.Services
         public BookingRuleException(string message) : base(message) { }
     }
 
+    /// <summary>
+    /// Read-only verdict on whether a NEW booking of a given type could target a date.
+    /// Time-slot buffer conflicts are NOT evaluated (no times are known before booking);
+    /// those remain enforced at confirmation. RemainingEventSlots is null for deliveries.
+    /// </summary>
+    public record DateAvailabilityResult(
+        bool Available,
+        bool LeadTimeMet,
+        DateOnly EarliestDate,
+        bool DateHasConfirmedEvent,
+        bool DayLocked,
+        int? RemainingEventSlots,
+        string Summary);
+
     public class Bookingservice
     {
         private readonly AppDbContext _db;
@@ -391,6 +405,46 @@ namespace System_ApiTest.Services
             {
                 await CheckTimeSlotConflictAsync(booking);
             }
+        }
+
+        /// <summary>
+        /// Read-only date probe for the assistant's check_date_availability tool (and any
+        /// pre-booking UI). Applies the same minimum-lead-time gate as CreateAsync, plus
+        /// the whole-day confirmed-event rule for deliveries and calendar capacity/lock
+        /// for events. No time-slot buffer check here — see the record's remarks.
+        /// </summary>
+        public async Task<DateAvailabilityResult> GetDateAvailabilityAsync(DateOnly date, BookingType bookingType)
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var leadDays = bookingType == BookingType.FoodDelivery
+                ? settings?.MinLeadDaysDelivery ?? 1
+                : settings?.MinLeadDaysFullService ?? 3;
+            var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
+            var leadOk = date >= earliest;
+
+            if (bookingType == BookingType.FoodDelivery)
+            {
+                var hasEvent = await DateHasConfirmedEventAsync(date);
+                var ok = leadOk && !hasEvent;
+                var summary = !leadOk
+                    ? $"Too soon — the earliest delivery date is {earliest:yyyy-MM-dd}."
+                    : hasEvent ? "Unavailable — this date already has a booked event."
+                    : "Available for delivery.";
+                return new DateAvailabilityResult(ok, leadOk, earliest, hasEvent, false, null, summary);
+            }
+
+            var day = await _db.CalendarDays.AsNoTracking().FirstOrDefaultAsync(d => d.Date == date);
+            var maxCap = day?.MaxCapacity ?? settings?.DefaultMaxCapacity ?? 3;
+            var used = day?.ConfirmedCount ?? 0;
+            var locked = day?.IsLocked ?? false;
+            var remaining = Math.Max(0, maxCap - used);
+            var available = leadOk && !locked && remaining > 0;
+            var eventSummary = !leadOk
+                ? $"Too soon — the earliest event date is {earliest:yyyy-MM-dd}."
+                : locked ? "Unavailable — this calendar day is locked."
+                : remaining == 0 ? "Fully booked — no event slots remain on this date."
+                : $"Available — {remaining} of {maxCap} event slot(s) open (subject to the time-slot check at confirmation).";
+            return new DateAvailabilityResult(available, leadOk, earliest, false, locked, remaining, eventSummary);
         }
 
         /// <summary>The overlap test itself (buffer-expanded, overnight-aware). Callers decide about locking.</summary>
@@ -861,8 +915,7 @@ namespace System_ApiTest.Services
             if (booking.GuestCount is null or <= 0)
                 throw new BookingRuleException("Quantity could not be derived: the booking has no guest count.");
 
-            var serves = Math.Max(1, servesPerTray);
-            return (booking.GuestCount.Value + serves - 1) / serves;   // ceil(guests / serves)
+            return BookingMath.TraysToCover(booking.GuestCount.Value, servesPerTray);   // ceil(guests / serves)
         }
     }
 }

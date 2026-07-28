@@ -49,6 +49,17 @@ namespace System_ApiTest.Data
         public DbSet<Invoice> Invoices => Set<Invoice>();
         public DbSet<Payment> Payments => Set<Payment>();
 
+        // Notifications (background worker idempotency ledger)
+        public DbSet<Sentnotification> SentNotifications => Set<Sentnotification>();
+
+        // Virtual assistant (conversation history)
+        public DbSet<Conversation> Conversations => Set<Conversation>();
+        public DbSet<Conversationmessage> ConversationMessages => Set<Conversationmessage>();
+
+        // Support chat (customer ↔ staff)
+        public DbSet<Supportthread> SupportThreads => Set<Supportthread>();
+        public DbSet<Supportmessage> SupportMessages => Set<Supportmessage>();
+
         protected override void OnModelCreating(ModelBuilder b)
         {
             base.OnModelCreating(b);
@@ -383,6 +394,62 @@ namespace System_ApiTest.Data
 
                 e.HasOne(p => p.Invoice).WithMany(i => i.Payments)
                  .HasForeignKey(p => p.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- SentNotification (worker idempotency ledger) ----------------
+            b.Entity<Sentnotification>(e =>
+            {
+                e.Property(n => n.Kind).HasConversion<string>().HasMaxLength(30);
+
+                // Never send the same notification twice. Tuple-uniqueness: rows with
+                // different Period (or a null vs non-null BookingId) are distinct.
+                // HasFilter(null) overrides EF's default "[BookingId] IS NOT NULL" filter
+                // so the constraint also covers cross-booking rows (owner digest / low
+                // stock) whose BookingId is null — SQL Server treats those NULLs as equal,
+                // giving them the same dedup backstop as booking-scoped rows.
+                e.HasIndex(n => new { n.BookingId, n.Kind, n.Period }).IsUnique().HasFilter(null);
+
+                // Booking may be gone-independent (owner digest / low-stock have null
+                // BookingId); when set, a cascade keeps the ledger tidy if the booking is
+                // ever removed.
+                e.HasOne(n => n.Booking).WithMany()
+                 .HasForeignKey(n => n.BookingId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- Conversation / Conversationmessage (virtual assistant) ----------------
+            b.Entity<Conversation>(e =>
+            {
+                e.HasIndex(c => c.CustomerId);
+                // A customer must exist; keep their threads if they're ever deactivated
+                // (customers are soft-deleted, never removed — Restrict is consistent).
+                e.HasOne(c => c.Customer).WithMany()
+                 .HasForeignKey(c => c.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            b.Entity<Conversationmessage>(e =>
+            {
+                e.Property(m => m.Role).HasConversion<string>().HasMaxLength(10);
+                e.HasIndex(m => new { m.ConversationId, m.Ordinal }).IsUnique();
+                e.HasOne(m => m.Conversation).WithMany(c => c.Messages)
+                 .HasForeignKey(m => m.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- Support chat ----------------
+            b.Entity<Supportthread>(e =>
+            {
+                e.Property(t => t.Status).HasConversion<string>().HasMaxLength(10);
+                // One support thread per customer (get-or-create keys off this).
+                e.HasIndex(t => t.CustomerId).IsUnique();
+                e.HasOne(t => t.Customer).WithMany()
+                 .HasForeignKey(t => t.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            b.Entity<Supportmessage>(e =>
+            {
+                e.Property(m => m.Sender).HasConversion<string>().HasMaxLength(10);
+                e.HasIndex(m => new { m.ThreadId, m.CreatedAt });
+                e.HasOne(m => m.Thread).WithMany(t => t.Messages)
+                 .HasForeignKey(m => m.ThreadId).OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

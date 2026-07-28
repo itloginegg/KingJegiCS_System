@@ -30,6 +30,7 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>List dishes. Customers see only active ones; optional package filter.</summary>
+        [AllowAnonymous]   // guests may browse the catalog (item 1); IsAdmin() is false → active-only
         [HttpGet]
         public async Task<IActionResult> GetAll([FromQuery] Guid? menuPackageId)
         {
@@ -41,6 +42,7 @@ namespace System_ApiTest.Controllers
             return Ok(items.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {

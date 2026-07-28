@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { HubConnectionBuilder } from '@microsoft/signalr';
-import { 
-  LayoutDashboard, CalendarDays, CreditCard, MessageSquare, Package, 
+import {
+  LayoutDashboard, CalendarDays, CreditCard, Package,
   Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake,
   Cake, PartyPopper, Building2, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
 } from 'lucide-react';
@@ -18,6 +18,7 @@ import {
   getPaymentSchedule,
   getPaymentsByInvoice,
   checkout,
+  submitBooking,
   cancelBooking as cancelBookingRequest,
   requestCancellation,
   requestRefund,
@@ -153,10 +154,34 @@ function Pipeline({ current, cancelled }: { current: number; cancelled: boolean 
    Modals
 ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ */
 
-function BookingDetailModal({ booking, onClose, statusBadge }: { booking: BookingResponseDto; onClose: () => void; statusBadge?: { label: string; color: string } }) {
+function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted }: {
+  booking: BookingResponseDto;
+  onClose: () => void;
+  statusBadge?: { label: string; color: string };
+  notify?: (type: 'success' | 'error' | 'info', message: string) => void;
+  onSubmitted?: () => void;
+}) {
   const [detail, setDetail] = useState<BookingDetailDto | null>(null);
   const [selections, setSelections] = useState<BookingPackageSelectionDto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  /* A Draft (from the wizard, a materialized budget plan, or an admin walk-in) can be
+     submitted for review here — the parity fix so every Draft has a Submit path. */
+  const handleSubmit = async () => {
+    const session = readSession();
+    if (!session) { notify?.('error', 'You are signed out. Please sign in again.'); return; }
+    setSubmitting(true);
+    try {
+      await submitBooking(session.token, booking.id);
+      notify?.('success', 'Booking submitted for review.');
+      onSubmitted?.();
+    } catch (err) {
+      notify?.('error', err instanceof BookingApiError ? err.message : 'Could not submit this booking. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     const fetchDetail = async () => {
@@ -298,6 +323,14 @@ function BookingDetailModal({ booking, onClose, statusBadge }: { booking: Bookin
                 </div>
               )}
 
+            </div>
+          )}
+
+          {booking.status === 'Draft' && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', borderTop: '1px solid var(--border)', paddingTop: '1.1rem' }}>
+              <button type="button" className="cds-btn primary" disabled={submitting} onClick={() => void handleSubmit()}>
+                {submitting ? 'Submitting…' : 'Submit Booking'}
+              </button>
             </div>
           )}
         </div>
@@ -653,18 +686,18 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
 }
 
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'messages';
+type Tab = 'overview' | 'bookings' | 'payments';
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={20} /> },
   { id: 'bookings', label: 'My Bookings', icon: <CalendarDays size={20} /> },
   { id: 'payments', label: 'Payments', icon: <CreditCard size={20} /> },
-  { id: 'messages', label: 'Messages', icon: <MessageSquare size={20} /> },
 ];
 
 
 export function CustomerDashboardPage() {
   const { theme, toggleTheme } = useTheme();
   const { user: authUser, logout } = useAuth();
+  const location = useLocation();
 
   /* the signed-in account; static persona only as a dev fallback */
   const account = {
@@ -734,12 +767,21 @@ export function CustomerDashboardPage() {
       void fetchDashboard();
     });
 
+    /* Slice D: the notification worker pushes a nudge when it seeds an assistant
+       conversation. Payload is opaque ids only — filter to this customer, toast,
+       and badge the Messages tab (unless it's already open). */
+    conn.on('AssistantNudge', (payload: { customerId?: string; conversationId?: string }) => {
+      const myId = readSession()?.user.id;
+      if (!myId || payload?.customerId !== myId) return;
+      notify('info', 'Your assistant has a new message — open the chat bubble to see it.');
+    });
+
     conn.start().catch((err) => console.error('SignalR error:', err));
 
     return () => {
       void conn.stop();
     };
-  }, [fetchDashboard]);
+  }, [fetchDashboard, notify]);
 
 
   const [detailBooking, setDetailBooking] = useState<BookingResponseDto | null>(null);
@@ -747,6 +789,21 @@ export function CustomerDashboardPage() {
   const [paymentScheduleOrder, setPaymentScheduleOrder] = useState<any>(null);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+
+  /* Arriving from Plan-by-Budget's materialize: open the new Draft so the Submit
+     Booking button is immediately in view. Fires once. */
+  const pendingDraftHandled = useRef(false);
+  useEffect(() => {
+    if (pendingDraftHandled.current) return;
+    const pendingId = (location.state as { pendingDraftId?: string } | null)?.pendingDraftId;
+    if (!pendingId) return;
+    const draft = bookings.find((b) => b.id === pendingId);
+    if (draft) {
+      pendingDraftHandled.current = true;
+      setDetailBooking(draft);
+      notify('info', 'Your plan has been saved as a Draft — review it and click Submit Booking to send it for review.');
+    }
+  }, [bookings, location.state, notify]);
 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
@@ -881,6 +938,7 @@ export function CustomerDashboardPage() {
     setTab(t);
     setSidebarOpen(false);
   };
+
 
   return (
     <>
@@ -1230,9 +1288,6 @@ export function CustomerDashboardPage() {
               >
                 <span className="cds-nav-icon">{item.icon}</span>
                 {item.label}
-                {item.id === 'messages' && (
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)', marginLeft: 'auto' }} />
-                )}
               </button>
             ))}
 
@@ -1735,31 +1790,6 @@ export function CustomerDashboardPage() {
               </div>
             )}
 
-            {/* ══════════ MESSAGES ══════════ */}
-            {tab === 'messages' && (
-              <div className="fade-up cds-card" style={{ display: 'flex', flexDirection: 'column', maxWidth: 720 }}>
-                <div style={{ padding: '1.3rem 1.6rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <div className="cds-glyph">KJ</div>
-                  <div>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)' }}>King Jegi Coordination</div>
-                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)' }}>Replies within 24 hours</div>
-                  </div>
-                </div>
-                <div style={{ padding: '1.5rem 1.6rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-                  {([] as any[]).map((m) => (
-                    <div key={m.id} className={`cds-bubble ${m.from}`}>
-                      {m.text}
-                      <div style={{ fontSize: '0.58rem', opacity: 0.6, marginTop: '0.35rem', letterSpacing: '0.06em' }}>{fmtDate(m.at)}</div>
-
-                    </div>
-                  ))}
-                </div>
-                <div style={{ padding: '1rem 1.6rem 1.4rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.6rem' }}>
-                  <input className="cds-input" style={{ flex: 1 }} placeholder="Write a message…" disabled aria-label="Message input (available once the portal goes live)" />
-                  <button type="button" className="cds-btn primary" disabled style={{ opacity: 0.55, cursor: 'not-allowed' }}>Send</button>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* footer */}
@@ -1772,7 +1802,15 @@ export function CustomerDashboardPage() {
       </div>
 
       {/* modals */}
-      {detailBooking && <BookingDetailModal booking={detailBooking} onClose={() => setDetailBooking(null)} statusBadge={deriveBookingStatus(detailBooking)} />}
+      {detailBooking && (
+        <BookingDetailModal
+          booking={detailBooking}
+          onClose={() => setDetailBooking(null)}
+          statusBadge={deriveBookingStatus(detailBooking)}
+          notify={notify}
+          onSubmitted={() => { setDetailBooking(null); void fetchDashboard(); }}
+        />
+      )}
       {paymentScheduleOrder && <PaymentScheduleModal order={paymentScheduleOrder} invoice={invoiceOf(paymentScheduleOrder)} onClose={() => setPaymentScheduleOrder(null)} />}
       {invoiceOrder && <InvoiceModal order={invoiceOrder} customer={account} onClose={() => setInvoiceOrder(null)} />}
 

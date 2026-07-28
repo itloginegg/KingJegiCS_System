@@ -39,7 +39,13 @@ function CartIcon() {
 }
 
 /** Site navbar — absolutely positioned over whatever section renders it. */
-export function Navbar({ activePage }: { activePage?: string }) {
+export function Navbar({ activePage, cartCount = 0, onCartClick }: {
+  activePage?: string;
+  /** Item count for the cart badge (0 hides it). Defaults to 0 so other pages are unaffected. */
+  cartCount?: number;
+  /** Click handler for the cart icon (e.g. open the checkout modal). Optional. */
+  onCartClick?: () => void;
+}) {
   const { theme, toggleTheme } = useTheme();
   const { isAuthenticated, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -159,8 +165,28 @@ export function Navbar({ activePage }: { activePage?: string }) {
         </ul>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <button type="button" aria-label="View cart" style={iconBtn}>
+          <button
+            type="button"
+            aria-label={cartCount > 0 ? `View cart (${cartCount} item${cartCount === 1 ? '' : 's'})` : 'View cart'}
+            style={{ ...iconBtn, position: 'relative' }}
+            onClick={onCartClick}
+          >
             <CartIcon />
+            {cartCount > 0 && (
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute', top: 2, right: 2,
+                  minWidth: 15, height: 15, padding: '0 3px',
+                  borderRadius: 'var(--r-full)',
+                  background: 'var(--accent)', color: '#fff',
+                  fontFamily: 'var(--font-body)', fontSize: '0.52rem', fontWeight: 600,
+                  lineHeight: '15px', textAlign: 'center',
+                }}
+              >
+                {cartCount > 99 ? '99+' : cartCount}
+              </span>
+            )}
           </button>
 
           <button

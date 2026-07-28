@@ -32,6 +32,7 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>Catalog list. Admins see everything; customers see only active items.</summary>
+        [AllowAnonymous]   // guests may browse rentals (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -52,6 +53,7 @@ namespace System_ApiTest.Controllers
             return Ok(items.Select(i => ToDto(i, outgoing.GetValueOrDefault(i.Id))));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
@@ -62,6 +64,7 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>Live availability for an item (total / outgoing / available).</summary>
+        [AllowAnonymous]
         [HttpGet("{id:guid}/availability")]
         public async Task<IActionResult> Availability(Guid id)
         {

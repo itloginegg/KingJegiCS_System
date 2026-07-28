@@ -238,6 +238,75 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>
+        /// Admin customer lookup (item 4): find existing customers by name or email so an
+        /// admin can book for a returning walk-in. Owner/Assistant only. Capped result set.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("search")]
+        public async Task<IActionResult> Search([FromQuery] string? q)
+        {
+            var query = _db.Customers.AsQueryable();
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                var term = q.Trim().ToLower();
+                query = query.Where(c => c.FullName.ToLower().Contains(term) || c.Email.ToLower().Contains(term));
+            }
+
+            var results = await query
+                .OrderBy(c => c.FullName)
+                .Take(25)
+                .Select(c => new CustomerResponseDto(c.Id, c.FullName, c.Email, c.PhoneNumber, c.IsActive, c.CreatedAt))
+                .ToListAsync();
+
+            return Ok(results);
+        }
+
+        /// <summary>
+        /// Admin walk-in customer create (item 4). Deliberately skips the Gmail-only and
+        /// OTP-verification rules that self-registration enforces, and marks the account
+        /// email-verified + active so it can be booked for immediately. Owner/Assistant only.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("admin-create")]
+        public async Task<IActionResult> AdminCreate([FromBody] AdminCreateCustomerDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var email = dto.Email.Trim().ToLowerInvariant();
+            if (await _db.Customers.AnyAsync(c => c.Email == email))
+                return Conflict(new { message = "A customer with this email already exists — search for them instead." });
+
+            var customer = new Customer
+            {
+                FullName = dto.FullName.Trim(),
+                Email = email,
+                PhoneNumber = dto.PhoneNumber.Trim(),
+                IsEmailVerified = true,   // admin-vouched; no email round-trip
+                IsActive = true,
+            };
+
+            // A temp password if the admin didn't set one — the Customer.PasswordHash column
+            // is required; the walk-in simply can't log in until it's reset.
+            var password = string.IsNullOrWhiteSpace(dto.Password) ? Guid.NewGuid().ToString("N") : dto.Password;
+            customer.PasswordHash = _passwordHasher.HashPassword(customer, password);
+
+            _db.Customers.Add(customer);
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                return Conflict(new { message = "A customer with this email already exists — search for them instead." });
+            }
+
+            var body = new CustomerResponseDto(
+                customer.Id, customer.FullName, customer.Email, customer.PhoneNumber, customer.IsActive, customer.CreatedAt);
+            return CreatedAtAction(nameof(Search), null, body);
+        }
+
+        /// <summary>
         /// Soft-deactivate a customer. This is the ONLY supported way to "remove"
         /// a customer — there is deliberately no hard-delete endpoint, so bookings
         /// and their history are always preserved.

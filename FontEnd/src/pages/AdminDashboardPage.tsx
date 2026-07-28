@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { HubConnectionBuilder } from '@microsoft/signalr';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import {
@@ -39,13 +40,32 @@ import {
 import { AdminPackagesTab } from './AdminPackagesTab';
 import {
   getAllBookings,
+  createBooking,
   confirmBooking,
   completeBooking,
   cancelBooking,
+  submitBooking,
   generateInvoice,
   BookingApiError,
   type BookingResponse,
+  type BookingCreatePayload,
 } from '../api/bookingApi';
+import {
+  searchCustomers,
+  createWalkInCustomer,
+  CustomerAdminApiError,
+  type AdminCustomer,
+} from '../api/customerAdminApi';
+import { API_BASE_URL } from '../api/bookingApi';
+import {
+  listSupportThreads,
+  getSupportThread,
+  replySupport,
+  setSupportStatus,
+  SupportApiError,
+  type SupportThread,
+  type SupportThreadSummary,
+} from '../api/supportApi';
 import {
   getRecentPayments,
   fetchRefundRequests,
@@ -67,7 +87,7 @@ import { ToastViewport, useToasts } from '../components/ui/Toasts';
 /* Fallback identity; the signed-in admin account takes precedence. */
 const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
-type ResStatus = 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
+type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
 
 
@@ -96,6 +116,7 @@ const REVENUE_BY_MONTH = [
 ───────────────────────────────────────────────────────────────────────── */
 
 const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
+  Draft: { label: 'Draft', color: 'var(--text-dim)' },
   Pending: { label: 'Pending', color: 'var(--accent)' },
   Confirmed: { label: 'Confirmed', color: 'var(--primary)' },
   Completed: { label: 'Completed', color: '#4a90d9' },
@@ -184,6 +205,368 @@ type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rental
 
 const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support'];
 
+/* ─────────────────────────────────────────────────────────────────────────
+   New Booking (item 4) — admin walk-in: find or create a customer, then create
+   a Draft booking for them via the existing createBooking (backend uses the
+   supplied CustomerId because the caller is an admin).
+───────────────────────────────────────────────────────────────────────── */
+function NewBookingModal({ onClose, onCreated, notify }: {
+  onClose: () => void;
+  onCreated: () => void;
+  notify: (type: 'success' | 'error' | 'info', message: string) => void;
+}) {
+  const [custMode, setCustMode] = useState<'search' | 'new'>('search');
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<AdminCustomer[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<AdminCustomer | null>(null);
+
+  const [wName, setWName] = useState('');
+  const [wEmail, setWEmail] = useState('');
+  const [wPhone, setWPhone] = useState('');
+
+  const [bookingType, setBookingType] = useState<'FullService' | 'FoodDelivery'>('FullService');
+  const [eventType, setEventType] = useState('Wedding');
+  const [guests, setGuests] = useState('100');
+  const [eventDate, setEventDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [venue, setVenue] = useState('');
+  const [contact, setContact] = useState('');
+
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  const isFull = bookingType === 'FullService';
+  const toHms = (t: string) => (t.length === 5 ? `${t}:00` : t);
+
+  const runSearch = async () => {
+    const session = readSession();
+    if (!session) { setError('You are signed out. Sign in as Owner/Assistant.'); return; }
+    setSearching(true); setError('');
+    try {
+      setResults(await searchCustomers(session.token, q));
+    } catch (err) {
+      setError(err instanceof CustomerAdminApiError ? err.message : 'Customer search failed.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  useEffect(() => { void runSearch(); /* initial list */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const create = async () => {
+    const session = readSession();
+    if (!session) { setError('You are signed out. Sign in as Owner/Assistant.'); return; }
+
+    if (!eventDate || !startTime || !venue.trim()) { setError('Fill in date, time, and venue/address.'); return; }
+    if (isFull) {
+      if (!endDate || !endTime) { setError('Full-service events need an end date and time.'); return; }
+      if (new Date(`${endDate}T${toHms(endTime)}`) <= new Date(`${eventDate}T${toHms(startTime)}`)) {
+        setError('The event must end after it starts.'); return;
+      }
+      if (!eventType || Number(guests) < 1) { setError('Pick an event type and guest count.'); return; }
+    }
+
+    setCreating(true); setError('');
+    try {
+      let customerId: string;
+      if (custMode === 'search') {
+        if (!selected) { setError('Select a customer, or switch to New walk-in.'); setCreating(false); return; }
+        customerId = selected.id;
+      } else {
+        if (!wName.trim() || !wEmail.trim() || !wPhone.trim()) { setError('Fill in the walk-in name, email, and phone.'); setCreating(false); return; }
+        const made = await createWalkInCustomer(session.token, { fullName: wName.trim(), email: wEmail.trim(), phoneNumber: wPhone.trim() });
+        customerId = made.id;
+      }
+
+      const payload: BookingCreatePayload = {
+        customerId,
+        bookingType,
+        eventDate,
+        startTime: toHms(startTime),
+        endDate: isFull ? endDate : null,
+        endTime: isFull ? toHms(endTime) : null,
+        eventType: isFull ? eventType : null,
+        venueAddress: venue.trim(),
+        guestCount: isFull ? Number(guests) : null,
+        contactNumber: contact.trim() || null,
+      };
+      await createBooking(session.token, payload);
+      notify('success', 'Draft booking created. Open it to add items and submit.');
+      onCreated();
+    } catch (err) {
+      setError(
+        err instanceof CustomerAdminApiError ? err.message
+          : err instanceof BookingApiError ? err.message
+          : 'Could not create the booking. Please try again.',
+      );
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="adm-modal-overlay" onClick={() => !creating && onClose()}>
+      <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="New booking" style={{ maxWidth: 580 }}>
+        <h3>New Booking</h3>
+
+        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.8rem' }}>
+          <button type="button" className={`adm-btn${custMode === 'search' ? ' primary' : ''}`} onClick={() => setCustMode('search')}>Existing customer</button>
+          <button type="button" className={`adm-btn${custMode === 'new' ? ' primary' : ''}`} onClick={() => setCustMode('new')}>New walk-in</button>
+        </div>
+
+        {custMode === 'search' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <input className="adm-input" placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(); }} style={{ flex: 1 }} />
+              <button type="button" className="adm-btn" onClick={() => void runSearch()} disabled={searching}>{searching ? '…' : 'Search'}</button>
+            </div>
+            <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)' }}>
+              {results.length === 0 ? (
+                <div style={{ padding: '0.8rem', color: 'var(--text-dim)', fontSize: '0.8rem', fontFamily: 'var(--font-body)' }}>No customers found.</div>
+              ) : results.map((c) => (
+                <button key={c.id} type="button" onClick={() => setSelected(c)} style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '0.55rem 0.8rem', border: 'none',
+                  borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                  background: selected?.id === c.id ? 'var(--primary-muted)' : 'transparent',
+                  fontFamily: 'var(--font-body)', fontSize: '0.8rem', color: 'var(--text-primary)',
+                }}>
+                  <strong>{c.fullName}</strong> · <span style={{ color: 'var(--text-muted)' }}>{c.email}</span>
+                  {!c.isActive && <span style={{ color: 'var(--danger)' }}> (inactive)</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="form-grid" style={{ marginBottom: '1rem' }}>
+            <div className="form-row"><label>Full name</label><input className="adm-input" value={wName} onChange={(e) => setWName(e.target.value)} /></div>
+            <div className="form-row"><label>Email</label><input className="adm-input" type="email" value={wEmail} onChange={(e) => setWEmail(e.target.value)} /></div>
+            <div className="form-row"><label>Phone</label><input className="adm-input" value={wPhone} onChange={(e) => setWPhone(e.target.value)} /></div>
+          </div>
+        )}
+
+        <div className="form-grid">
+          <div className="form-row"><label>Booking type</label>
+            <select className="adm-input" value={bookingType} onChange={(e) => setBookingType(e.target.value as 'FullService' | 'FoodDelivery')}>
+              <option value="FullService">Full-service event</option>
+              <option value="FoodDelivery">Food delivery</option>
+            </select>
+          </div>
+          {isFull && (
+            <div className="form-row"><label>Event type</label>
+              <select className="adm-input" value={eventType} onChange={(e) => setEventType(e.target.value)}>
+                <option>Wedding</option><option>Corporate</option><option>Birthday</option><option>Others</option>
+              </select>
+            </div>
+          )}
+          {isFull && <div className="form-row"><label>Guests</label><input className="adm-input" type="number" min={1} value={guests} onChange={(e) => setGuests(e.target.value)} /></div>}
+          <div className="form-row"><label>{isFull ? 'Event date' : 'Delivery date'}</label><input className="adm-input" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} /></div>
+          <div className="form-row"><label>{isFull ? 'Start time' : 'Delivery time'}</label><input className="adm-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
+          {isFull && <div className="form-row"><label>End date</label><input className="adm-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>}
+          {isFull && <div className="form-row"><label>End time</label><input className="adm-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div>}
+          <div className="form-row"><label>{isFull ? 'Venue address' : 'Delivery address'}</label><input className="adm-input" value={venue} onChange={(e) => setVenue(e.target.value)} /></div>
+          <div className="form-row"><label>Contact number (optional)</label><input className="adm-input" value={contact} onChange={(e) => setContact(e.target.value)} /></div>
+        </div>
+
+        {error && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '0.6rem', fontFamily: 'var(--font-body)' }}>{error}</div>}
+
+        <div className="form-actions">
+          <button type="button" className="adm-btn" onClick={onClose} disabled={creating}>Cancel</button>
+          <button type="button" className="adm-btn primary" onClick={() => void create()} disabled={creating}>{creating ? 'Creating…' : 'Create Draft'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Chat Support (item 3) — customer ↔ staff. Lists every thread, opens one to
+   reply, live-refreshes via the "SupportMessage" event on the payment hub.
+───────────────────────────────────────────────────────────────────────── */
+function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info', m: string) => void }) {
+  const [threads, setThreads] = useState<SupportThreadSummary[]>([]);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'Open' | 'Closed'>('all');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [thread, setThread] = useState<SupportThread | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [loadingThreads, setLoadingThreads] = useState(true);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  const statusRef = useRef(statusFilter);
+  useEffect(() => { statusRef.current = statusFilter; }, [statusFilter]);
+  const selectedRef = useRef<string | null>(null);
+  useEffect(() => { selectedRef.current = selectedId; }, [selectedId]);
+
+  const loadThreads = async () => {
+    const session = readSession();
+    if (!session) return;
+    try {
+      const st = statusRef.current;
+      setThreads(await listSupportThreads(session.token, st === 'all' ? undefined : st));
+    } catch (err) {
+      notify('error', err instanceof SupportApiError ? err.message : 'Could not load support threads.');
+    } finally {
+      setLoadingThreads(false);
+    }
+  };
+
+  const refreshOpen = async () => {
+    const id = selectedRef.current;
+    if (!id) return;
+    const session = readSession();
+    if (!session) return;
+    try { setThread(await getSupportThread(session.token, id)); } catch { /* ignore */ }
+  };
+
+  const openThread = async (id: string) => {
+    const session = readSession();
+    if (!session) return;
+    setSelectedId(id);
+    try {
+      setThread(await getSupportThread(session.token, id));
+      await loadThreads();   // unread counts change after marking read
+    } catch (err) {
+      notify('error', err instanceof SupportApiError ? err.message : 'Could not open the conversation.');
+    }
+  };
+
+  useEffect(() => { setLoadingThreads(true); void loadThreads(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread]);
+
+  // Live: the backend broadcasts "SupportMessage" on the payment hub on every message.
+  useEffect(() => {
+    const conn = new HubConnectionBuilder().withUrl(`${API_BASE_URL}/hubs/payment`).withAutomaticReconnect().build();
+    conn.on('SupportMessage', (payload: { threadId?: string }) => {
+      void loadThreads();
+      if (payload?.threadId && payload.threadId === selectedRef.current) void refreshOpen();
+    });
+    conn.start().catch(() => {});
+    return () => { void conn.stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const reply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || sending || !selectedId) return;
+    const session = readSession();
+    if (!session) return;
+    setInput('');
+    setSending(true);
+    try {
+      await replySupport(session.token, selectedId, text);
+      await refreshOpen();
+      await loadThreads();
+    } catch (err) {
+      notify('error', err instanceof SupportApiError ? err.message : 'Could not send the reply.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const toggleStatus = async () => {
+    if (!thread) return;
+    const session = readSession();
+    if (!session) return;
+    const next = thread.status === 'Open' ? 'Closed' : 'Open';
+    try {
+      await setSupportStatus(session.token, thread.id, next);
+      notify('success', `Thread marked ${next.toLowerCase()}.`);
+      await refreshOpen();
+      await loadThreads();
+    } catch (err) {
+      notify('error', err instanceof SupportApiError ? err.message : 'Could not update the status.');
+    }
+  };
+
+  const when = (iso: string) => {
+    try { return new Date(iso).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+    catch { return iso; }
+  };
+
+  return (
+    <div className="fade-up">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <h2 className="adm-title">Chat Support</h2>
+        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+          {(['all', 'Open', 'Closed'] as const).map((s) => (
+            <button key={s} type="button" className={`adm-pill${statusFilter === s ? ' active' : ''}`} onClick={() => setStatusFilter(s)}>{s === 'all' ? 'All' : s}</button>
+          ))}
+          <button type="button" className="adm-btn" onClick={() => void loadThreads()}>Refresh</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 320px) 1fr', gap: '1rem', alignItems: 'start' }}>
+        <div className="adm-card" style={{ padding: '0.4rem', maxHeight: '62vh', overflowY: 'auto' }}>
+          {loadingThreads ? (
+            <div style={{ padding: '1.2rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</div>
+          ) : threads.length === 0 ? (
+            <div style={{ padding: '1.2rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No support threads yet.</div>
+          ) : threads.map((t) => (
+            <button key={t.id} type="button" onClick={() => void openThread(t.id)} style={{
+              display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+              padding: '0.7rem 0.8rem', borderRadius: 'var(--r-lg)', marginBottom: '0.2rem',
+              background: selectedId === t.id ? 'var(--primary-muted)' : 'transparent',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <strong style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', color: 'var(--text-primary)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.customerName}</strong>
+                {t.unreadFromCustomer > 0 && <span style={{ background: 'var(--accent)', color: '#fff', fontSize: '0.55rem', fontWeight: 600, borderRadius: 'var(--r-full)', padding: '0.1rem 0.4rem' }}>{t.unreadFromCustomer}</span>}
+                {t.status === 'Closed' && <span style={{ color: 'var(--text-dim)', fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Closed</span>}
+              </div>
+              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '0.15rem' }}>{t.lastMessagePreview ?? 'No messages yet'}</div>
+              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>{when(t.lastMessageAt)}</div>
+            </button>
+          ))}
+        </div>
+
+        <div className="adm-card" style={{ display: 'flex', flexDirection: 'column', height: '62vh' }}>
+          {!thread ? (
+            <div style={{ margin: 'auto', color: 'var(--text-dim)', fontFamily: 'var(--font-body)', fontSize: '0.85rem' }}>Select a conversation to reply.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.9rem 1rem', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>{thread.customerName}</div>
+                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', color: 'var(--text-dim)' }}>{thread.status}</div>
+                </div>
+                <button type="button" className="adm-btn" onClick={() => void toggleStatus()}>{thread.status === 'Open' ? 'Close' : 'Reopen'}</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {thread.messages.length === 0 ? (
+                  <div style={{ margin: 'auto', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No messages yet.</div>
+                ) : thread.messages.map((m) => {
+                  const mine = m.sender === 'Admin';
+                  return (
+                    <div key={m.id} style={{
+                      alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '78%',
+                      background: mine ? 'var(--primary)' : 'var(--bg-subtle)',
+                      color: mine ? 'var(--primary-text)' : 'var(--text-primary)',
+                      border: mine ? 'none' : '1px solid var(--border)',
+                      borderRadius: 'var(--r-lg)', padding: '0.55rem 0.8rem',
+                      fontFamily: 'var(--font-body)', fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap',
+                    }}>
+                      {m.text}
+                      <div style={{ fontSize: '0.55rem', opacity: 0.65, marginTop: '0.25rem' }}>{when(m.createdAt)}</div>
+                    </div>
+                  );
+                })}
+                <div ref={endRef} />
+              </div>
+              <form onSubmit={reply} style={{ display: 'flex', gap: '0.5rem', padding: '0.8rem 1rem', borderTop: '1px solid var(--border)' }}>
+                <input className="adm-input" style={{ flex: 1 }} placeholder="Type a reply…" value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Reply" />
+                <button type="submit" className="adm-btn primary" disabled={sending || !input.trim()}>{sending ? '…' : 'Send'}</button>
+              </form>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminDashboardPage() {
   const { user: authUser, logout } = useAuth();
   const location = useLocation();
@@ -195,6 +578,7 @@ export function AdminDashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [reservations, setReservations] = useState<BookingResponse[]>([]);
+  const [newBookingOpen, setNewBookingOpen] = useState(false);
 
   const loadBookings = async () => {
     const session = readSession();
@@ -564,6 +948,24 @@ export function AdminDashboardPage() {
       notify('success', `Booking ${st.toLowerCase()}.`);
     } catch (err: any) {
       notify('error', err.message || `Failed to set status to ${st}`);
+    }
+  };
+
+  /* Move a Draft (e.g. from a customer's Plan-by-Budget) to Pending on the customer's
+     behalf, so the normal Confirm → Invoice → Payment flow can begin. */
+  const [submitBusyId, setSubmitBusyId] = useState<string | null>(null);
+  const submitDraftFor = async (b: BookingResponse) => {
+    const session = readSession();
+    if (!session?.token) return;
+    setSubmitBusyId(b.id);
+    try {
+      const updated = await submitBooking(session.token, b.id);
+      setReservations((prev) => prev.map((r) => (r.id === b.id ? updated : r)));
+      notify('success', `Draft submitted — "${b.bookingName}" is now Pending.`);
+    } catch (err: any) {
+      notify('error', err.message || 'Failed to submit this Draft.');
+    } finally {
+      setSubmitBusyId(null);
     }
   };
 
@@ -1631,10 +2033,19 @@ export function AdminDashboardPage() {
                     style={{ flex: '0 1 300px' }}
                     aria-label="Search bookings"
                   />
+                  <button type="button" className="adm-btn primary" onClick={() => setNewBookingOpen(true)}>+ New Booking</button>
                 </div>
 
+                {newBookingOpen && (
+                  <NewBookingModal
+                    onClose={() => setNewBookingOpen(false)}
+                    onCreated={() => { setNewBookingOpen(false); void loadBookings(); }}
+                    notify={notify}
+                  />
+                )}
+
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'Pending', 'Confirmed', 'Completed', 'Cancelled'] as const).map((k) => {
+                  {(['all', 'Draft', 'Pending', 'Confirmed', 'Completed', 'Cancelled'] as const).map((k) => {
                     const count = k === 'all' ? reservations.length : reservations.filter((r) => r.status === k).length;
                     return (
                       <button key={k} type="button" className={`adm-pill${resFilter === k ? ' active' : ''}`} onClick={() => setResFilter(k)}>
@@ -1682,6 +2093,11 @@ export function AdminDashboardPage() {
                         </div>
 
                         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
+                          {r.status === 'Draft' && (
+                            <button type="button" className="adm-btn success" disabled={submitBusyId === r.id} onClick={() => void submitDraftFor(r)}>
+                              {submitBusyId === r.id ? 'Submitting…' : 'Submit for Customer'}
+                            </button>
+                          )}
                           {r.status === 'Pending' && (
                             <button type="button" className="adm-btn success" onClick={() => setResStatus(r.id, 'Confirmed')}>Confirm</button>
                           )}
@@ -3044,6 +3460,9 @@ export function AdminDashboardPage() {
 
                 {/* ══════════ PLACEHOLDER ══════════ */}
                 {tab === 'placeholder' && (
+                  placeholderName === 'Chat Support' ? (
+                    <AdminSupportPanel notify={notify} />
+                  ) : (
                   <div className="fade-up">
                 <h2 className="adm-title" style={{ marginBottom: '1.2rem' }}>{placeholderName}</h2>
                 <div className="adm-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
@@ -3053,6 +3472,7 @@ export function AdminDashboardPage() {
                   </p>
                 </div>
               </div>
+              )
             )}
           </div>
 

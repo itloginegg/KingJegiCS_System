@@ -24,6 +24,7 @@ namespace System_ApiTest.Controllers
             _audit = audit;
         }
 
+        [AllowAnonymous]   // guests may browse packages (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -31,6 +32,7 @@ namespace System_ApiTest.Controllers
             return Ok(packages.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
@@ -39,6 +41,7 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>The customer-facing template: slots with their eligible items, plus fixed items and inclusions.</summary>
+        [AllowAnonymous]
         [HttpGet("{id:guid}/template")]
         public async Task<IActionResult> Template(Guid id)
         {

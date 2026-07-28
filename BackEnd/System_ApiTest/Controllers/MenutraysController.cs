@@ -24,6 +24,7 @@ namespace System_ApiTest.Controllers
             _audit = audit;
         }
 
+        [AllowAnonymous]   // guests may browse the catalog (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -34,6 +35,7 @@ namespace System_ApiTest.Controllers
             return Ok(trays.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
