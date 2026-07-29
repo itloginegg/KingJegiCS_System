@@ -33,6 +33,18 @@ import {
 } from '../api/bookingApi';
 import { readSession } from '../lib/tokenStorage';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
+import {
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  type AppNotification,
+} from '../api/notificationsApi';
+import {
+  getMyTestimonials,
+  submitTestimonial,
+  TestimonialApiError,
+  type Testimonial as MyTestimonial,
+} from '../api/testimonialsApi';
 
 
 const normalizeType = (ty: string | null) => {
@@ -716,6 +728,92 @@ export function CustomerDashboardPage() {
   const [isFetching, setIsFetching] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  /* notifications — the in-app view of what the NotificationWorker emailed us */
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [bellOpen, setBellOpen] = useState(false);
+
+  const loadNotifications = useCallback(async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      const feed = await getNotifications(session.token);
+      setNotifications(feed.items);
+      setUnreadCount(feed.unreadCount);
+    } catch {
+      // A failed poll isn't worth a toast — the bell keeps its last known state.
+    }
+  }, []);
+
+  const readNotification = async (n: AppNotification) => {
+    if (n.readAt) return;
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      await markNotificationRead(session.token, n.id);
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      /* leave it unread; the next poll reconciles */
+    }
+  };
+
+  const readAllNotifications = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      await markAllNotificationsRead(session.token);
+      const stamp = new Date().toISOString();
+      setNotifications((prev) => prev.map((x) => (x.readAt ? x : { ...x, readAt: stamp })));
+      setUnreadCount(0);
+    } catch {
+      notify('error', 'Could not mark notifications read.');
+    }
+  };
+
+  useEffect(() => { void loadNotifications(); }, [loadNotifications]);
+
+  /* testimonials — one review per Completed booking */
+  const [myReviews, setMyReviews] = useState<MyTestimonial[]>([]);
+  const [reviewBookingId, setReviewBookingId] = useState<string | null>(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewBody, setReviewBody] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
+
+  const loadMyReviews = useCallback(async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      setMyReviews(await getMyTestimonials(session.token));
+    } catch {
+      // Non-critical: without this the "Leave a review" button simply stays offered.
+    }
+  }, []);
+
+  useEffect(() => { void loadMyReviews(); }, [loadMyReviews]);
+
+  const sendReview = async () => {
+    const session = readSession();
+    if (!session?.token || !reviewBookingId) return;
+    setReviewBusy(true);
+    try {
+      await submitTestimonial(session.token, {
+        bookingId: reviewBookingId,
+        rating: reviewRating,
+        body: reviewBody.trim(),
+      });
+      setReviewBookingId(null);
+      setReviewBody('');
+      setReviewRating(5);
+      await loadMyReviews();
+      notify('success', 'Thank you! Your review is with our team for approval.');
+    } catch (err) {
+      notify('error', err instanceof TestimonialApiError ? err.message : 'Could not submit your review.');
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const fetchDashboard = useCallback(async () => {
     const session = readSession();
     if (!session) {
@@ -1334,6 +1432,97 @@ export function CustomerDashboardPage() {
               {NAV_ITEMS.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
+
+            {/* notification bell — /api/Notifications, scoped to this customer's bookings */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="cds-iconbtn"
+                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+                aria-expanded={bellOpen}
+                onClick={() => { setBellOpen((o) => !o); if (!bellOpen) void loadNotifications(); }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                {unreadCount > 0 && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
+                      padding: '0 3px', borderRadius: 'var(--r-full)', background: 'var(--danger)',
+                      color: '#fff', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+                    }}
+                  >
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {bellOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 110 }} onClick={() => setBellOpen(false)} />
+                  <div
+                    className="cds-card"
+                    style={{
+                      position: 'absolute', top: 'calc(100% + 0.5rem)', right: 0, zIndex: 111,
+                      width: 340, maxWidth: '90vw', maxHeight: 420, overflowY: 'auto',
+                      background: 'var(--surface)', border: '1px solid var(--border)',
+                      borderRadius: 'var(--r-lg)', boxShadow: 'var(--shadow-lg)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', padding: '0.85rem 1rem', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-dim)' }}>
+                        Notifications
+                      </span>
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void readAllNotifications()}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--primary)' }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    {notifications.length === 0 ? (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', padding: '1.6rem 1rem', textAlign: 'center', margin: 0 }}>
+                        Nothing yet. Booking confirmations and payment reminders show up here.
+                      </p>
+                    ) : (
+                      notifications.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => void readNotification(n)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left', border: 'none',
+                            borderBottom: '1px solid var(--border)', cursor: n.readAt ? 'default' : 'pointer',
+                            padding: '0.8rem 1rem',
+                            background: n.readAt ? 'transparent' : 'var(--primary-muted)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.2rem' }}>
+                            {!n.readAt && <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', flexShrink: 0 }} />}
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{n.title}</span>
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                            {n.body}
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.25rem' }}>
+                            {new Date(n.sentAt).toLocaleString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
             <button
               type="button"
               className="cds-iconbtn"
@@ -1614,12 +1803,60 @@ export function CustomerDashboardPage() {
                               </button>
                             )}
                             
+                            {/* Reviews are tied to a real completed booking — that pairing
+                                is what keeps the public testimonials trustworthy. One per
+                                booking, so the button disappears once it's been used. */}
+                            {rawStatus === 'completed' && !myReviews.some((r) => r.bookingId === b.id) && (
+                              <button type="button" className="cds-btn outline" onClick={() => { setReviewBookingId(b.id); setReviewBody(''); setReviewRating(5); }}>
+                                Leave a Review
+                              </button>
+                            )}
+                            {myReviews.some((r) => r.bookingId === b.id) && (
+                              <StatusBadge
+                                label={`Review ${(myReviews.find((r) => r.bookingId === b.id)!.status).toLowerCase()}`}
+                                color={myReviews.find((r) => r.bookingId === b.id)!.status === 'Approved' ? 'var(--success)' : 'var(--accent)'}
+                              />
+                            )}
+
                             <button type="button" className="cds-btn outline" onClick={() => setDetailBooking(b)}>
                               Details
                             </button>
 
                           </div>
                         </div>
+
+                        {reviewBookingId === b.id && (
+                          <div style={{ borderTop: '1px solid var(--border)', padding: '1.1rem 1.6rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 500, color: 'var(--text-muted)' }}>Your rating</span>
+                              {[1, 2, 3, 4, 5].map((n) => (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  aria-label={`${n} star${n === 1 ? '' : 's'}`}
+                                  onClick={() => setReviewRating(n)}
+                                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontSize: '1.1rem', lineHeight: 1, color: n <= reviewRating ? 'var(--accent)' : 'var(--border-strong)' }}
+                                >
+                                  ★
+                                </button>
+                              ))}
+                            </div>
+                            <textarea
+                              className="cds-input"
+                              rows={3}
+                              value={reviewBody}
+                              onChange={(e) => setReviewBody(e.target.value)}
+                              placeholder="How did we do? Your review is published only after our team approves it."
+                              maxLength={2000}
+                            />
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <button type="button" className="cds-btn primary" disabled={reviewBusy || !reviewBody.trim()} onClick={() => void sendReview()}>
+                                {reviewBusy ? 'Sending…' : 'Submit Review'}
+                              </button>
+                              <button type="button" className="cds-btn outline" onClick={() => setReviewBookingId(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })

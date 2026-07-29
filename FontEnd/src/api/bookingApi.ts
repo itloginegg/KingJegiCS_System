@@ -11,6 +11,7 @@
  *   POST   /api/Bookings/{id}/package-selections      → choose slot items
  *   GET    /api/Bookings/{id}/package-selections      → current selections
  *   POST   /api/Bookings/{id}/submit                 → Draft → Pending
+ *   GET    /api/Bookings/{id}/history                → revision snapshots (admin)
  *   GET    /api/MenuPackages/{id}/template            → slots + eligible items
  */
 
@@ -480,4 +481,28 @@ export function requestRefund(
 
 export function checkout(token: string, payload: CheckoutPayload): Promise<{ payment: any, checkoutUrl: string }> {
   return request<any>(`/api/Payments/checkout`, 'POST', token, payload);
+}
+
+// ── Revision history ───────────────────────────────────────────────────
+
+/**
+ * Matches BookingHistoryResponseDto. `snapshotJson` is the serialized BEFORE-state
+ * of the booking, written by Bookingservice.WriteHistorySnapshotAsync ahead of every
+ * mutating call — so revision N holds what the booking looked like *before* the
+ * change that produced revision N+1. `changedById` is null when the customer or the
+ * system made the change rather than an admin.
+ */
+export interface BookingHistoryEntry {
+  id: string;
+  bookingId: string;
+  changedById: string | null;
+  changeReason: string | null;
+  revisionNumber: number;
+  snapshotJson: string;
+  snapshotAt: string;
+}
+
+/** Owner/Assistant: the append-only revision history for a booking, oldest first. */
+export function getBookingHistory(token: string, bookingId: string): Promise<BookingHistoryEntry[]> {
+  return request<BookingHistoryEntry[]>(`/api/Bookings/${bookingId}/history`, 'GET', token);
 }

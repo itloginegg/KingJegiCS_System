@@ -33,6 +33,9 @@ export function AppRoutes() {
           {/* Admin-only area — LoginPage routes Owner/Assistant accounts here */}
           <Route element={<ProtectedRoute allow={['admin']} />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
+            {/* The dashboard's sidebar has always linked here; without this route the
+                wildcard below swallowed it and bounced admins back to the landing page. */}
+            <Route path="/admin/booking-histories" element={<AdminDashboardPage />} />
           </Route>
 
           {/* Legacy dashboard URLs from the placeholder era */}

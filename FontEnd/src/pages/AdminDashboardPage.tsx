@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
@@ -46,9 +46,15 @@ import {
   cancelBooking,
   submitBooking,
   generateInvoice,
+  getBookingDetail,
+  getBookingHistory,
+  getInvoiceByBooking,
   BookingApiError,
   type BookingResponse,
   type BookingCreatePayload,
+  type BookingDetailResponse,
+  type BookingHistoryEntry,
+  type InvoiceResponseDto,
 } from '../api/bookingApi';
 import {
   searchCustomers,
@@ -78,6 +84,33 @@ import {
   type RefundRequestQueueItem,
 } from '../api/paymentAdminApi';
 import { fetchAuditLogs, AuditApiError, type AuditLogEntry } from '../api/auditApi';
+import {
+  getCalendarDays,
+  setDayLock,
+  toDateKey,
+  CalendarApiError,
+  type CalendarDay,
+} from '../api/calendarApi';
+import {
+  getMonthlySales,
+  getMonthlySalesSummary,
+  ReportsApiError,
+  type MonthlySalesReport,
+  type MonthlySalesSummary,
+} from '../api/reportsApi';
+import {
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  type AppNotification,
+} from '../api/notificationsApi';
+import {
+  getTestimonials,
+  moderateTestimonial,
+  TestimonialApiError,
+  type Testimonial,
+  type TestimonialStatus,
+} from '../api/testimonialsApi';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -91,25 +124,109 @@ type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
 
 
-type TestiStatus = 'pending' | 'approved' | 'rejected';
+/* Testimonials and the revenue trend used to be hardcoded arrays here. Both now come
+   from the backend — see /api/Testimonials and /api/Reports/monthly-sales. */
 
-type Testimonial = { id: number; name: string; rating: number; body: string; submittedAt: string; status: TestiStatus };
+/** How many whole months the Revenue Trend chart covers. */
+const SALES_MONTHS = 6;
 
-const INITIAL_TESTIMONIALS: Testimonial[] = [
-  { id: 1, name: 'Maria Santos', rating: 5, body: 'King Jegi made our wedding feast unforgettable. Guests are still talking about the lechon months later!', submittedAt: '2026-07-10', status: 'pending' },
-  { id: 2, name: 'Jerome dela Cruz', rating: 5, body: 'Professional from quotation to cleanup. The buffet setup looked stunning and everything was served on time.', submittedAt: '2026-07-05', status: 'approved' },
-  { id: 3, name: 'Ana Reyes', rating: 4, body: "Farm-fresh talaga ang lasa! The team handled everything so I could actually enjoy my daughter's party.", submittedAt: '2026-06-28', status: 'approved' },
-  { id: 4, name: 'Marco Lim', rating: 3, body: 'Food was great but the crew arrived a little later than promised. Still recommended overall.', submittedAt: '2026-06-20', status: 'rejected' },
-];
+/* ─────────────────────────────────────────────────────────────────────────
+   Booking-history snapshots (item 3a)
 
-const REVENUE_BY_MONTH = [
-  { month: 'Feb', value: 42000 },
-  { month: 'Mar', value: 68000 },
-  { month: 'Apr', value: 55000 },
-  { month: 'May', value: 91000 },
-  { month: 'Jun', value: 76898 },
-  { month: 'Jul', value: 63000 },
-];
+   Bookingservice.WriteHistorySnapshotAsync serializes a plain anonymous object with
+   JsonSerializer.Serialize(snapshot) — no options — so keys are PascalCase and enums
+   arrive as their NUMERIC values. These maps decode them back to the labels the rest
+   of the dashboard uses; the ordinals mirror the enums in Models/Booking.cs.
+───────────────────────────────────────────────────────────────────────── */
+
+const SNAPSHOT_ENUMS: Record<string, string[]> = {
+  BookingType: ['Full Service', 'Food Delivery'],
+  EventType: ['Wedding', 'Corporate', 'Birthday', 'Others'],
+  Status: ['Draft', 'Pending', 'Confirmed', 'Cancelled', 'Completed'],
+  DepositStatus: ['Unpaid', 'Reserved', 'Partial', 'Paid'],
+};
+
+/** Human labels for the snapshot's PascalCase keys. */
+const SNAPSHOT_LABELS: Record<string, string> = {
+  BookingName: 'Booking name',
+  BookingType: 'Booking type',
+  EventDate: 'Event date',
+  StartTime: 'Start time',
+  EndDate: 'End date',
+  EndTime: 'End time',
+  EventType: 'Event type',
+  VenueAddress: 'Venue',
+  GuestCount: 'Guests',
+  Status: 'Status',
+  DepositStatus: 'Deposit',
+  TotalAmount: 'Total',
+  MenuPackageId: 'Package',
+};
+
+type Snapshot = Record<string, unknown>;
+
+function parseSnapshot(json: string): Snapshot | null {
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === 'object' ? (parsed as Snapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Renders one snapshot value the way the dashboard shows that field elsewhere. */
+function snapshotValue(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+
+  const labels = SNAPSHOT_ENUMS[key];
+  if (labels && typeof value === 'number') return labels[value] ?? String(value);
+
+  if (key === 'TotalAmount' && typeof value === 'number') return fmt(value);
+  if (key === 'MenuPackageId') return typeof value === 'string' ? `${value.slice(0, 8)}…` : '—';
+  if ((key === 'EventDate' || key === 'EndDate') && typeof value === 'string') return fmtDate(value);
+  if ((key === 'StartTime' || key === 'EndTime') && typeof value === 'string') return value.substring(0, 5);
+
+  return String(value);
+}
+
+/**
+ * Fields that differ between two snapshots. Revision N holds the state BEFORE the
+ * change that produced revision N+1, so diffing consecutive rows is what actually
+ * says "this is what changed" — a single snapshot on its own only says "this is how
+ * it looked".
+ */
+function diffSnapshots(before: Snapshot | null, after: Snapshot | null) {
+  if (!before || !after) return [];
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  return keys
+    .filter((k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null))
+    .map((k) => ({
+      key: k,
+      label: SNAPSHOT_LABELS[k] ?? k,
+      from: snapshotValue(k, before[k]),
+      to: snapshotValue(k, after[k]),
+    }));
+}
+
+/** The current booking, shaped like a snapshot, so the newest revision can diff against it. */
+function bookingAsSnapshot(b: BookingResponse): Snapshot {
+  const idx = (labels: string[], v: string | null) => (v === null ? null : labels.indexOf(v));
+  return {
+    BookingName: b.bookingName,
+    BookingType: idx(['FullService', 'FoodDelivery'], b.bookingType),
+    EventDate: b.eventDate,
+    StartTime: b.startTime,
+    EndDate: b.endDate,
+    EndTime: b.endTime,
+    EventType: idx(['Wedding', 'Corporate', 'Birthday', 'Others'], b.eventType),
+    VenueAddress: b.venueAddress,
+    GuestCount: b.guestCount,
+    Status: idx(['Draft', 'Pending', 'Confirmed', 'Cancelled', 'Completed'], b.status),
+    DepositStatus: idx(['Unpaid', 'Reserved', 'Partial', 'Paid'], b.depositStatus),
+    TotalAmount: b.totalAmount,
+    MenuPackageId: b.menuPackageId,
+  };
+}
 
 /* ─────────────────────────────────────────────────────────────────────────
    Status maps & helpers
@@ -136,10 +253,10 @@ const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }>
 const paymentStatusMeta = (status: string) =>
   PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-dim)' };
 
-const TESTI_STATUS: Record<TestiStatus, { label: string; color: string }> = {
-  pending: { label: 'Pending', color: 'var(--accent)' },
-  approved: { label: 'Approved', color: 'var(--primary)' },
-  rejected: { label: 'Rejected', color: 'var(--danger)' },
+const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
+  Pending: { label: 'Pending', color: 'var(--accent)' },
+  Approved: { label: 'Approved', color: 'var(--primary)' },
+  Rejected: { label: 'Rejected', color: 'var(--danger)' },
 };
 
 export const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
@@ -201,7 +318,10 @@ export function FieldLabel({ text }: { text: string }) {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'audit' | 'placeholder';
+type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'placeholder';
+
+/** The sidebar's "Booking Histories" link routes here rather than switching tabs in place. */
+const HISTORIES_PATH = '/admin/booking-histories';
 
 const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support'];
 
@@ -570,6 +690,7 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
 export function AdminDashboardPage() {
   const { user: authUser, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const adminName = authUser?.name ?? FALLBACK_ADMIN.name;
 
@@ -590,9 +711,52 @@ export function AdminDashboardPage() {
       console.error(err);
     }
   };
-  const [testimonials, setTestimonials] = useState(INITIAL_TESTIMONIALS);
-
   const { toasts, notify, dismiss } = useToasts();
+
+  /* testimonials — live from /api/Testimonials (Owner/Assistant moderation queue) */
+  const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
+  const [testiLoading, setTestiLoading] = useState(false);
+  const [testiError, setTestiError] = useState<string | null>(null);
+  const [testiBusyId, setTestiBusyId] = useState<string | null>(null);
+
+  const loadTestimonials = async () => {
+    const session = readSession();
+    if (!session?.token) {
+      setTestiError('You are not signed in. Sign in with an Owner or Assistant account to moderate testimonials.');
+      return;
+    }
+    setTestiLoading(true);
+    setTestiError(null);
+    try {
+      // Always fetch every status: the filter pills show per-status counts, which
+      // would be wrong if the server had already filtered the list for us.
+      setTestimonials(await getTestimonials(session.token));
+    } catch (err) {
+      setTestiError(
+        err instanceof TestimonialApiError ? err.message : 'Could not load testimonials. Please try again.',
+      );
+    } finally {
+      setTestiLoading(false);
+    }
+  };
+
+  /* calendar — real per-day lock state from /api/CalendarDays (no invented thresholds) */
+  const [calendarDays, setCalendarDays] = useState<Map<string, CalendarDay>>(new Map());
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [lockBusyDate, setLockBusyDate] = useState<string | null>(null);
+  const [lockTargetDate, setLockTargetDate] = useState<string | null>(null);
+
+  /* sales report — real money from /api/Reports/monthly-sales, plus the AI read */
+  const [salesReport, setSalesReport] = useState<MonthlySalesReport | null>(null);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesError, setSalesError] = useState<string | null>(null);
+  const [salesSummary, setSalesSummary] = useState<MonthlySalesSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  /* notifications — the in-app feed over the worker's send ledger */
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [bellOpen, setBellOpen] = useState(false);
 
   /* payments — live data from /api/Payments/recent + /api/Payments/refund-requests */
   const [payments, setPayments] = useState<AdminPaymentRecord[]>([]);
@@ -880,7 +1044,19 @@ export function AdminDashboardPage() {
 
 
   /* testimonials tab state */
-  const [testiFilter, setTestiFilter] = useState<'all' | TestiStatus>('pending');
+  const [testiFilter, setTestiFilter] = useState<'all' | TestimonialStatus>('Pending');
+
+  /* booking-history tab state (item 3a) */
+  const [historyBookingId, setHistoryBookingId] = useState<string | null>(null);
+  const [historyRows, setHistoryRows] = useState<BookingHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historySearch, setHistorySearch] = useState('');
+
+  /* contract generator state (item 2) — browser print, no server-side PDF */
+  const [contractBooking, setContractBooking] = useState<BookingDetailResponse | null>(null);
+  const [contractInvoice, setContractInvoice] = useState<InvoiceResponseDto | null>(null);
+  const [contractBusyId, setContractBusyId] = useState<string | null>(null);
 
   /* calendar state */
   const [calMonth, setCalMonth] = useState(() => {
@@ -903,18 +1079,16 @@ export function AdminDashboardPage() {
     const d = new Date(r.eventDate);
     return d >= now && d <= in30;
   }).length;
-  const pendingTesti = testimonials.filter((t) => t.status === 'pending').length;
+  const pendingTesti = testimonials.filter((t) => t.status === 'Pending').length;
 
-  /* dates with ≥2 active reservations flag as conflicts */
-  const conflictDates = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of reservations) {
-      if (r.status === 'Pending' || r.status === 'Confirmed') {
-        counts.set(r.eventDate, (counts.get(r.eventDate) ?? 0) + 1);
-      }
-    }
-    return new Set([...counts.entries()].filter(([, c]) => c >= 2).map(([d]) => d));
-  }, [reservations]);
+  /* Dates the BACKEND considers locked — isLocked is derived server-side as
+     (isManuallyLocked || confirmedCount >= maxCapacity), counting Confirmed bookings
+     only. This used to be a frontend guess ("≥2 active reservations"), which had
+     nothing to do with the rule that actually blocks a confirmation. */
+  const lockedDates = useMemo(
+    () => new Set([...calendarDays.values()].filter((d) => d.isLocked).map((d) => d.date)),
+    [calendarDays],
+  );
 
   const filteredRes = useMemo(() => {
     const q = resSearch.trim().toLowerCase();
@@ -983,12 +1157,38 @@ export function AdminDashboardPage() {
     }
   };
 
-  const setTestiStatus = (id: number, status: TestiStatus) =>
-    setTestimonials((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
+  /* Approve/reject writes through to the backend; only Approved rows reach the
+     landing page, so this is what actually publishes or pulls a review. */
+  const setTestiStatus = async (id: string, status: 'Approved' | 'Rejected') => {
+    const session = readSession();
+    if (!session?.token) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setTestiBusyId(id);
+    try {
+      const updated = await moderateTestimonial(session.token, id, status);
+      setTestimonials((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? { ...t, status: updated.status, moderatedAt: updated.moderatedAt, moderationNote: updated.moderationNote }
+            : t,
+        ),
+      );
+      notify('success', status === 'Approved' ? 'Testimonial published to the landing page.' : 'Testimonial rejected.');
+    } catch (err) {
+      notify('error', err instanceof TestimonialApiError ? err.message : 'Could not update the testimonial.');
+    } finally {
+      setTestiBusyId(null);
+    }
+  };
 
   const openTab = (t: Tab) => {
     setTab(t);
     setSidebarOpen(false);
+    // Booking Histories owns a URL of its own; leaving it must drop that URL, or the
+    // address bar would keep claiming we're on a page we've navigated away from.
+    if (t !== 'histories' && location.pathname === HISTORIES_PATH) navigate('/admin');
   };
 
   /* ── menus & dishes: fetch ── */
@@ -1410,16 +1610,222 @@ export function AdminDashboardPage() {
     }
   };
 
+  /* ── calendar, sales report, notifications: loaders ── */
+
+  /**
+   * Pulls the real lock state for the visible month (padded a week either side, so the
+   * leading/trailing cells of the grid are covered too). Dates the backend has no row
+   * for have never been booked — they stay absent and read as open.
+   */
+  const loadCalendar = async (monthStart: Date) => {
+    const from = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1);
+    from.setDate(from.getDate() - 7);
+    const to = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+    to.setDate(to.getDate() + 7);
+
+    setCalendarError(null);
+    try {
+      const days = await getCalendarDays(toDateKey(from), toDateKey(to));
+      setCalendarDays(new Map(days.map((d) => [d.date, d])));
+    } catch (err) {
+      setCalendarError(
+        err instanceof CalendarApiError ? err.message : 'Could not load calendar availability.',
+      );
+    }
+  };
+
+  /** Owner/Assistant: flip the manual lock on one day, then refresh that month. */
+  const toggleDayLock = async (dateStr: string, lock: boolean) => {
+    const session = readSession();
+    if (!session?.token) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setLockBusyDate(dateStr);
+    try {
+      const updated = await setDayLock(session.token, dateStr, lock);
+      setCalendarDays((prev) => new Map(prev).set(updated.date, updated));
+      setLockTargetDate(null);
+      notify(
+        'success',
+        lock
+          ? `${fmtDate(dateStr)} is locked — no new bookings can be confirmed on it.`
+          : updated.isLocked
+            ? `Manual lock cleared, but ${fmtDate(dateStr)} is still full (${updated.confirmedCount}/${updated.maxCapacity}).`
+            : `${fmtDate(dateStr)} is open again.`,
+      );
+    } catch (err) {
+      notify('error', err instanceof CalendarApiError ? err.message : 'Could not update the calendar lock.');
+    } finally {
+      setLockBusyDate(null);
+    }
+  };
+
+  const loadSalesReport = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    setSalesLoading(true);
+    setSalesError(null);
+    try {
+      setSalesReport(await getMonthlySales(session.token, SALES_MONTHS));
+    } catch (err) {
+      setSalesError(
+        err instanceof ReportsApiError ? err.message : 'Could not load the sales report.',
+      );
+    } finally {
+      setSalesLoading(false);
+    }
+  };
+
+  /* On demand only: each call may cost a Gemini round trip (the server caches the
+     result against the figures, so re-asking for an unchanged window is free). */
+  const loadSalesSummary = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    setSummaryLoading(true);
+    try {
+      setSalesSummary(await getMonthlySalesSummary(session.token, SALES_MONTHS));
+    } catch (err) {
+      notify('error', err instanceof ReportsApiError ? err.message : 'Could not generate the summary.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const loadNotifications = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      const feed = await getNotifications(session.token);
+      setNotifications(feed.items);
+      setUnreadCount(feed.unreadCount);
+    } catch {
+      // A failed poll is not worth a toast — the bell just keeps its last state.
+    }
+  };
+
+  const readNotification = async (n: AppNotification) => {
+    if (n.readAt) return;
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      await markNotificationRead(session.token, n.id);
+      setNotifications((prev) =>
+        prev.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)),
+      );
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      /* leave it unread; the next poll will reconcile */
+    }
+  };
+
+  const readAllNotifications = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      await markAllNotificationsRead(session.token);
+      const now = new Date().toISOString();
+      setNotifications((prev) => prev.map((x) => (x.readAt ? x : { ...x, readAt: now })));
+      setUnreadCount(0);
+    } catch {
+      notify('error', 'Could not mark notifications read.');
+    }
+  };
+
+  /* ── booking revision history (item 3a) ── */
+
+  /**
+   * Loads the append-only snapshot trail for one booking. Each row holds the BEFORE
+   * state of the change that produced the next revision, so the timeline is rendered
+   * by diffing consecutive snapshots (and the newest snapshot against the booking as
+   * it stands now).
+   */
+  const openHistory = async (bookingId: string) => {
+    const session = readSession();
+    if (!session?.token) {
+      setHistoryError('You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setHistoryBookingId(bookingId);
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistoryRows([]);
+    try {
+      setHistoryRows(await getBookingHistory(session.token, bookingId));
+    } catch (err) {
+      setHistoryError(
+        err instanceof BookingApiError ? err.message : 'Could not load this booking’s history.',
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  /* ── contract generator (item 2) ── */
+
+  /**
+   * Opens the printable contract for a Confirmed booking. Everything it needs already
+   * exists on GET /api/Bookings/{id}; the invoice is fetched alongside for the money
+   * section and is optional — a booking that hasn't been invoiced yet still gets a
+   * contract, just with the line totals only.
+   */
+  const openContract = async (b: BookingResponse) => {
+    const session = readSession();
+    if (!session?.token) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setContractBusyId(b.id);
+    try {
+      const detail = await getBookingDetail(session.token, b.id);
+      let invoice: InvoiceResponseDto | null = null;
+      try {
+        invoice = await getInvoiceByBooking(session.token, b.id);
+      } catch {
+        // No invoice yet (404) — the contract still stands on the booking's own totals.
+      }
+      setContractBooking(detail);
+      setContractInvoice(invoice);
+    } catch (err) {
+      notify('error', err instanceof BookingApiError ? err.message : 'Could not build the contract.');
+    } finally {
+      setContractBusyId(null);
+    }
+  };
+
   /* refetch every time the tab is opened so admin edits elsewhere show up */
   useEffect(() => {
     if (tab === 'overview' || tab === 'payments') void loadPayments();
+    if (tab === 'overview') void loadSalesReport();
     if (tab === 'audit') void loadAuditLogs(1);
-    if (tab === 'bookings') void loadBookings();
+    if (tab === 'bookings' || tab === 'histories') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
     if (tab === 'rentals') void loadRentalCatalog();
     if (tab === 'services') void loadServiceCatalog();
+    if (tab === 'testimonials') void loadTestimonials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
+
+  /* The calendar is on Overview but its data is keyed to whichever month is shown,
+     so it reloads on navigation as well as on tab entry. */
+  useEffect(() => {
+    if (tab === 'overview') void loadCalendar(calMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, calMonth]);
+
+  /* The bell is in the topbar, so its feed is loaded once for the whole session
+     rather than per tab. */
+  useEffect(() => {
+    void loadNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Booking Histories is a real route (the sidebar has always linked to it — until
+     now there was no matching <Route>, so the link bounced admins to the landing
+     page). Keep the tab in step with the URL so deep links and Back work. */
+  useEffect(() => {
+    if (location.pathname === HISTORIES_PATH) setTab('histories');
+  }, [location.pathname]);
 
   const menuCategories = useMemo(
     () => [...new Set(menuItems.map((m) => m.itemCategory))].sort(),
@@ -1441,7 +1847,10 @@ export function AdminDashboardPage() {
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
 
-  const maxRevenue = Math.max(...REVENUE_BY_MONTH.map((m) => m.value));
+  /* Tallest bar in the trend chart. Guarded against an all-zero window, which would
+     otherwise divide every bar height by zero. */
+  const salesMonths = salesReport?.months ?? [];
+  const maxRevenue = Math.max(1, ...salesMonths.map((m) => m.net));
 
   const NAV: { id: Tab; label: string; icon: string; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: '▦' },
@@ -1754,9 +2163,175 @@ export function AdminDashboardPage() {
           .adm-content { padding: 1.5rem 1.25rem 4rem !important; }
           .adm-overview-cols { grid-template-columns: 1fr !important; }
         }
+
+        /* ── contract (item 2) ──
+           Same browser-print approach as the customer invoice (#cds-invoice): the
+           admin prints or saves as PDF from the browser, so there's no PDF library
+           anywhere in the stack. Everything but the contract is hidden for print. */
+        @media print {
+          body * { visibility: hidden; }
+          #adm-contract, #adm-contract * { visibility: visible; }
+          #adm-contract {
+            position: fixed; inset: 0; max-height: none; overflow: visible;
+            border: none; box-shadow: none; border-radius: 0;
+            background: #fff; color: #000; padding: 2rem;
+          }
+          .adm-contract-noprint { display: none !important; }
+        }
       `}</style>
 
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
+
+      {/* ══════════ CONTRACT (item 2) — printable service agreement ══════════ */}
+      {contractBooking && (() => {
+        const b = contractBooking.booking;
+        const lineTotal =
+          contractBooking.rentals.reduce((s, r) => s + r.subtotal, 0) +
+          contractBooking.services.reduce((s, sv) => s + sv.totalCost, 0) +
+          contractBooking.menuItems.reduce((s, m) => s + m.lineTotal, 0) +
+          contractBooking.menuTrays.reduce((s, t) => s + t.lineTotal, 0);
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Service contract"
+            style={{
+              position: 'fixed', inset: 0, zIndex: 120,
+              background: 'rgba(20, 14, 8, 0.55)', backdropFilter: 'blur(6px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+            }}
+            onClick={() => { setContractBooking(null); setContractInvoice(null); }}
+          >
+            <div
+              className="adm-card"
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 'min(760px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+            >
+              <div className="adm-contract-noprint" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.7rem', padding: '1rem 1.4rem', borderBottom: '1px solid var(--border)' }}>
+                <FieldLabel text="Service Contract" />
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button type="button" className="adm-btn primary" onClick={() => window.print()}>Print / Save as PDF</button>
+                  <button type="button" className="adm-btn outline" onClick={() => { setContractBooking(null); setContractInvoice(null); }}>Close</button>
+                </div>
+              </div>
+
+              <div id="adm-contract" style={{ overflowY: 'auto', padding: '1.8rem 2rem 2.2rem' }}>
+                <div style={{ textAlign: 'center', marginBottom: '1.6rem' }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 600 }}>King Jegi Catering Services</div>
+                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                    Catering Service Agreement
+                  </div>
+                </div>
+
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+                  This agreement is entered into between <strong style={{ color: 'var(--text-primary)' }}>King Jegi Catering Services</strong> (the
+                  “Caterer”) and the Client named below, for the event described in this contract. It reflects the booking
+                  as confirmed on the Caterer’s system.
+                </p>
+
+                {/* ── event details ── */}
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>1. Event Details</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.35rem 1.5rem', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                  <span>Reference: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.id.slice(0, 8).toUpperCase()}</strong></span>
+                  <span>Booking: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.bookingName}</strong></span>
+                  <span>Type: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.eventType || b.bookingType}</strong></span>
+                  <span>Date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(b.eventDate)}</strong></span>
+                  <span>Time: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.startTime?.substring(0, 5)}{b.endTime ? ` – ${b.endTime.substring(0, 5)}` : ''}</strong></span>
+                  <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.guestCount ?? 'N/A'}</strong></span>
+                  <span style={{ gridColumn: '1 / -1' }}>Venue: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.venueAddress}</strong></span>
+                  <span>Contact: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.contactNumber || 'N/A'}</strong></span>
+                </div>
+
+                {/* ── inclusions ── */}
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>2. Services &amp; Inclusions</h4>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300 }}>
+                  <tbody>
+                    {contractBooking.package && (
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.4rem 0' }}>
+                          <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package — {contractBooking.package.packageName}</strong>
+                          {contractBooking.package.inclusions.length > 0 && (
+                            <div style={{ color: 'var(--text-dim)', fontSize: '0.68rem' }}>{contractBooking.package.inclusions.join(' · ')}</div>
+                          )}
+                        </td>
+                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(contractBooking.package.basePrice)}</td>
+                      </tr>
+                    )}
+                    {contractBooking.menuItems.map((m) => (
+                      <tr key={m.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.4rem 0' }}>{m.itemName} × {m.quantity}</td>
+                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(m.lineTotal)}</td>
+                      </tr>
+                    ))}
+                    {contractBooking.menuTrays.map((t) => (
+                      <tr key={t.trayId} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.4rem 0' }}>{t.trayName} × {t.quantity}</td>
+                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(t.lineTotal)}</td>
+                      </tr>
+                    ))}
+                    {contractBooking.rentals.map((r) => (
+                      <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.4rem 0' }}>Rental — {r.itemName} × {r.quantity}</td>
+                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
+                      </tr>
+                    ))}
+                    {contractBooking.services.map((sv) => (
+                      <tr key={sv.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '0.4rem 0' }}>Service — {sv.serviceName} × {sv.quantity}</td>
+                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(sv.totalCost)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* ── money ── */}
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>3. Fees &amp; Payment</h4>
+                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', display: 'grid', gap: '0.25rem' }}>
+                  <span>Line items subtotal: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(lineTotal)}</strong></span>
+                  {contractInvoice ? (
+                    <>
+                      <span>Tax: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.taxAmount)}</strong></span>
+                      <span style={{ fontSize: '0.9rem' }}>
+                        Total contract price:{' '}
+                        <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(contractInvoice.grandTotal)}</strong>
+                      </span>
+                      <span>Paid to date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.paidTotal)}</strong> · Balance: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.grandTotal - contractInvoice.paidTotal)}</strong></span>
+                      <span>Invoice due: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(contractInvoice.dueDate)}</strong></span>
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--text-dim)' }}>
+                      No invoice has been issued for this booking yet — tax and the final contract price will be confirmed on the invoice.
+                    </span>
+                  )}
+                </div>
+
+                {/* ── terms ── */}
+                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>4. Terms</h4>
+                <ol style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, lineHeight: 1.75, color: 'var(--text-muted)', paddingLeft: '1.1rem', margin: 0 }}>
+                  <li>The reservation fee secures the event date and is applied against the total contract price.</li>
+                  <li>Payment follows the schedule on the issued invoice. The date is only secured once the reservation fee is verified.</li>
+                  <li>Final guest count and menu changes must be confirmed with the Caterer before the event date; changes may adjust the price.</li>
+                  <li>Cancellations are subject to the Caterer’s cancellation and refund policy in force at the time of the request.</li>
+                  <li>Rental items remain the property of the Caterer and must be returned in the condition supplied.</li>
+                </ol>
+
+                {/* ── signatures ── */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem', marginTop: '2.4rem' }}>
+                  {['Client', 'For King Jegi Catering Services'].map((who) => (
+                    <div key={who}>
+                      <div style={{ borderTop: '1px solid var(--text-primary)', paddingTop: '0.4rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                        {who} — signature over printed name / date
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="adm-shell">
 
         {/* ═══════════════════════ SIDEBAR ═══════════════════════ */}
@@ -1869,9 +2444,93 @@ export function AdminDashboardPage() {
               </svg>
             </button>
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : NAV.find((n) => n.id === tab)?.label}
+              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
+
+            {/* notification bell — the in-app view of what the NotificationWorker sent */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="adm-iconbtn"
+                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
+                aria-expanded={bellOpen}
+                onClick={() => { setBellOpen((o) => !o); if (!bellOpen) void loadNotifications(); }}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                {unreadCount > 0 && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
+                      padding: '0 3px', borderRadius: 'var(--r-full)', background: 'var(--danger)',
+                      color: '#fff', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+                    }}
+                  >
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {bellOpen && (
+                <>
+                  {/* click-away layer, below the panel but above the page */}
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 130 }} onClick={() => setBellOpen(false)} />
+                  <div
+                    className="adm-card"
+                    style={{
+                      position: 'absolute', top: 'calc(100% + 0.5rem)', right: 0, zIndex: 131,
+                      width: 340, maxWidth: '90vw', maxHeight: 420, overflowY: 'auto', padding: 0,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', padding: '0.85rem 1rem', borderBottom: '1px solid var(--border)' }}>
+                      <FieldLabel text="Notifications" />
+                      {unreadCount > 0 && (
+                        <button type="button" className="adm-btn outline" onClick={() => void readAllNotifications()}>
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    {notifications.length === 0 ? (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', padding: '1.6rem 1rem', textAlign: 'center', margin: 0 }}>
+                        Nothing yet. Overdue-payment digests and low-stock alerts show up here.
+                      </p>
+                    ) : (
+                      notifications.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => void readNotification(n)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left', border: 'none',
+                            borderBottom: '1px solid var(--border)', cursor: n.readAt ? 'default' : 'pointer',
+                            padding: '0.8rem 1rem',
+                            background: n.readAt ? 'transparent' : 'var(--primary-muted)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.2rem' }}>
+                            {!n.readAt && <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', flexShrink: 0 }} />}
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{n.title}</span>
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                            {n.body}
+                          </div>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.25rem' }}>
+                            {fmtDateTime(n.sentAt)}
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }} className="adm-hide-sm">
               {adminName} · {FALLBACK_ADMIN.role}
             </span>
@@ -1916,21 +2575,68 @@ export function AdminDashboardPage() {
                 {/* chart + calendar */}
                 <div className="adm-overview-cols" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 5fr) minmax(340px, 7fr)', gap: '1.4rem', alignItems: 'start' }}>
 
-                  {/* revenue chart */}
+                  {/* monthly sales report — real collected money, net of refunds */}
                   <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
-                    <FieldLabel text="Last 6 Months" />
-                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 1.1rem' }}>
-                      Revenue Trend
-                    </h3>
-                    <div className="adm-chart">
-                      {REVENUE_BY_MONTH.map((m) => (
-                        <div key={m.month} className="col">
-                          <span className="val">₱{Math.round(m.value / 1000)}k</span>
-                          <div className="bar" style={{ height: `${Math.round((m.value / maxRevenue) * 100)}%` }} />
-                          <span className="mon">{m.month}</span>
-                        </div>
-                      ))}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.8rem' }}>
+                      <div>
+                        <FieldLabel text={`Last ${SALES_MONTHS} Months`} />
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.2rem' }}>
+                          Monthly Sales
+                        </h3>
+                      </div>
+                      <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Refresh sales report" onClick={() => void loadSalesReport()} disabled={salesLoading}>
+                        ↻
+                      </button>
                     </div>
+
+                    {salesError && (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', color: 'var(--danger)', margin: '0.6rem 0 0' }}>
+                        {salesError}
+                      </p>
+                    )}
+
+                    {salesLoading && !salesReport && (
+                      <div className="adm-skel" style={{ height: 150, marginTop: '1rem' }} aria-hidden="true" />
+                    )}
+
+                    {salesReport && (
+                      <>
+                        <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap', margin: '0.5rem 0 1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                          <span>Net collected: <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(Math.round(salesReport.totalNet))}</strong></span>
+                          <span>Refunded: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(Math.round(salesReport.totalRefunds))}</strong></span>
+                          {salesReport.bestMonthLabel && <span>Best: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{salesReport.bestMonthLabel}</strong></span>}
+                        </div>
+
+                        <div className="adm-chart">
+                          {salesMonths.map((m) => (
+                            <div key={`${m.year}-${m.month}`} className="col" title={`${m.label}: ${fmt(Math.round(m.net))} from ${m.paymentCount} payment(s) across ${m.bookingCount} booking(s)`}>
+                              <span className="val">₱{Math.round(m.net / 1000)}k</span>
+                              <div className="bar" style={{ height: `${Math.round((m.net / maxRevenue) * 100)}%` }} />
+                              <span className="mon">{m.label.split(' ')[0]}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* AI summary — on demand, because each fresh window costs a Gemini call */}
+                        <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border)' }}>
+                          {salesSummary ? (
+                            <>
+                              <FieldLabel text={salesSummary.generated ? 'AI Summary' : 'Summary Unavailable'} />
+                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, lineHeight: 1.65, color: salesSummary.generated ? 'var(--text-secondary)' : 'var(--text-dim)', margin: '0.3rem 0 0.6rem' }}>
+                                {salesSummary.summary}
+                              </p>
+                              <button type="button" className="adm-btn outline" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
+                                {summaryLoading ? 'Thinking…' : '↻ Regenerate'}
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" className="adm-btn outline" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
+                              {summaryLoading ? 'Thinking…' : '✦ Summarize these numbers'}
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* event calendar */}
@@ -1956,15 +2662,30 @@ export function AdminDashboardPage() {
                         const dayEvents = reservations.filter(
                           (r) => r.eventDate === dateStr && (r.status === 'Pending' || r.status === 'Confirmed'),
                         );
-                        const conflict = conflictDates.has(dateStr);
+                        // Real backend state. A date with no row has never been booked.
+                        const cal = calendarDays.get(dateStr);
+                        const locked = cal?.isLocked ?? false;
+                        const manual = cal?.isManuallyLocked ?? false;
                         const isToday = dateStr === todayISO;
+                        const capacityLabel = cal ? `${cal.confirmedCount}/${cal.maxCapacity} confirmed` : 'no bookings';
                         return (
                           <div
                             key={dateStr}
                             className="adm-cal-cell"
+                            role="button"
+                            tabIndex={0}
+                            title={`${fmtDate(dateStr)} — ${capacityLabel}${manual ? ' · manually locked' : locked ? ' · full' : ''}. Click to ${locked && manual ? 'unlock' : 'lock'}.`}
+                            onClick={() => setLockTargetDate(dateStr)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLockTargetDate(dateStr); } }}
                             style={{
-                              background: conflict ? 'var(--accent-muted)' : isToday ? 'var(--primary-muted)' : 'transparent',
-                              outline: isToday ? '1px solid var(--primary)' : 'none',
+                              cursor: 'pointer',
+                              background: manual
+                                ? 'color-mix(in srgb, var(--danger) 12%, transparent)'
+                                : locked ? 'var(--accent-muted)'
+                                : isToday ? 'var(--primary-muted)' : 'transparent',
+                              outline: lockTargetDate === dateStr
+                                ? '1px solid var(--accent)'
+                                : isToday ? '1px solid var(--primary)' : 'none',
                             }}
                           >
                             <div className="d" style={{ color: isToday ? 'var(--primary)' : undefined }}>{day}</div>
@@ -1976,13 +2697,49 @@ export function AdminDashboardPage() {
                                 </span>
                               );
                             })}
-                            {conflict && (
-                              <span className="adm-cal-ev" style={{ color: 'var(--accent)', fontWeight: 600 }}>⚠ conflict</span>
-                            )}
+                            {manual ? (
+                              <span className="adm-cal-ev" style={{ color: 'var(--danger)', fontWeight: 600 }}>🔒 locked</span>
+                            ) : locked ? (
+                              <span className="adm-cal-ev" style={{ color: 'var(--accent)', fontWeight: 600 }}>● full</span>
+                            ) : null}
                           </div>
                         );
                       })}
                     </div>
+
+                    {calendarError && (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--danger)', padding: '0 1rem 0.8rem', margin: 0 }}>
+                        {calendarError}
+                      </p>
+                    )}
+
+                    {/* manual lock/unlock — the admin action the backend has always
+                        supported (SetDayLockDto) but nothing in the UI ever called */}
+                    {lockTargetDate && (() => {
+                      const cal = calendarDays.get(lockTargetDate);
+                      const manual = cal?.isManuallyLocked ?? false;
+                      const busy = lockBusyDate === lockTargetDate;
+                      return (
+                        <div style={{ borderTop: '1px solid var(--border)', padding: '0.9rem 1rem', display: 'flex', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <div style={{ flex: 1, minWidth: 180, fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                            <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(lockTargetDate)}</strong>
+                            {' — '}
+                            {cal ? `${cal.confirmedCount} of ${cal.maxCapacity} confirmed` : 'nothing booked yet'}
+                            {manual && ' · manually locked'}
+                            {!manual && (cal?.isLocked ?? false) && ' · at capacity'}
+                          </div>
+                          <button
+                            type="button"
+                            className={manual ? 'adm-btn success' : 'adm-btn danger'}
+                            disabled={busy}
+                            onClick={() => void toggleDayLock(lockTargetDate, !manual)}
+                          >
+                            {busy ? 'Saving…' : manual ? 'Unlock this day' : 'Lock this day'}
+                          </button>
+                          <button type="button" className="adm-btn outline" onClick={() => setLockTargetDate(null)}>Close</button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -2010,7 +2767,12 @@ export function AdminDashboardPage() {
                             {r.eventType || r.bookingType} · {fmtDate(r.eventDate)} · {r.guestCount || 'N/A'} guests
                           </div>
                         </div>
-                        {conflictDates.has(r.eventDate) && <StatusBadge label="⚠ Date conflict" color="var(--accent)" />}
+                        {lockedDates.has(r.eventDate) && (
+                          <StatusBadge
+                            label={calendarDays.get(r.eventDate)?.isManuallyLocked ? '🔒 Date locked' : '● Date full'}
+                            color={calendarDays.get(r.eventDate)?.isManuallyLocked ? 'var(--danger)' : 'var(--accent)'}
+                          />
+                        )}
                         <button type="button" className="adm-btn success" onClick={() => setResStatus(r.id, 'Confirmed')}>Confirm</button>
                       </div>
                     ))
@@ -2085,8 +2847,11 @@ export function AdminDashboardPage() {
                             )}
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.45rem' }}>
-                            {conflictDates.has(r.eventDate) && (r.status === 'Pending' || r.status === 'Confirmed') && (
-                              <StatusBadge label="⚠ Date conflict" color="var(--accent)" />
+                            {lockedDates.has(r.eventDate) && (r.status === 'Pending' || r.status === 'Confirmed') && (
+                              <StatusBadge
+                                label={calendarDays.get(r.eventDate)?.isManuallyLocked ? '🔒 Date locked' : '● Date full'}
+                                color={calendarDays.get(r.eventDate)?.isManuallyLocked ? 'var(--danger)' : 'var(--accent)'}
+                              />
                             )}
                             <StatusBadge label={RES_STATUS[r.status as ResStatus]?.label || r.status} color={RES_STATUS[r.status as ResStatus]?.color || '#999'} />
                           </div>
@@ -2114,6 +2879,23 @@ export function AdminDashboardPage() {
                               {invoiceBusyId === r.id ? 'Generating…' : 'Generate Invoice'}
                             </button>
                           )}
+                          {r.status === 'Confirmed' && (
+                            <button
+                              type="button"
+                              className="adm-btn outline"
+                              disabled={contractBusyId === r.id}
+                              onClick={() => void openContract(r)}
+                            >
+                              {contractBusyId === r.id ? 'Preparing…' : 'Generate Contract'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="adm-btn outline"
+                            onClick={() => { openTab('histories'); void openHistory(r.id); }}
+                          >
+                            View History
+                          </button>
                           {(r.status === 'Pending' || r.status === 'Confirmed') && !cancelling && (
                             <button type="button" className="adm-btn danger" onClick={() => { setCancelResId(r.id); setCancelReason(''); }}>Cancel</button>
                           )}
@@ -2452,15 +3234,33 @@ export function AdminDashboardPage() {
             {/* ══════════ TESTIMONIALS ══════════ */}
             {tab === 'testimonials' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                  <h2 className="adm-title">Testimonial Moderation</h2>
-                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                    {pendingTesti} pending review
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 className="adm-title">Testimonial Moderation</h2>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Testimonials</code> · approved reviews appear on the landing page
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                      {pendingTesti} pending review
+                    </span>
+                    <button type="button" className="adm-btn outline" onClick={() => void loadTestimonials()} disabled={testiLoading}>
+                      {testiLoading ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
                 </div>
 
+                {testiError && (
+                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
+                      {testiError}
+                    </p>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['pending', 'approved', 'rejected', 'all'] as const).map((k) => {
+                  {(['Pending', 'Approved', 'Rejected', 'all'] as const).map((k) => {
                     const count = k === 'all' ? testimonials.length : testimonials.filter((t) => t.status === k).length;
                     return (
                       <button key={k} type="button" className={`adm-pill${testiFilter === k ? ' active' : ''}`} onClick={() => setTestiFilter(k)}>
@@ -2489,11 +3289,11 @@ export function AdminDashboardPage() {
                               fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)',
                             }}
                           >
-                            {t.name.charAt(0)}
+                            {t.authorName.charAt(0)}
                           </div>
                           <div style={{ flex: 1, minWidth: 220 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.3rem' }}>
-                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.name}</span>
+                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.authorName}</span>
                               <span style={{ color: 'var(--accent)', fontSize: '0.8rem' }}>
                                 {'★'.repeat(t.rating)}
                                 <span style={{ color: 'var(--border-strong)' }}>{'★'.repeat(5 - t.rating)}</span>
@@ -2503,20 +3303,20 @@ export function AdminDashboardPage() {
                               "{t.body}"
                             </p>
                             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                              Submitted {fmtDate(t.submittedAt)}
+                              Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing “{t.bookingName}” ({fmtDate(t.eventDate)})
                             </span>
                           </div>
                           <StatusBadge label={st.label} color={st.color} />
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
-                          {t.status !== 'approved' && (
-                            <button type="button" className="adm-btn success" onClick={() => setTestiStatus(t.id, 'approved')}>
-                              ✓ Approve — publish to landing page
+                          {t.status !== 'Approved' && (
+                            <button type="button" className="adm-btn success" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Approved')}>
+                              {testiBusyId === t.id ? 'Saving…' : '✓ Approve — publish to landing page'}
                             </button>
                           )}
-                          {t.status !== 'rejected' && (
-                            <button type="button" className="adm-btn danger" onClick={() => setTestiStatus(t.id, 'rejected')}>
-                              ✕ {t.status === 'approved' ? 'Remove from landing page' : 'Reject'}
+                          {t.status !== 'Rejected' && (
+                            <button type="button" className="adm-btn danger" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Rejected')}>
+                              ✕ {t.status === 'Approved' ? 'Remove from landing page' : 'Reject'}
                             </button>
                           )}
                         </div>
@@ -2524,6 +3324,148 @@ export function AdminDashboardPage() {
                     );
                   })
                 )}
+              </div>
+            )}
+
+            {/* ══════════ BOOKING HISTORIES (live backend data) ══════════ */}
+            {tab === 'histories' && (
+              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                <div>
+                  <h2 className="adm-title">Booking Histories</h2>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                    Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Bookings/{'{id}'}/history</code>. Every mutating call writes a
+                    snapshot of the booking as it was <em>before</em> the change.
+                  </p>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 4fr) minmax(320px, 8fr)', gap: '1.2rem', alignItems: 'start' }} className="adm-overview-cols">
+
+                  {/* booking picker */}
+                  <div className="adm-card" style={{ padding: '1.1rem 1.2rem' }}>
+                    <FieldLabel text="Select a booking" />
+                    <input
+                      className="adm-input square"
+                      style={{ margin: '0.5rem 0 0.8rem' }}
+                      value={historySearch}
+                      onChange={(e) => setHistorySearch(e.target.value)}
+                      placeholder="Search by name…"
+                    />
+                    <div style={{ maxHeight: 460, overflowY: 'auto' }}>
+                      {reservations
+                        .filter((r) => {
+                          const q = historySearch.trim().toLowerCase();
+                          return q === '' || (r.bookingName ?? '').toLowerCase().includes(q);
+                        })
+                        .map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => void openHistory(r.id)}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+                              border: 'none', borderBottom: '1px solid var(--border)',
+                              background: historyBookingId === r.id ? 'var(--primary-muted)' : 'transparent',
+                              padding: '0.6rem 0.4rem',
+                            }}
+                          >
+                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                              {r.bookingName}
+                            </div>
+                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                              {fmtDate(r.eventDate)} · {r.status}
+                            </div>
+                          </button>
+                        ))}
+                      {reservations.length === 0 && (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)', margin: '1rem 0' }}>
+                          No bookings loaded.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* revision timeline */}
+                  <div className="adm-card" style={{ padding: '1.3rem 1.5rem' }}>
+                    {!historyBookingId ? (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', textAlign: 'center', margin: '2.5rem 0' }}>
+                        Pick a booking to see how it changed over time.
+                      </p>
+                    ) : historyLoading ? (
+                      <>
+                        <div className="adm-skel" style={{ height: '0.9rem', width: '45%', marginBottom: '1rem' }} aria-hidden="true" />
+                        <div className="adm-skel" style={{ height: '3.6rem', marginBottom: '0.7rem' }} aria-hidden="true" />
+                        <div className="adm-skel" style={{ height: '3.6rem' }} aria-hidden="true" />
+                      </>
+                    ) : historyError ? (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
+                        {historyError}
+                      </p>
+                    ) : historyRows.length === 0 ? (
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', textAlign: 'center', margin: '2.5rem 0' }}>
+                        No revisions recorded — this booking hasn't been changed since it was created.
+                      </p>
+                    ) : (() => {
+                      const current = reservations.find((r) => r.id === historyBookingId);
+                      // Newest first, and each row is compared against the state that
+                      // FOLLOWED it: the next snapshot, or the booking as it stands now.
+                      const ordered = [...historyRows].sort((a, b) => b.revisionNumber - a.revisionNumber);
+                      return (
+                        <>
+                          <FieldLabel text={`${historyRows.length} revision${historyRows.length === 1 ? '' : 's'}`} />
+                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0.1rem 0 1.1rem' }}>
+                            {current?.bookingName ?? 'Booking'}
+                          </h3>
+
+                          {ordered.map((row) => {
+                            const before = parseSnapshot(row.snapshotJson);
+                            const nextRow = historyRows.find((h) => h.revisionNumber === row.revisionNumber + 1);
+                            const after = nextRow
+                              ? parseSnapshot(nextRow.snapshotJson)
+                              : current ? bookingAsSnapshot(current) : null;
+                            const changes = diffSnapshots(before, after);
+
+                            return (
+                              <div key={row.id} className="adm-row" style={{ padding: '0.9rem 0' }}>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    {row.changeReason || 'Edited'}
+                                  </span>
+                                  <StatusBadge label={`rev ${row.revisionNumber}`} color="var(--text-dim)" />
+                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                                    {fmtDateTime(row.snapshotAt)}
+                                    {' · '}
+                                    {/* A null ChangedById means the customer or the system
+                                        made the change, not a staff account. */}
+                                    {row.changedById
+                                      ? `staff ${row.changedById.slice(0, 8)}…`
+                                      : 'customer or system'}
+                                  </span>
+                                </div>
+
+                                {changes.length === 0 ? (
+                                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                                    No field-level differences recorded for this revision (line items changed, or the snapshot is identical).
+                                  </p>
+                                ) : (
+                                  <div style={{ display: 'grid', gap: '0.25rem' }}>
+                                    {changes.map((c) => (
+                                      <div key={c.key} style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                                        <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{c.label}:</strong>{' '}
+                                        <span style={{ textDecoration: 'line-through', opacity: 0.7 }}>{c.from}</span>
+                                        {' → '}
+                                        <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{c.to}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
               </div>
             )}
 

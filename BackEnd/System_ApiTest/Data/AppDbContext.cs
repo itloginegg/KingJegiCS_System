@@ -60,6 +60,9 @@ namespace System_ApiTest.Data
         public DbSet<Supportthread> SupportThreads => Set<Supportthread>();
         public DbSet<Supportmessage> SupportMessages => Set<Supportmessage>();
 
+        // Customer reviews (moderated before they go public)
+        public DbSet<Testimonial> Testimonials => Set<Testimonial>();
+
         protected override void OnModelCreating(ModelBuilder b)
         {
             base.OnModelCreating(b);
@@ -450,6 +453,29 @@ namespace System_ApiTest.Data
                 e.HasIndex(m => new { m.ThreadId, m.CreatedAt });
                 e.HasOne(m => m.Thread).WithMany(t => t.Messages)
                  .HasForeignKey(m => m.ThreadId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- Testimonial ----------------
+            b.Entity<Testimonial>(e =>
+            {
+                e.Property(t => t.Status).HasConversion<string>().HasMaxLength(10);
+
+                // One review per booking — the anti-spam control, enforced in the DB so a
+                // concurrent double-submit can't slip past the service's check.
+                e.HasIndex(t => t.BookingId).IsUnique();
+                // The public list and the moderation queue both read newest-first by state.
+                e.HasIndex(t => new { t.Status, t.SubmittedAt });
+
+                e.ToTable(tb => tb.HasCheckConstraint("CK_Testimonial_RatingRange", "[Rating] >= 1 AND [Rating] <= 5"));
+
+                // Reviews outlive nothing: a customer or booking that's been reviewed
+                // can't be removed out from under it.
+                e.HasOne(t => t.Customer).WithMany()
+                 .HasForeignKey(t => t.CustomerId).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(t => t.Booking).WithMany()
+                 .HasForeignKey(t => t.BookingId).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(t => t.ModeratedBy).WithMany()
+                 .HasForeignKey(t => t.ModeratedById).OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

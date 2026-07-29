@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getCalendarDays } from '../api/calendarApi';
+import { getApprovedTestimonials, type PublicTestimonial } from '../api/testimonialsApi';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
  
@@ -120,8 +122,14 @@ const TESTIMONIALS = [
   },
 ];
  
-/* Demo-only reserved dates so the calendar has something to show. */
-const BOOKED_DATES = ['2026-07-18', '2026-07-25', '2026-07-30', '2026-08-08', '2026-08-15'];
+/**
+ * TESTIMONIALS above is now only a FALLBACK: the section renders approved reviews
+ * from /api/Testimonials/approved, and falls back to these while they load or if the
+ * business hasn't approved any yet, so the page is never visibly empty.
+ *
+ * The reserved dates that used to live here were demo-only. The calendar now reads
+ * real lock state from /api/CalendarDays (anonymous endpoint — dates and counts only).
+ */
  
 /* ─────────────────────────────────────────────────────────────────────────
    Tiny helpers
@@ -630,6 +638,38 @@ export function LandingPage() {
   const daysInMonth = getDaysInMonth(calYear, calMonth);
   const firstWeekday = getFirstDayOfMonth(calYear, calMonth);
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
+
+  /* Real availability for the month on screen. Dates the backend has no row for have
+     never been booked, so a miss simply means "open". A failed fetch leaves the map
+     empty and the calendar shows everything as available — this section is a teaser,
+     not a booking gate, and the booking form re-checks properly. */
+  const [bookedDates, setBookedDates] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    const from = toISO(calYear, calMonth, 1);
+    const to = toISO(calYear, calMonth, getDaysInMonth(calYear, calMonth));
+    getCalendarDays(from, to)
+      .then((days) => {
+        if (!cancelled) setBookedDates(new Set(days.filter((d) => d.isLocked).map((d) => d.date)));
+      })
+      .catch(() => {
+        if (!cancelled) setBookedDates(new Set());
+      });
+    return () => { cancelled = true; };
+  }, [calYear, calMonth]);
+
+  /* Approved testimonials, newest first. Falls back to the built-in samples until
+     the business has approved some of its own. */
+  const [reviews, setReviews] = useState<PublicTestimonial[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getApprovedTestimonials(6)
+      .then((rows) => { if (!cancelled) setReviews(rows); })
+      .catch(() => { /* keep the fallback copy */ });
+    return () => { cancelled = true; };
+  }, []);
  
   const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
  
@@ -1948,7 +1988,7 @@ export function LandingPage() {
                     const day = i + 1;
                     const iso = toISO(calYear, calMonth, day);
                     const isToday = iso === todayISO;
-                    const isBooked = BOOKED_DATES.includes(iso);
+                    const isBooked = bookedDates.has(iso);
                     const isPast = iso < todayISO && !isToday;
                     return (
                       <div
@@ -1967,7 +2007,7 @@ export function LandingPage() {
                 {hovered && (
                   <p style={{ textAlign: 'center', marginTop: '1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                     {MONTH_NAMES[calMonth]} {hovered}, {calYear}
-                    {BOOKED_DATES.includes(toISO(calYear, calMonth, hovered))
+                    {bookedDates.has(toISO(calYear, calMonth, hovered))
                       ? ' — Already reserved'
                       : toISO(calYear, calMonth, hovered) < todayISO
                         ? ' — Past date'
@@ -1986,11 +2026,30 @@ export function LandingPage() {
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 1 }}>
             <SectionHeader eyebrow="Client Stories" title="What Our" accent="Clients Say" italic align="right" />
             <div className="testi-grid">
-              {TESTIMONIALS.map((t) => (
-                <div key={t.id} className="testi-card">
+              {/* Approved reviews from the backend; the built-in samples stand in only
+                  until the business has approved some of its own. */}
+              {(reviews.length > 0
+                ? reviews.map((r) => ({
+                    key: r.id,
+                    quote: r.body,
+                    name: r.authorName,
+                    rating: r.rating,
+                    caption: new Date(r.submittedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long' }),
+                    initials: r.authorName.split(' ').map((w) => w.charAt(0)).join('').slice(0, 2).toUpperCase(),
+                  }))
+                : TESTIMONIALS.map((t) => ({
+                    key: String(t.id),
+                    quote: t.quote,
+                    name: t.name,
+                    rating: 5,
+                    caption: t.event,
+                    initials: t.initials,
+                  }))
+              ).map((t) => (
+                <div key={t.key} className="testi-card">
                   <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem' }}>
                     {Array.from({ length: 5 }).map((_, i) => (
-                      <span key={i} style={{ color: 'var(--accent)', fontSize: '0.9rem' }}>★</span>
+                      <span key={i} style={{ color: i < t.rating ? 'var(--accent)' : 'var(--border-strong)', fontSize: '0.9rem' }}>★</span>
                     ))}
                   </div>
                   <p
@@ -2020,7 +2079,7 @@ export function LandingPage() {
                         {t.name}
                       </p>
                       <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>
-                        {t.event}
+                        {t.caption}
                       </p>
                     </div>
                   </div>

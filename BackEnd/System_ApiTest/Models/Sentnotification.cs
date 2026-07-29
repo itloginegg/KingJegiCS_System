@@ -67,5 +67,15 @@ namespace System_ApiTest.Models
         public string Period { get; set; } = string.Empty;
 
         public DateTime SentAt { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// When this notification was marked read in the in-app feed; null while unread.
+        ///
+        /// Read state is per-ROW, not per-viewer. That's exact for customer-directed rows
+        /// (a booking has one customer), and deliberate for owner-directed rows (the
+        /// digest and low-stock alerts): the Owner and an Assistant share one inbox, so
+        /// either dismissing an alert clears it for both.
+        /// </summary>
+        public DateTime? ReadAt { get; set; }
     }
 }

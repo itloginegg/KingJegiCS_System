@@ -26,6 +26,7 @@ import {
   type BookingResponse,
   type PackageTemplateResponse,
 } from '../api/bookingApi';
+import { getCalendarDays, type CalendarDay } from '../api/calendarApi';
 
 /* ── constants ────────────────────────────────────────────────────────── */
 
@@ -80,6 +81,13 @@ export function BookingPage() {
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
+
+  /* Real availability for the chosen date, straight from the backend's calendar
+     (isLocked = manually locked, or the confirmed count has reached capacity). This
+     is advisory here — confirmation is still gated server-side — but it means the
+     customer finds out before building a whole booking on an unavailable date. */
+  const [dateStatus, setDateStatus] = useState<CalendarDay | null>(null);
+  const [dateChecking, setDateChecking] = useState(false);
 
   // Delivery (rentals/menu flows)
 
@@ -191,6 +199,31 @@ export function BookingPage() {
       setTemplateLoading(false);
     }
   }, [bookingId]);
+
+  /* Look up the chosen date's real calendar state. The endpoint is anonymous, so
+     this works for guests browsing before they sign in. A date the backend has no
+     row for has never been booked — that's an open date, not an error. */
+  useEffect(() => {
+    if (!eventDate) {
+      setDateStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setDateChecking(true);
+    getCalendarDays(eventDate, eventDate)
+      .then((days) => {
+        if (!cancelled) setDateStatus(days.find((d) => d.date === eventDate) ?? null);
+      })
+      .catch(() => {
+        // Advisory only — a failed lookup must never block the form. The server
+        // still enforces the real rule at confirmation.
+        if (!cancelled) setDateStatus(null);
+      })
+      .finally(() => {
+        if (!cancelled) setDateChecking(false);
+      });
+    return () => { cancelled = true; };
+  }, [eventDate]);
 
   /* ── derived ── */
   const contactComplete = fullName.trim() && email.trim() && phone.trim();
@@ -763,6 +796,23 @@ export function BookingPage() {
                 <div className="bk-field">
                   <label className="bk-label">Event Date</label>
                   <input className="bk-input" type="date" min={today} value={eventDate} onChange={e => setEventDate(e.target.value)} />
+                  {dateChecking && (
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem', display: 'block' }}>
+                      Checking availability…
+                    </span>
+                  )}
+                  {!dateChecking && dateStatus?.isLocked && (
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--danger)', marginTop: '0.3rem', display: 'block' }}>
+                      {dateStatus.isManuallyLocked
+                        ? 'This date is closed for bookings. Please choose another.'
+                        : `This date is fully booked (${dateStatus.confirmedCount} of ${dateStatus.maxCapacity} events). Please choose another.`}
+                    </span>
+                  )}
+                  {!dateChecking && dateStatus && !dateStatus.isLocked && dateStatus.confirmedCount > 0 && (
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', display: 'block' }}>
+                      {dateStatus.maxCapacity - dateStatus.confirmedCount} of {dateStatus.maxCapacity} slots still open on this date.
+                    </span>
+                  )}
                 </div>
                 <div className="bk-field">
                   <label className="bk-label">Start Time</label>

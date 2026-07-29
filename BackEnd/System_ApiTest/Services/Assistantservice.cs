@@ -244,6 +244,35 @@ namespace System_ApiTest.Services
             return text.Trim();
         }
 
+        /// <summary>
+        /// Writes a short owner-facing read of an already-computed sales report. Same
+        /// no-tools, single-shot shape as GenerateProactiveNudgeAsync — the caller passes
+        /// the real aggregated figures as context and the model may use nothing else.
+        /// Throws AssistantUnavailableException when disabled/unconfigured/failing;
+        /// Reportservice catches that and serves the report without prose.
+        /// </summary>
+        public async Task<string> GenerateSalesSummaryAsync(string context, CancellationToken ct)
+        {
+            if (!_options.IsConfigured)
+                throw new AssistantUnavailableException("The assistant is not configured.");
+
+            var request = new JsonObject
+            {
+                ["systemInstruction"] = new JsonObject
+                {
+                    ["parts"] = new JsonArray(new JsonObject { ["text"] = SalesSummarySystemPrompt })
+                },
+                ["contents"] = new JsonArray(TextContent("user", context)),
+                ["generationConfig"] = new JsonObject { ["maxOutputTokens"] = 400 }
+            };
+
+            var body = await PostGenerateContentAsync(request, ct);
+            var (text, _) = ParseResponse(body);
+            if (string.IsNullOrWhiteSpace(text))
+                throw new AssistantUnavailableException("The assistant returned an empty summary.");
+            return text.Trim();
+        }
+
         // ---------------------------------------------------------------------------
         //  Conversation reads (scoped to the customer)
         // ---------------------------------------------------------------------------
@@ -693,6 +722,13 @@ namespace System_ApiTest.Services
             "(1-2 sentences) to the customer about the situation described below. Amounts are in Philippine pesos (₱). " +
             "Use ONLY the facts and numbers given — never invent any. End by inviting them to reply if they'd like help " +
             "(e.g. pulling up their payment schedule). Output only the message text, no preamble.";
+
+        private const string SalesSummarySystemPrompt =
+            "You are a business analyst writing for the owner of KingJegi Catering in Laguna, Philippines. " +
+            "Summarize the monthly sales figures below in 2-4 short sentences of plain English. " +
+            "Amounts are in Philippine pesos (₱). Use ONLY the numbers provided — never invent, extrapolate, " +
+            "or forecast a figure that isn't listed. Call out the trend, the strongest and weakest months, and " +
+            "anything notable about refunds. No headings, no bullet points, no preamble — output only the summary text.";
 
         private const string ToolDeclarationsJson = """
         [
