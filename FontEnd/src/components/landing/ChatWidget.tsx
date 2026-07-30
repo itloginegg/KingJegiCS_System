@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { readSession } from '../../lib/tokenStorage';
 import { sendChat, listConversations, getConversation, AssistantApiError } from '../../api/assistantApi';
-import { getMyThread, sendSupportMessage, SupportApiError } from '../../api/supportApi';
+import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from '../../api/supportApi';
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
 
@@ -21,11 +21,31 @@ const SpeechRecognitionCtor: any =
   typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
 const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
+/**
+ * Fired to open the widget straight onto the support conversation — used when a
+ * customer clicks a chat notification in the dashboard bell.
+ *
+ * A window event rather than lifted state or a prop: ChatWidget is mounted globally,
+ * outside the router's page tree, so there is no shared parent to hold the flag and
+ * no prop path from the dashboard to here that wouldn't mean threading it through
+ * every page.
+ */
+export const OPEN_SUPPORT_CHAT_EVENT = 'kingjegi:open-support-chat';
+
 export function ChatWidget() {
   const { user } = useAuth();
   const isCustomer = user?.role === 'customer';
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'assistant' | 'support'>('assistant');
+
+  useEffect(() => {
+    const openSupport = () => {
+      setMode('support');
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_SUPPORT_CHAT_EVENT, openSupport);
+    return () => window.removeEventListener(OPEN_SUPPORT_CHAT_EVENT, openSupport);
+  }, []);
 
   return (
     <>
@@ -231,22 +251,74 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   );
 }
 
-type SupportMsgView = { id: string; role: 'me' | 'staff'; text: string };
+/**
+ * Renders a message attachment: images inline (they're the common case — screenshots
+ * of a quote or a venue), everything else as a download link. Shared by the customer
+ * widget and, via the same DTO fields, the admin panel.
+ */
+function SupportAttachment({ url, fileName, isImage, hasText }: {
+  url?: string | null;
+  fileName?: string | null;
+  isImage?: boolean;
+  hasText: boolean;
+}) {
+  if (!fileName && !url) return null;
+
+  const href = attachmentUrl(url);
+  const spacing = hasText ? { marginTop: '0.45rem' } : undefined;
+
+  // No href yet = the optimistic echo of a message still uploading.
+  if (!href) {
+    return <div className="cw-attach-pending" style={spacing}>📎 {fileName} — sending…</div>;
+  }
+
+  if (isImage) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" style={{ display: 'block', ...spacing }}>
+        <img src={href} alt={fileName ?? 'Attachment'} className="cw-attach-img" />
+      </a>
+    );
+  }
+
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" download={fileName ?? undefined} className="cw-attach-link" style={spacing}>
+      📎 {fileName ?? 'Download attachment'}
+    </a>
+  );
+}
+
+type SupportMsgView = {
+  id: string;
+  role: 'me' | 'staff';
+  text: string;
+  attachmentUrl?: string | null;
+  attachmentFileName?: string | null;
+  attachmentIsImage?: boolean;
+};
 
 function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () => void }) {
   const [messages, setMessages] = useState<SupportMsgView[]>([]);
   const [input, setInput] = useState('');
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const endRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async () => {
     const session = readSession();
     if (!session) { setLoading(false); return; }
     try {
       const thread = await getMyThread(session.token);
-      setMessages(thread.messages.map((m) => ({ id: m.id, role: m.sender === 'Customer' ? 'me' : 'staff', text: m.text })));
+      setMessages(thread.messages.map((m) => ({
+        id: m.id,
+        role: m.sender === 'Customer' ? 'me' : 'staff',
+        text: m.text,
+        attachmentUrl: m.attachmentUrl,
+        attachmentFileName: m.attachmentFileName,
+        attachmentIsImage: m.attachmentIsImage,
+      })));
       setError('');
     } catch (err) {
       setError(err instanceof SupportApiError ? err.message : 'Could not load support chat.');
@@ -258,17 +330,31 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
   useEffect(() => { void load(); }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
 
+  const clearAttachment = () => {
+    setAttachment(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if (!text || sending) return;
+    // A message needs words, a file, or both — matching the server's own rule.
+    if ((!text && !attachment) || sending) return;
     const session = readSession();
     if (!session) return;
+    const file = attachment;
     setInput('');
+    clearAttachment();
     setSending(true);
-    setMessages((prev) => [...prev, { id: `me-${Date.now()}`, role: 'me', text }]);
+    setMessages((prev) => [...prev, {
+      id: `me-${Date.now()}`,
+      role: 'me',
+      text,
+      attachmentFileName: file?.name ?? null,
+      attachmentIsImage: false,   // optimistic echo; load() replaces it with the real row
+    }]);
     try {
-      await sendSupportMessage(session.token, text);
+      await sendSupportMessage(session.token, text, file);
       await load();   // pick up any staff replies since the panel opened
     } catch (err) {
       setError(err instanceof SupportApiError ? err.message : 'Could not send your message. Please try again.');
@@ -294,15 +380,59 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
         ) : messages.length === 0 ? (
           <div className="cw-hint">Message our team — we'll reply here as soon as we can.</div>
         ) : messages.map((m) => (
-          <div key={m.id} className={`cw-bubble ${m.role === 'me' ? 'me' : 'assistant'}`}>{m.text}</div>
+          <div key={m.id} className={`cw-bubble ${m.role === 'me' ? 'me' : 'assistant'}`}>
+            {m.text && <div>{m.text}</div>}
+            <SupportAttachment
+              url={m.attachmentUrl}
+              fileName={m.attachmentFileName}
+              isImage={m.attachmentIsImage}
+              hasText={Boolean(m.text)}
+            />
+          </div>
         ))}
         {sending && <div className="cw-bubble me" style={{ opacity: 0.6 }}>…</div>}
         {error && <div className="cw-hint" style={{ color: 'var(--danger)' }}>{error}</div>}
         <div ref={endRef} />
       </div>
+
+      {attachment && (
+        <div className="cw-attach-chip">
+          <span className="cw-attach-name" title={attachment.name}>📎 {attachment.name}</span>
+          <button type="button" onClick={clearAttachment} aria-label="Remove attachment">✕</button>
+        </div>
+      )}
+
       <form onSubmit={send} className="cw-foot">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            // Mirror the server's 10 MB cap so an oversized file fails instantly
+            // instead of after a long upload.
+            if (file && file.size > 10 * 1024 * 1024) {
+              setError('Attachment exceeds the maximum size of 10 MB.');
+              clearAttachment();
+              return;
+            }
+            setError('');
+            setAttachment(file);
+          }}
+        />
+        <button
+          type="button"
+          className="cw-icon"
+          onClick={() => fileRef.current?.click()}
+          disabled={sending}
+          aria-label="Attach an image or PDF"
+          title="Attach an image or PDF (max 10 MB)"
+        >
+          📎
+        </button>
         <input className="cw-input" placeholder="Message our team…" value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Message input" />
-        <button type="submit" className="cw-btn primary" disabled={sending || !input.trim()}>{sending ? '…' : 'Send'}</button>
+        <button type="submit" className="cw-btn primary" disabled={sending || (!input.trim() && !attachment)}>{sending ? '…' : 'Send'}</button>
       </form>
     </div>
   );
@@ -351,6 +481,19 @@ function ChatStyles() {
       .cw-switch:hover { text-decoration: underline; }
       .cw-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: min(58vh, 440px); overflow-y: auto; }
       .cw-hint { text-align: center; color: var(--text-dim); font-family: var(--font-body); font-size: 0.78rem; padding: 1.5rem 0.5rem; line-height: 1.6; }
+
+      /* ── attachments ── */
+      .cw-attach-img { display: block; max-width: 100%; max-height: 200px; border-radius: var(--r-md); border: 1px solid var(--border); object-fit: cover; }
+      .cw-attach-link { display: inline-block; font-family: var(--font-body); font-size: 0.75rem; color: inherit; text-decoration: underline; word-break: break-all; }
+      .cw-attach-pending { font-family: var(--font-body); font-size: 0.72rem; opacity: 0.7; word-break: break-all; }
+      .cw-attach-chip {
+        display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.45rem 0.9rem; border-top: 1px solid var(--border);
+        background: var(--bg-subtle);
+        font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted);
+      }
+      .cw-attach-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cw-attach-chip button { background: transparent; border: none; cursor: pointer; color: var(--text-dim); font-size: 0.72rem; padding: 0; }
       .cw-bubble.assistant, .cw-bubble.me { position: static; width: auto; height: auto; max-width: 82%; padding: 0.6rem 0.8rem; border-radius: var(--r-xl); font-family: var(--font-body); font-size: 0.8rem; font-weight: 300; line-height: 1.55; box-shadow: none; display: block; white-space: pre-wrap; }
       .cw-bubble.assistant { align-self: flex-start; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: var(--r-sm); }
       .cw-bubble.me { align-self: flex-end; background: var(--primary); color: var(--primary-text); border-bottom-right-radius: var(--r-sm); }

@@ -10,6 +10,7 @@ import { RentalsPage } from '../pages/RentalsPage';
 import { BookingPage } from '../pages/BookingPage';
 import { CustomerDashboardPage } from '../pages/CustomerDashboardPage';
 import { AdminDashboardPage } from '../pages/AdminDashboardPage';
+import { PaymentReturnPage } from '../pages/PaymentReturnPage';
 
 export function AppRoutes() {
   return (
@@ -28,6 +29,11 @@ export function AppRoutes() {
           {/* Customer-only area — LoginPage routes customers here after sign-in */}
           <Route element={<ProtectedRoute allow={['customer']} />}>
             <Route path="/dashboard" element={<CustomerDashboardPage />} />
+            {/* Where PayMongo returns the browser after hosted checkout — these match
+                PayMongoOptions.SuccessUrl / CancelUrl. Without them the catch-all below
+                swallowed the return and dropped the customer on the public homepage. */}
+            <Route path="/payment/success" element={<PaymentReturnPage outcome="success" />} />
+            <Route path="/payment/cancel" element={<PaymentReturnPage outcome="cancel" />} />
           </Route>
 
           {/* Admin-only area — LoginPage routes Owner/Assistant accounts here */}

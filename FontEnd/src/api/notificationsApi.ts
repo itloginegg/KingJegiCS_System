@@ -39,6 +39,55 @@ export interface AppNotification {
   bookingName: string | null;
   sentAt: string;
   readAt: string | null;
+  /**
+   * The specific entity this is about, when there is one — the payment for
+   * payment/refund kinds, the message for chat kinds, the line for BookingItemAdded.
+   * Null for kinds that route on `bookingId` instead. See notificationTarget().
+   */
+  targetId: string | null;
+}
+
+/**
+ * Where clicking a notification should take you. Kept here, next to the DTO it reads,
+ * so both dashboards route identically instead of each growing its own switch.
+ *
+ *   booking  → the Bookings tab, with that booking's detail open (uses `bookingId`)
+ *   payment  → the Payments tab, expanded on `targetId` when present
+ *   chat     → the support conversation
+ *   none     → no navigation; the notification is informational (reminders, digests)
+ */
+export type NotificationTarget = 'booking' | 'payment' | 'chat' | 'none';
+
+const BOOKING_KINDS = [
+  'BookingCreated',
+  'BookingCompleted',
+  'BookingCancelled',
+  'BookingCancelledStaff',
+  'BookingCancellationRequested',
+  'BookingConfirmed',
+  'BookingItemAdded',
+];
+
+const PAYMENT_KINDS = [
+  'PaymentRecorded',
+  'PaymentConfirmed',
+  'PaymentDueSoon',
+  'PaymentOverdue',
+  'PaymentOverdueDigest',
+  'RefundRequested',
+  'RefundApproved',
+  'RefundDenied',
+];
+
+const CHAT_KINDS = ['SupportMessageFromCustomer', 'SupportMessageFromStaff'];
+
+export function notificationTarget(n: AppNotification): NotificationTarget {
+  if (CHAT_KINDS.includes(n.kind)) return 'chat';
+  // A booking kind with no bookingId can't be routed to, so don't pretend it can.
+  if (BOOKING_KINDS.includes(n.kind)) return n.bookingId ? 'booking' : 'none';
+  if (PAYMENT_KINDS.includes(n.kind)) return 'payment';
+  // RentalLowStock and anything added later: no meaningful destination yet.
+  return 'none';
 }
 
 /** Matches NotificationFeedDto. */

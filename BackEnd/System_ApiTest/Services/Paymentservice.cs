@@ -14,17 +14,34 @@ namespace System_ApiTest.Services
         private readonly Bookingservice _bookings;
         private readonly PayMongoservice _payMongo;
         private readonly IHubContext<PaymentHub> _hubContext;
+        private readonly Notificationwriteservice _notifications;
 
         public Paymentservice(AppDbContext db, Invoiceservice invoices,
                               Systemsettingsservice settings, Bookingservice bookings,
-                              PayMongoservice payMongo, IHubContext<PaymentHub> hubContext)
+                              PayMongoservice payMongo, IHubContext<PaymentHub> hubContext,
+                              Notificationwriteservice notifications)
         {
+            _notifications = notifications;
             _db = db;
             _invoices = invoices;
             _settings = settings;
             _bookings = bookings;
             _payMongo = payMongo;
             _hubContext = hubContext;
+        }
+
+        /// <summary>
+        /// Resolves the booking and customer a payment belongs to, so a notification can
+        /// be routed to both audiences. Returns nulls if the chain is broken, in which
+        /// case the caller simply skips the notification.
+        /// </summary>
+        private async Task<(Guid? BookingId, Guid? CustomerId)> ResolveRecipientsAsync(Guid invoiceId)
+        {
+            var row = await _db.Invoices
+                .Where(i => i.Id == invoiceId)
+                .Select(i => new { i.BookingId, i.Booking.CustomerId })
+                .FirstOrDefaultAsync();
+            return row is null ? (null, null) : (row.BookingId, row.CustomerId);
         }
 
         /// <summary>
@@ -89,6 +106,13 @@ namespace System_ApiTest.Services
 
             _db.Payments.Add(payment);
             await _db.SaveChangesAsync();
+
+            // Staff-facing: a payment has been recorded and is waiting to be verified.
+            // Keyed on the payment id, so each payment notifies exactly once.
+            var (bookingId, _) = await ResolveRecipientsAsync(invoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.PaymentRecorded, bookingId, period: payment.Id.ToString("N"));
+
             return payment;
         }
 
@@ -170,6 +194,12 @@ namespace System_ApiTest.Services
 
             await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
             await tx.CommitAsync();
+
+            // Customer-facing, after the commit: their money is verified. This is the
+            // moment the polling worker could never observe.
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.PaymentConfirmed, bookingId, customerId, payment.Id.ToString("N"));
         }
 
         /// <summary>
@@ -214,6 +244,13 @@ namespace System_ApiTest.Services
 
             await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
             await tx.CommitAsync();
+
+            // A payment can be refunded more than once (partial refunds), so each
+            // refund is its own occurrence rather than a once-per-payment event.
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundApproved, bookingId, customerId,
+                Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>
@@ -246,6 +283,13 @@ namespace System_ApiTest.Services
             payment.RefundRequestedAt = DateTime.Now;
             payment.RefundRequestDecision = null;
             await _db.SaveChangesAsync();
+
+            // Staff-facing: someone is waiting on a decision. A denied request can be
+            // re-filed later, so this is an occurrence rather than a once-only event.
+            var (bookingId, _) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundRequested, bookingId,
+                period: Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>
@@ -338,6 +382,11 @@ namespace System_ApiTest.Services
             payment.RefundRequested = false;
             payment.RefundRequestDecision = decisionReason.Trim();
             await _db.SaveChangesAsync();
+
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundDenied, bookingId, customerId,
+                Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>

@@ -68,6 +68,7 @@ import {
   getSupportThread,
   replySupport,
   setSupportStatus,
+  attachmentUrl,
   SupportApiError,
   type SupportThread,
   type SupportThreadSummary,
@@ -102,6 +103,7 @@ import {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
 import {
@@ -511,9 +513,11 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [thread, setThread] = useState<SupportThread | null>(null);
   const [input, setInput] = useState('');
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const statusRef = useRef(statusFilter);
   useEffect(() => { statusRef.current = statusFilter; }, [statusFilter]);
@@ -563,21 +567,33 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
       void loadThreads();
       if (payload?.threadId && payload.threadId === selectedRef.current) void refreshOpen();
     });
-    conn.start().catch(() => {});
+    // A dead hub isn't fatal — the panel still works on manual refresh — but it
+    // must not fail silently, or staff sit waiting for messages that never push.
+    conn.start().catch(() => {
+      notify('info', 'Live chat updates are unavailable. Reopen a thread to refresh it manually.');
+    });
     return () => { void conn.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const clearAttachment = () => {
+    setAttachment(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
   const reply = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if (!text || sending || !selectedId) return;
+    // Words, a file, or both — matching the server's own rule.
+    if ((!text && !attachment) || sending || !selectedId) return;
     const session = readSession();
     if (!session) return;
+    const file = attachment;
     setInput('');
+    clearAttachment();
     setSending(true);
     try {
-      await replySupport(session.token, selectedId, text);
+      await replySupport(session.token, selectedId, text, file);
       await refreshOpen();
       await loadThreads();
     } catch (err) {
@@ -669,15 +685,70 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
                       fontFamily: 'var(--font-body)', fontSize: '0.8rem', lineHeight: 1.5, whiteSpace: 'pre-wrap',
                     }}>
                       {m.text}
+                      {m.attachmentUrl && (
+                        m.attachmentIsImage ? (
+                          <a href={attachmentUrl(m.attachmentUrl)!} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: m.text ? '0.45rem' : 0 }}>
+                            <img
+                              src={attachmentUrl(m.attachmentUrl)!}
+                              alt={m.attachmentFileName ?? 'Attachment'}
+                              style={{ display: 'block', maxWidth: '100%', maxHeight: 200, borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}
+                            />
+                          </a>
+                        ) : (
+                          <a
+                            href={attachmentUrl(m.attachmentUrl)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download={m.attachmentFileName ?? undefined}
+                            style={{ display: 'inline-block', marginTop: m.text ? '0.45rem' : 0, color: 'inherit', textDecoration: 'underline', fontSize: '0.75rem', wordBreak: 'break-all' }}
+                          >
+                            📎 {m.attachmentFileName ?? 'Download attachment'}
+                          </a>
+                        )
+                      )}
                       <div style={{ fontSize: '0.55rem', opacity: 0.65, marginTop: '0.25rem' }}>{when(m.createdAt)}</div>
                     </div>
                   );
                 })}
                 <div ref={endRef} />
               </div>
-              <form onSubmit={reply} style={{ display: 'flex', gap: '0.5rem', padding: '0.8rem 1rem', borderTop: '1px solid var(--border)' }}>
+              {attachment && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 1rem', borderTop: '1px solid var(--border)', background: 'var(--bg-subtle)', fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={attachment.name}>
+                    📎 {attachment.name}
+                  </span>
+                  <button type="button" onClick={clearAttachment} aria-label="Remove attachment" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: '0.72rem', padding: 0 }}>✕</button>
+                </div>
+              )}
+              <form onSubmit={reply} style={{ display: 'flex', gap: '0.5rem', padding: '0.8rem 1rem', borderTop: '1px solid var(--border)', alignItems: 'center' }}>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    // Mirror the server's cap so an oversized file fails instantly.
+                    if (file && file.size > 10 * 1024 * 1024) {
+                      notify('error', 'Attachment exceeds the maximum size of 10 MB.');
+                      clearAttachment();
+                      return;
+                    }
+                    setAttachment(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="adm-iconbtn"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={sending}
+                  aria-label="Attach an image or PDF"
+                  title="Attach an image or PDF (max 10 MB)"
+                >
+                  📎
+                </button>
                 <input className="adm-input" style={{ flex: 1 }} placeholder="Type a reply…" value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Reply" />
-                <button type="submit" className="adm-btn primary" disabled={sending || !input.trim()}>{sending ? '…' : 'Send'}</button>
+                <button type="submit" className="adm-btn primary" disabled={sending || (!input.trim() && !attachment)}>{sending ? '…' : 'Send'}</button>
               </form>
             </>
           )}
@@ -701,17 +772,20 @@ export function AdminDashboardPage() {
   const [reservations, setReservations] = useState<BookingResponse[]>([]);
   const [newBookingOpen, setNewBookingOpen] = useState(false);
 
+  const { toasts, notify, dismiss } = useToasts();
+
   const loadBookings = async () => {
     const session = readSession();
     if (!session?.token) return;
     try {
       const data = await getAllBookings(session.token);
       setReservations(data);
-    } catch (err: any) {
-      console.error(err);
+    } catch (err) {
+      // Used to console.error only, which left the Bookings tab looking simply
+      // empty when the fetch failed — indistinguishable from "no bookings".
+      notify('error', err instanceof BookingApiError ? err.message : 'Could not load bookings. Please try again.');
     }
   };
-  const { toasts, notify, dismiss } = useToasts();
 
   /* testimonials — live from /api/Testimonials (Owner/Assistant moderation queue) */
   const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
@@ -813,6 +887,10 @@ export function AdminDashboardPage() {
       if (action === 'confirm') {
         await confirmPayment(session.token, paymentId);
         notify('success', 'Payment confirmed — invoice and deposit updated.');
+        // Confirming is where a manually-recorded (cash/transfer) payment actually
+        // becomes real — there's no gateway redirect for those, so land the admin on
+        // Payments to see the updated ladder. No-op when they're already there.
+        openTab('payments');
       } else if (action === 'reject') {
         await rejectPayment(session.token, paymentId);
         notify('success', 'Payment rejected.');
@@ -1704,6 +1782,40 @@ export function AdminDashboardPage() {
     }
   };
 
+  /**
+   * Clicking a notification marks it read AND navigates to what it's about.
+   *
+   * The admin dashboard has no per-booking detail modal (that's the customer side),
+   * so a booking notification lands on the Bookings tab filtered down to that one
+   * booking — the closest thing to "open this booking" the existing UI supports,
+   * built from machinery that's already there rather than a new modal.
+   */
+  const openNotification = (n: AppNotification) => {
+    void readNotification(n);
+    setBellOpen(false);
+
+    switch (notificationTarget(n)) {
+      case 'booking':
+        setResFilter('all');   // the booking may not match the current status filter
+        setResSearch(n.bookingName ?? '');
+        openTab('bookings');
+        break;
+      case 'payment':
+        // The admin list expands by payment id, so targetId drops straight in.
+        if (n.targetId) setExpandedPayment(n.targetId);
+        setPaymentFilter('all');
+        openTab('payments');
+        break;
+      case 'chat':
+        setPlaceholderName('Chat Support');
+        openTab('placeholder');
+        break;
+      case 'none':
+      default:
+        break;
+    }
+  };
+
   const readNotification = async (n: AppNotification) => {
     if (n.readAt) return;
     const session = readSession();
@@ -1817,6 +1929,27 @@ export function AdminDashboardPage() {
      rather than per tab. */
   useEffect(() => {
     void loadNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Live badge: the backend broadcasts "NotificationCreated" on /hubs/payment the
+     moment any notification is written. The signal carries no payload on purpose —
+     we refetch, so the server re-applies its own role scoping and we can never
+     display a notification that isn't ours. Same hub the support panel and the
+     customer dashboard already use; no new transport. */
+  useEffect(() => {
+    const conn = new HubConnectionBuilder()
+      .withUrl(`${API_BASE_URL}/hubs/payment`)
+      .withAutomaticReconnect()
+      .build();
+
+    conn.on('NotificationCreated', () => { void loadNotifications(); });
+
+    conn.start().catch(() => {
+      notify('info', 'Live notifications are unavailable. Open the bell to refresh manually.');
+    });
+
+    return () => { void conn.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2505,10 +2638,12 @@ export function AdminDashboardPage() {
                         <button
                           key={n.id}
                           type="button"
-                          onClick={() => void readNotification(n)}
+                          onClick={() => openNotification(n)}
                           style={{
                             display: 'block', width: '100%', textAlign: 'left', border: 'none',
-                            borderBottom: '1px solid var(--border)', cursor: n.readAt ? 'default' : 'pointer',
+                            // Read rows stay clickable now that clicking navigates.
+                            cursor: notificationTarget(n) === 'none' && n.readAt ? 'default' : 'pointer',
+                            borderBottom: '1px solid var(--border)',
                             padding: '0.8rem 1rem',
                             background: n.readAt ? 'transparent' : 'var(--primary-muted)',
                           }}

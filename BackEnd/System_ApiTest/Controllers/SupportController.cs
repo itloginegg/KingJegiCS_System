@@ -8,6 +8,7 @@ using System_ApiTest.Data;
 using System_ApiTest.DTOs;
 using System_ApiTest.Hubs;
 using System_ApiTest.Models;
+using System_ApiTest.Services;
 
 namespace System_ApiTest.Controllers
 {
@@ -24,12 +25,40 @@ namespace System_ApiTest.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IHubContext<PaymentHub> _hub;
+        private readonly Notificationwriteservice _notifications;
+        private readonly IWebHostEnvironment _env;
 
-        public SupportController(AppDbContext db, IHubContext<PaymentHub> hub)
+        public SupportController(AppDbContext db, IHubContext<PaymentHub> hub,
+                                 Notificationwriteservice notifications, IWebHostEnvironment env)
         {
             _db = db;
             _hub = hub;
+            _notifications = notifications;
+            _env = env;
         }
+
+        /// <summary>
+        /// Validates and stores an optional attachment. Returns the failure message when
+        /// the file is rejected, so the caller can 400 before anything is persisted —
+        /// never leaving a message row pointing at a file that was never written.
+        /// </summary>
+        private async Task<(bool Ok, string? Error, string? Url, string? Name, string? ContentType)>
+            TryStoreAttachmentAsync(IFormFile? file)
+        {
+            var (isValid, error) = FileUploadHelper.ValidateAttachment(file);
+            if (!isValid)
+                return (false, error, null, null, null);
+
+            if (file is null || file.Length == 0)
+                return (true, null, null, null, null);
+
+            var url = await FileUploadHelper.SaveAttachmentAsync(file, _env, "support");
+            return (true, null, url, FileUploadHelper.SafeDisplayName(file.FileName), file.ContentType);
+        }
+
+        /// <summary>A message must carry words, a file, or both — but not nothing.</summary>
+        private static bool IsEmptyMessage(string? text, IFormFile? attachment) =>
+            string.IsNullOrWhiteSpace(text) && (attachment is null || attachment.Length == 0);
 
         // ---------------- Customer ----------------
 
@@ -56,11 +85,17 @@ namespace System_ApiTest.Controllers
         /// <summary>Posts a message from the customer to their own thread (reopening it if closed).</summary>
         [Authorize(Roles = "Customer")]
         [HttpPost("messages")]
-        public async Task<IActionResult> SendAsCustomer([FromBody] SupportSendDto dto)
+        public async Task<IActionResult> SendAsCustomer([FromForm] SupportSendDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
             var me = CurrentUserId();
             if (me is null) return Unauthorized();
+
+            if (IsEmptyMessage(dto.Text, dto.Attachment))
+                return BadRequest(new { message = "Send a message, an attachment, or both." });
+
+            var (ok, error, url, fileName, contentType) = await TryStoreAttachmentAsync(dto.Attachment);
+            if (!ok) return BadRequest(new { message = error });
 
             var thread = await GetOrCreateThreadAsync(me.Value);
             var msg = new Supportmessage
@@ -68,12 +103,21 @@ namespace System_ApiTest.Controllers
                 ThreadId = thread.Id,
                 Sender = SupportSender.Customer,
                 SenderId = me.Value,
-                Text = dto.Text.Trim(),
+                Text = dto.Text?.Trim() ?? string.Empty,
+                AttachmentUrl = url,
+                AttachmentFileName = fileName,
+                AttachmentContentType = contentType,
             };
             _db.SupportMessages.Add(msg);
             thread.LastMessageAt = msg.CreatedAt;
             if (thread.Status == SupportThreadStatus.Closed) thread.Status = SupportThreadStatus.Open;
             await _db.SaveChangesAsync();
+
+            // Notify the side that DIDN'T send. A chat message belongs to a customer but
+            // to no booking, which is why Sentnotification carries CustomerId directly.
+            await _notifications.WriteAsync(
+                NotificationKind.SupportMessageFromCustomer,
+                period: Notificationwriteservice.Occurrence(msg.Id));
 
             await BroadcastAsync(thread, msg);
             return Ok(ToMsgDto(msg));
@@ -101,7 +145,7 @@ namespace System_ApiTest.Controllers
                     m.ThreadId == t.Id && m.Sender == SupportSender.Customer && m.ReadByAdminAt == null);
                 result.Add(new SupportThreadSummaryDto(
                     t.Id, t.CustomerId, t.Customer.FullName, t.Customer.Email, t.Status.ToString(),
-                    t.LastMessageAt, last is null ? null : Truncate(last.Text, 80), unread));
+                    t.LastMessageAt, last is null ? null : PreviewOf(last), unread));
             }
             return Ok(result);
         }
@@ -126,23 +170,37 @@ namespace System_ApiTest.Controllers
         /// <summary>Posts a staff reply to a thread.</summary>
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost("threads/{id:guid}/messages")]
-        public async Task<IActionResult> SendAsAdmin(Guid id, [FromBody] SupportSendDto dto)
+        public async Task<IActionResult> SendAsAdmin(Guid id, [FromForm] SupportSendDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
             var thread = await _db.SupportThreads.FindAsync(id);
             if (thread is null) return NotFound();
 
+            if (IsEmptyMessage(dto.Text, dto.Attachment))
+                return BadRequest(new { message = "Send a message, an attachment, or both." });
+
+            var (ok, error, url, fileName, contentType) = await TryStoreAttachmentAsync(dto.Attachment);
+            if (!ok) return BadRequest(new { message = error });
+
             var msg = new Supportmessage
             {
                 ThreadId = id,
                 Sender = SupportSender.Admin,
                 SenderId = CurrentUserId() ?? Guid.Empty,
-                Text = dto.Text.Trim(),
+                Text = dto.Text?.Trim() ?? string.Empty,
+                AttachmentUrl = url,
+                AttachmentFileName = fileName,
+                AttachmentContentType = contentType,
             };
             _db.SupportMessages.Add(msg);
             thread.LastMessageAt = msg.CreatedAt;
             await _db.SaveChangesAsync();
+
+            await _notifications.WriteAsync(
+                NotificationKind.SupportMessageFromStaff,
+                customerId: thread.CustomerId,
+                period: Notificationwriteservice.Occurrence(msg.Id));
 
             await BroadcastAsync(thread, msg);
             return Ok(ToMsgDto(msg));
@@ -204,7 +262,20 @@ namespace System_ApiTest.Controllers
                 msgs.Select(ToMsgDto).ToList());
 
         private static SupportMessageDto ToMsgDto(Supportmessage m) =>
-            new(m.Id, m.Sender.ToString(), m.Text, m.CreatedAt);
+            new(m.Id, m.Sender.ToString(), m.Text, m.CreatedAt,
+                m.AttachmentUrl, m.AttachmentFileName, m.AttachmentContentType,
+                FileUploadHelper.IsImage(m.AttachmentFileName ?? m.AttachmentUrl));
+
+        /// <summary>
+        /// Thread-list preview text. An attachment-only message has no words to preview,
+        /// so say what it is instead of showing a blank row.
+        /// </summary>
+        private static string PreviewOf(Supportmessage m)
+        {
+            if (!string.IsNullOrWhiteSpace(m.Text)) return Truncate(m.Text, 80);
+            if (m.AttachmentFileName is not null) return $"📎 {Truncate(m.AttachmentFileName, 60)}";
+            return string.Empty;
+        }
 
         private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
 

@@ -28,9 +28,27 @@ namespace System_ApiTest.Models
         /// <summary>The customer or admin id that authored this message.</summary>
         public Guid SenderId { get; set; }
 
-        [Required]
+        /// <summary>
+        /// The message body. Not [Required] at the model level any more: a message may
+        /// legitimately be attachment-only (someone sends a screenshot with no words).
+        /// The controller enforces that at least one of Text or Attachment is present.
+        /// </summary>
         [MaxLength(4000)]
         public string Text { get; set; } = string.Empty;
+
+        // ---- Attachment (optional; a message may be text-only, file-only, or both) ----
+
+        /// <summary>Relative URL under wwwroot, e.g. "/uploads/support/support_a1b2….pdf".</summary>
+        [MaxLength(400)]
+        public string? AttachmentUrl { get; set; }
+
+        /// <summary>The uploader's own filename, for display and the download link.</summary>
+        [MaxLength(260)]
+        public string? AttachmentFileName { get; set; }
+
+        /// <summary>MIME type as uploaded — lets the client decide preview vs download.</summary>
+        [MaxLength(100)]
+        public string? AttachmentContentType { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

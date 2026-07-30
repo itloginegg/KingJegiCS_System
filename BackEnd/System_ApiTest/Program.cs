@@ -75,6 +75,7 @@ builder.Services.AddScoped<Auditlogservice>();
 builder.Services.AddScoped<Suggestionservice>();
 builder.Services.AddScoped<Testimonialservice>();
 builder.Services.AddScoped<Notificationfeedservice>();
+builder.Services.AddScoped<Notificationwriteservice>();
 builder.Services.AddScoped<Reportservice>();
 builder.Services.AddMemoryCache();   // backs Reportservice's AI sales-summary cache
 builder.Services.AddHostedService<DenylistCleanupWorker>();

@@ -10,11 +10,14 @@ namespace System_ApiTest.Services
     {
         private readonly AppDbContext _db;
         private readonly Bookingservice _bookingService;
+        private readonly Notificationwriteservice _notifications;
 
-        public Rentalservice(AppDbContext db, Bookingservice bookingService)
+        public Rentalservice(AppDbContext db, Bookingservice bookingService,
+                             Notificationwriteservice notifications)
         {
             _db = db;
             _bookingService = bookingService;
+            _notifications = notifications;
         }
 
         /// <summary>
@@ -96,6 +99,12 @@ namespace System_ApiTest.Services
 
             // The booking's total changed — recompute (no-op if already frozen).
             await _bookingService.RecomputeTotalAsync(bookingId);
+
+            // Staff-facing: a rental line was added, which changes what has to be
+            // pulled from stock and delivered.
+            await _notifications.WriteAsync(
+                NotificationKind.BookingItemAdded, bookingId,
+                period: Notificationwriteservice.Occurrence(rental.Id));
 
             return rental;
         }

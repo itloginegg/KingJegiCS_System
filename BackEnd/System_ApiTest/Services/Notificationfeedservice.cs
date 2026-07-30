@@ -25,30 +25,43 @@ namespace System_ApiTest.Services
 
         public Notificationfeedservice(AppDbContext db) => _db = db;
 
-        /// <summary>Kinds the worker sends to the customer.</summary>
+        /// <summary>Kinds addressed to the customer.</summary>
         private static readonly NotificationKind[] CustomerKinds =
         {
+            // Written by the polling worker
             NotificationKind.PaymentDueSoon,
             NotificationKind.PaymentOverdue,
             NotificationKind.BookingConfirmed,
-            NotificationKind.BookingCancelled
+            NotificationKind.BookingCancelled,
+            // Written inline at the moment they happen (Notificationwriteservice)
+            NotificationKind.PaymentConfirmed,
+            NotificationKind.RefundApproved,
+            NotificationKind.RefundDenied,
+            NotificationKind.SupportMessageFromStaff
         };
 
-        /// <summary>Kinds the worker sends to the owner.</summary>
+        /// <summary>Kinds addressed to the Owner/Assistant shared inbox.</summary>
         private static readonly NotificationKind[] StaffKinds =
         {
+            // Written by the polling worker
             NotificationKind.PaymentOverdueDigest,
-            NotificationKind.RentalLowStock
+            NotificationKind.RentalLowStock,
+            // Written inline at the moment they happen (Notificationwriteservice)
+            NotificationKind.BookingCreated,
+            NotificationKind.BookingCompleted,
+            NotificationKind.BookingCancelledStaff,
+            NotificationKind.BookingCancellationRequested,
+            NotificationKind.PaymentRecorded,
+            NotificationKind.RefundRequested,
+            NotificationKind.BookingItemAdded,
+            NotificationKind.SupportMessageFromCustomer
         };
 
         /// <summary>The signed-in customer's feed, newest first.</summary>
         public async Task<NotificationFeedDto> GetForCustomerAsync(
             Guid customerId, int take, CancellationToken ct = default)
         {
-            var query = _db.SentNotifications.AsNoTracking()
-                .Where(n => CustomerKinds.Contains(n.Kind)
-                            && n.BookingId != null
-                            && n.Booking!.CustomerId == customerId);
+            var query = _db.SentNotifications.AsNoTracking().Where(OwnedBy(customerId));
 
             return await BuildAsync(query, take, ct);
         }
@@ -98,10 +111,20 @@ namespace System_ApiTest.Services
         /// </summary>
         private IQueryable<Sentnotification> Scoped(Guid? customerId) =>
             customerId is Guid me
-                ? _db.SentNotifications.Where(n => CustomerKinds.Contains(n.Kind)
-                                                   && n.BookingId != null
-                                                   && n.Booking!.CustomerId == me)
+                ? _db.SentNotifications.Where(OwnedBy(me))
                 : _db.SentNotifications.Where(n => StaffKinds.Contains(n.Kind));
+
+        /// <summary>
+        /// A customer owns a notification either through the booking it concerns (how
+        /// every worker-written row is addressed) or through CustomerId directly (how
+        /// rows with no booking — support-chat replies — are addressed). One predicate,
+        /// shared by the read and the mark-read paths, so they can never disagree about
+        /// what belongs to whom.
+        /// </summary>
+        private static System.Linq.Expressions.Expression<Func<Sentnotification, bool>> OwnedBy(Guid customerId) =>
+            n => CustomerKinds.Contains(n.Kind)
+                 && ((n.BookingId != null && n.Booking!.CustomerId == customerId)
+                     || n.CustomerId == customerId);
 
         private async Task<NotificationFeedDto> BuildAsync(
             IQueryable<Sentnotification> query, int take, CancellationToken ct)
@@ -131,20 +154,65 @@ namespace System_ApiTest.Services
             var itemNames = await ResolveRentalNamesAsync(
                 rows.Where(r => r.Kind == NotificationKind.RentalLowStock).Select(r => r.Period), ct);
 
+            // Money rows key their Period on the payment id, so the amount can be shown
+            // without the ledger having to store (and risk staling) a copy of it.
+            var amounts = await ResolvePaymentAmountsAsync(
+                rows.Where(r => PaymentKeyedKinds.Contains(r.Kind)).Select(r => r.Period), ct);
+
             var items = rows.Select(r =>
             {
-                var (title, body) = Describe(r.Kind, r.Period, r.BookingName, r.EventDate, itemNames);
+                var (title, body) = Describe(r.Kind, r.Period, r.BookingName, r.EventDate, itemNames, amounts);
                 return new NotificationResponseDto(
-                    r.Id, r.Kind.ToString(), title, body, r.BookingId, r.BookingName, r.SentAt, r.ReadAt);
+                    r.Id, r.Kind.ToString(), title, body, r.BookingId, r.BookingName, r.SentAt, r.ReadAt,
+                    ParseLeadingId(r.Period));
             }).ToList();
 
             return new NotificationFeedDto(unread, items);
         }
 
-        private async Task<Dictionary<Guid, string>> ResolveRentalNamesAsync(
+        /// <summary>Kinds whose Period begins with a payment id.</summary>
+        private static readonly NotificationKind[] PaymentKeyedKinds =
+        {
+            NotificationKind.PaymentRecorded,
+            NotificationKind.PaymentConfirmed,
+            NotificationKind.RefundRequested,
+            NotificationKind.RefundApproved,
+            NotificationKind.RefundDenied
+        };
+
+        /// <summary>
+        /// Amounts for payment-keyed rows, read live rather than copied into the ledger —
+        /// a refund can change what a payment is worth after the notification was written,
+        /// and the feed should show what's true now.
+        /// </summary>
+        private async Task<Dictionary<Guid, (decimal Amount, decimal Refunded)>> ResolvePaymentAmountsAsync(
             IEnumerable<string> periods, CancellationToken ct)
         {
-            var ids = periods
+            var ids = ParseLeadingIds(periods);
+            if (ids.Count == 0) return new Dictionary<Guid, (decimal, decimal)>();
+
+            return await _db.Payments.AsNoTracking()
+                .Where(p => ids.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => (p.AmountPaid, p.RefundedAmount), ct);
+        }
+
+        /// <summary>
+        /// The entity id a Period points at, or null when it doesn't carry one.
+        ///
+        /// Every instantaneous kind keys its Period as "{id:N}" or "{id:N}:{suffix}",
+        /// so one rule covers all of them. Kinds whose Period is a date (the payment
+        /// reminders, the overdue digest) or empty (the booking kinds) simply fail to
+        /// parse and return null — which is correct: those route on BookingId.
+        /// </summary>
+        private static Guid? ParseLeadingId(string period)
+        {
+            var head = period.Split(':')[0];
+            return Guid.TryParse(head, out var id) ? id : null;
+        }
+
+        /// <summary>Pulls the leading GUID out of each "{id:N}[:suffix]" Period value.</summary>
+        private static List<Guid> ParseLeadingIds(IEnumerable<string> periods) =>
+            periods
                 .Select(p => p.Split(':')[0])
                 .Select(s => Guid.TryParse(s, out var id) ? id : (Guid?)null)
                 .Where(id => id is not null)
@@ -152,6 +220,10 @@ namespace System_ApiTest.Services
                 .Distinct()
                 .ToList();
 
+        private async Task<Dictionary<Guid, string>> ResolveRentalNamesAsync(
+            IEnumerable<string> periods, CancellationToken ct)
+        {
+            var ids = ParseLeadingIds(periods);
             if (ids.Count == 0) return new Dictionary<Guid, string>();
 
             return await _db.RentalItems.AsNoTracking()
@@ -167,14 +239,71 @@ namespace System_ApiTest.Services
         /// </summary>
         private static (string Title, string Body) Describe(
             NotificationKind kind, string period, string? bookingName, DateOnly? eventDate,
-            IReadOnlyDictionary<Guid, string> rentalNames)
+            IReadOnlyDictionary<Guid, string> rentalNames,
+            IReadOnlyDictionary<Guid, (decimal Amount, decimal Refunded)> amounts)
         {
             var name = string.IsNullOrWhiteSpace(bookingName) ? "your booking" : $"\"{bookingName}\"";
             var when = eventDate is DateOnly d ? d.ToString("MMMM d, yyyy") : "the scheduled date";
             var due = DateOnly.TryParse(period, out var dueDate) ? dueDate.ToString("MMMM d, yyyy") : null;
 
+            // Staff-facing copy says "the booking"; customer-facing says "your booking".
+            var theBooking = string.IsNullOrWhiteSpace(bookingName) ? "a booking" : $"\"{bookingName}\"";
+            var money = PaymentAmount(period, amounts);
+            var paid = money is decimal m ? $"₱{m:N2}" : "a payment";
+
             return kind switch
             {
+                // ---- Instantaneous, staff-facing ----
+                NotificationKind.BookingCreated => (
+                    "New booking",
+                    $"{theBooking} was created{(eventDate is null ? "" : $" for {when}")}. Review it in the Bookings tab."),
+
+                NotificationKind.BookingCompleted => (
+                    "Booking completed",
+                    $"{theBooking} was marked completed."),
+
+                NotificationKind.BookingCancelledStaff => (
+                    "Booking cancelled",
+                    $"{theBooking} for {when} was cancelled."),
+
+                NotificationKind.BookingCancellationRequested => (
+                    "Cancellation requested",
+                    $"The customer asked to cancel {theBooking} for {when}. Review it in the Bookings tab."),
+
+                NotificationKind.PaymentRecorded => (
+                    "Payment recorded",
+                    $"{paid} was recorded against {theBooking} and is awaiting verification."),
+
+                NotificationKind.RefundRequested => (
+                    "Refund requested",
+                    $"A refund was requested on {paid} for {theBooking}. Review it in the Payments tab."),
+
+                NotificationKind.BookingItemAdded => (
+                    "Item added to a booking",
+                    $"A new line was added to {theBooking}. Check the order before it's packed."),
+
+                NotificationKind.SupportMessageFromCustomer => (
+                    "New support message",
+                    "A customer sent a message in support chat."),
+
+                // ---- Instantaneous, customer-facing ----
+                NotificationKind.PaymentConfirmed => (
+                    "Payment confirmed",
+                    $"We've verified {paid} for {name}. Thank you!"),
+
+                NotificationKind.RefundApproved => (
+                    "Refund issued",
+                    RefundIssuedBody(period, amounts, name)),
+
+                NotificationKind.RefundDenied => (
+                    "Refund request denied",
+                    $"Your refund request on {paid} for {name} was declined. See the Payments tab for the reason."),
+
+                NotificationKind.SupportMessageFromStaff => (
+                    "Reply from King Jegi",
+                    "Our team replied in support chat. Open the chat bubble to read it."),
+
+                // ---- Polling worker's kinds ----
                 NotificationKind.BookingConfirmed => (
                     "Booking confirmed",
                     $"{name} for {when} is confirmed."),
@@ -207,6 +336,30 @@ namespace System_ApiTest.Services
 
                 _ => (kind.ToString(), "See the Bookings tab for details.")
             };
+        }
+
+        /// <summary>The gross amount of the payment a Period points at, if it resolved.</summary>
+        private static decimal? PaymentAmount(
+            string period, IReadOnlyDictionary<Guid, (decimal Amount, decimal Refunded)> amounts)
+        {
+            var head = period.Split(':')[0];
+            return Guid.TryParse(head, out var id) && amounts.TryGetValue(id, out var row)
+                ? row.Amount
+                : null;
+        }
+
+        /// <summary>
+        /// Refund copy quotes the amount REFUNDED, not the payment's original value —
+        /// those differ on a partial refund, and the refunded figure is the one the
+        /// customer is waiting to see.
+        /// </summary>
+        private static string RefundIssuedBody(
+            string period, IReadOnlyDictionary<Guid, (decimal Amount, decimal Refunded)> amounts, string name)
+        {
+            var head = period.Split(':')[0];
+            if (Guid.TryParse(head, out var id) && amounts.TryGetValue(id, out var row) && row.Refunded > 0m)
+                return $"A refund of ₱{row.Refunded:N2} was issued on your payment for {name}.";
+            return $"A refund was issued on your payment for {name}.";
         }
 
         private static string DescribeLowStock(string period, IReadOnlyDictionary<Guid, string> rentalNames)

@@ -30,11 +30,14 @@ namespace System_ApiTest.Services
         private readonly AppDbContext _db;
         private readonly Packageservice _packages;
         private readonly Invoiceservice _invoices;
-        public Bookingservice(AppDbContext db, Packageservice packages, Invoiceservice invoices)
+        private readonly Notificationwriteservice _notifications;
+        public Bookingservice(AppDbContext db, Packageservice packages, Invoiceservice invoices,
+                              Notificationwriteservice notifications)
         {
             _db = db;
             _packages = packages;
             _invoices = invoices;
+            _notifications = notifications;
         }
 
         // TODO: source this from System Settings (default_max_capacity) once that entity exists.
@@ -166,6 +169,11 @@ namespace System_ApiTest.Services
 
             // Fold in the package price immediately (full-service only; deliveries have none).
             await RecomputeTotalAsync(booking.Id);
+
+            // Staff notification, after the commit so it only fires for a booking that
+            // actually exists. Once per booking, so the Period is empty.
+            await _notifications.WriteAsync(NotificationKind.BookingCreated, booking.Id);
+
             return booking;
         }
 
@@ -530,6 +538,10 @@ namespace System_ApiTest.Services
             booking.Status = BookingStatus.Cancelled;
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            // Staff copy. The customer's BookingCancelled is written separately by the
+            // NotificationWorker when it emails them; this is the one staff can see.
+            await _notifications.WriteAsync(NotificationKind.BookingCancelledStaff, bookingId);
         }
 
         /// <summary>
@@ -557,6 +569,9 @@ namespace System_ApiTest.Services
             booking.CancellationRequestedAt = DateTime.Now;
             booking.CancellationRequestReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
             await _db.SaveChangesAsync();
+
+            // Staff must decide on this — the booking itself hasn't changed status.
+            await _notifications.WriteAsync(NotificationKind.BookingCancellationRequested, bookingId);
         }
 
         /// <summary>
@@ -590,6 +605,8 @@ namespace System_ApiTest.Services
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            await _notifications.WriteAsync(NotificationKind.BookingCompleted, bookingId);
         }
 
         /// <summary>
@@ -857,6 +874,7 @@ namespace System_ApiTest.Services
             _db.BookingMenuItems.Add(link);
             await _db.SaveChangesAsync();
             await RecomputeTotalAsync(bookingId);
+            await NotifyItemAddedAsync(bookingId, itemId);
             return link;
         }
 
@@ -888,7 +906,28 @@ namespace System_ApiTest.Services
             _db.BookingMenuTrays.Add(link);
             await _db.SaveChangesAsync();
             await RecomputeTotalAsync(bookingId);
+            await NotifyItemAddedAsync(bookingId, trayId);
             return link;
+        }
+
+        /// <summary>
+        /// Staff notification for a line added to a FOOD DELIVERY order — those are the
+        /// ones that need picking and packing, so staff want to know as items land.
+        /// Full-service bookings are assembled over many edits during planning; notifying
+        /// on each one would be noise, so they're deliberately excluded.
+        /// </summary>
+        private async Task NotifyItemAddedAsync(Guid bookingId, Guid lineId)
+        {
+            var isDelivery = await _db.Bookings
+                .Where(b => b.Id == bookingId)
+                .Select(b => b.BookingType == BookingType.FoodDelivery)
+                .FirstOrDefaultAsync();
+            if (!isDelivery)
+                return;
+
+            await _notifications.WriteAsync(
+                NotificationKind.BookingItemAdded, bookingId,
+                period: Notificationwriteservice.Occurrence(lineId));
         }
 
         /// <summary>

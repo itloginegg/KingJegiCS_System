@@ -2155,7 +2155,7 @@ export function LandingPage() {
             </div>
  
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'rgba(255,255,255,0.35)', marginTop: '1.5rem', letterSpacing: '0.1em' }}>
-              No payment required to reserve · Confirmation within 24 hours
+              5% reservation fee · Confirmation within 24 hours
             </p>
           </div>
         </section>

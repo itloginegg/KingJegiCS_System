@@ -33,12 +33,15 @@ import {
 } from '../api/bookingApi';
 import { readSession } from '../lib/tokenStorage';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
+import { PENDING_PAYMENT_KEY } from './PaymentReturnPage';
 import {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
+import { OPEN_SUPPORT_CHAT_EVENT } from '../components/landing/ChatWidget';
 import {
   getMyTestimonials,
   submitTestimonial,
@@ -176,6 +179,7 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
   const [detail, setDetail] = useState<BookingDetailDto | null>(null);
   const [selections, setSelections] = useState<BookingPackageSelectionDto[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   /* A Draft (from the wizard, a materialized budget plan, or an admin walk-in) can be
@@ -199,6 +203,10 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
     const fetchDetail = async () => {
       const session = readSession();
       if (!session) {
+        // Previously this returned silently, leaving a permanently empty modal.
+        const message = 'You are signed out. Please sign in again to see the full booking.';
+        setDetailError(message);
+        notify?.('error', message);
         setLoading(false);
         return;
       }
@@ -210,7 +218,13 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
         setDetail(dData);
         setSelections(sData);
       } catch (err) {
-        console.error('Failed to fetch details:', err);
+        // A failed fetch used to console.error only, so the modal just sat blank
+        // with no explanation. Surface it the way every other call site does.
+        const message = err instanceof BookingApiError
+          ? err.message
+          : 'Could not load the full details for this booking. Please try again.';
+        setDetailError(message);
+        notify?.('error', message);
       } finally {
         setLoading(false);
       }
@@ -246,6 +260,16 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
 
           {loading ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>Loading additional details...</div>
+          ) : detailError ? (
+            <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'var(--font-body)' }}>
+              <div style={{ fontSize: '1.3rem', marginBottom: '0.6rem' }}>⚠️</div>
+              <p style={{ fontSize: '0.84rem', fontWeight: 300, color: 'var(--danger)', lineHeight: 1.6, margin: '0 0 1.2rem' }}>
+                {detailError}
+              </p>
+              <p style={{ fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                The summary above is still accurate — only the itemised breakdown failed to load.
+              </p>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
@@ -555,6 +579,19 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
     try {
       const data = await checkout(session.token, { invoiceId: invoice.id, amount });
       if (data.checkoutUrl) {
+        // Remember what we're paying for. PayMongo's SuccessUrl is a static, configured
+        // URL with no per-payment context, so /payment/success has no other way to know
+        // which payment to wait on. sessionStorage, not localStorage: this is scoped to
+        // the tab making the payment and shouldn't outlive it.
+        try {
+          sessionStorage.setItem(PENDING_PAYMENT_KEY, JSON.stringify({
+            invoiceId: invoice.id,
+            paymentId: data.payment?.id ?? null,
+          }));
+        } catch {
+          // Storage blocked (private mode) — the return page degrades to a generic
+          // "check your payments" message rather than a false confirmation.
+        }
         window.location.href = data.checkoutUrl;
       } else {
         setCheckoutError('Failed to initiate checkout.');
@@ -717,7 +754,13 @@ export function CustomerDashboardPage() {
     email: authUser?.email ?? 'maria.santos@example.com',
   };
 
-  const [tab, setTab] = useState<Tab>('overview');
+  /* Opening tab may be chosen from outside — /payment/success routes here as
+     ?tab=payments after a confirmed gateway payment. Anything unrecognised falls
+     back to the normal overview landing. */
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    return requested === 'payments' || requested === 'bookings' ? requested : 'overview';
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const { toasts, notify, dismiss } = useToasts();
@@ -868,24 +911,75 @@ export function CustomerDashboardPage() {
     /* Slice D: the notification worker pushes a nudge when it seeds an assistant
        conversation. Payload is opaque ids only — filter to this customer, toast,
        and badge the Messages tab (unless it's already open). */
+    /* Live badge: fired whenever any notification is written. Payload-free by
+       design — we refetch so the server re-applies its own ownership scoping. */
+    conn.on('NotificationCreated', () => {
+      void loadNotifications();
+    });
+
     conn.on('AssistantNudge', (payload: { customerId?: string; conversationId?: string }) => {
       const myId = readSession()?.user.id;
       if (!myId || payload?.customerId !== myId) return;
       notify('info', 'Your assistant has a new message — open the chat bubble to see it.');
     });
 
-    conn.start().catch((err) => console.error('SignalR error:', err));
+    // A dead hub isn't fatal — the dashboard still loads on refresh — but a
+    // console-only failure left customers waiting on payment updates that would
+    // never arrive, with nothing on screen to say so.
+    conn.start().catch(() => {
+      notify('info', 'Live payment updates are unavailable. Refresh the page to see the latest status.');
+    });
 
     return () => {
       void conn.stop();
     };
-  }, [fetchDashboard, notify]);
+  }, [fetchDashboard, notify, loadNotifications]);
 
 
   const [detailBooking, setDetailBooking] = useState<BookingResponseDto | null>(null);
     const [invoiceOrder, setInvoiceOrder] = useState<any>(null);
   const [paymentScheduleOrder, setPaymentScheduleOrder] = useState<any>(null);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+
+  /**
+   * Clicking a notification marks it read AND takes you to what it's about. Declared
+   * here rather than beside readNotification because it needs the navigation state
+   * (detailBooking, expandedOrder) that's set up just above.
+   *
+   * Marking read is fire-and-forget: navigation shouldn't wait on it, and a failed
+   * mark-read is reconciled by the next poll.
+   */
+  const openNotification = (n: AppNotification) => {
+    void readNotification(n);
+    setBellOpen(false);
+
+    switch (notificationTarget(n)) {
+      case 'booking': {
+        setTab('bookings');
+        // The booking is normally already loaded; if it isn't (a very old
+        // notification, or one that arrived before the last fetch), land on the tab
+        // rather than opening an empty modal.
+        const booking = bookings.find((b) => b.id === n.bookingId);
+        if (booking) setDetailBooking(booking);
+        break;
+      }
+      case 'payment': {
+        setTab('payments');
+        // targetId is the PAYMENT; the Payments tab expands by INVOICE, so hop
+        // through the payment to find which invoice card to open.
+        const payment = n.targetId ? payments.find((p) => p.id === n.targetId) : null;
+        if (payment) setExpandedOrder(payment.invoiceId);
+        break;
+      }
+      case 'chat':
+        // ChatWidget is mounted globally, outside this page's tree.
+        window.dispatchEvent(new Event(OPEN_SUPPORT_CHAT_EVENT));
+        break;
+      case 'none':
+      default:
+        break;
+    }
+  };
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
 
   /* Arriving from Plan-by-Budget's materialize: open the new Draft so the Submit
@@ -1497,10 +1591,13 @@ export function CustomerDashboardPage() {
                         <button
                           key={n.id}
                           type="button"
-                          onClick={() => void readNotification(n)}
+                          onClick={() => openNotification(n)}
                           style={{
                             display: 'block', width: '100%', textAlign: 'left', border: 'none',
-                            borderBottom: '1px solid var(--border)', cursor: n.readAt ? 'default' : 'pointer',
+                            // Read rows are still clickable now that clicking navigates —
+                            // only rows with nowhere to go show the default cursor.
+                            cursor: notificationTarget(n) === 'none' && n.readAt ? 'default' : 'pointer',
+                            borderBottom: '1px solid var(--border)',
                             padding: '0.8rem 1rem',
                             background: n.readAt ? 'transparent' : 'var(--primary-muted)',
                           }}

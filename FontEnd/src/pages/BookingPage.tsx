@@ -274,12 +274,34 @@ export function BookingPage() {
   const grandTotal = packagePrice + menuItemTotal + menuTrayTotal + rentalTotal + serviceTotal;
 
   /* ── quantity helpers ── */
+
+  /**
+   * Delta setter for the +/- buttons. The snap-to-baseQty behaviour is deliberate:
+   * the first "+" jumps straight to the sensible serving quantity rather than 1, and
+   * a "−" from exactly that quantity clears the line entirely.
+   */
   const setQty = (setter: React.Dispatch<React.SetStateAction<Record<string, number>>>, id: string, delta: number, baseQty: number = 1) => {
     setter(prev => {
       const current = prev[id] ?? 0;
       let next = current + delta;
       if (current === 0 && delta > 0) next = baseQty;
       else if (current === baseQty && delta < 0) next = 0;
+      if (next <= 0) { const c = { ...prev }; delete c[id]; return c; }
+      return { ...prev, [id]: next };
+    });
+  };
+
+  /**
+   * Absolute setter for typed input. Deliberately NOT setQty with a computed delta:
+   * that one snaps to baseQty, which would fight the user mid-keystroke (typing "2"
+   * over a base of 10 would jump to 10). Non-numeric or negative input clears the
+   * line, and 0 deletes the map entry exactly as setQty does — so a quantity of zero
+   * is never persisted as a real line.
+   */
+  const setQtyExact = (setter: React.Dispatch<React.SetStateAction<Record<string, number>>>, id: string, raw: string) => {
+    const parsed = Number.parseInt(raw, 10);
+    const next = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    setter(prev => {
       if (next <= 0) { const c = { ...prev }; delete c[id]; return c; }
       return { ...prev, [id]: next };
     });
@@ -537,7 +559,11 @@ export function BookingPage() {
         .bk-qty{display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--r-full);background:var(--bg-subtle);overflow:hidden;margin-top:.5rem;width:fit-content}
         .bk-qty-btn{border:none;background:transparent;cursor:pointer;width:26px;height:26px;line-height:1;color:var(--primary);font-size:.9rem;font-weight:600;display:flex;align-items:center;justify-content:center;transition:background .15s}
         .bk-qty-btn:hover{background:var(--primary-muted)}
-        .bk-qty-val{min-width:24px;text-align:center;font-family:var(--font-body);font-size:.72rem;font-weight:500;color:var(--text-primary)}
+        /* Typable quantity. Sits flush between the +/- buttons, so it drops the input's
+           own chrome (border/background/spinners) and inherits the pill's styling. */
+        .bk-qty-val{width:38px;min-width:38px;text-align:center;font-family:var(--font-body);font-size:.72rem;font-weight:500;color:var(--text-primary);background:transparent;border:none;outline:none;padding:0;-moz-appearance:textfield;appearance:textfield}
+        .bk-qty-val::-webkit-outer-spin-button,.bk-qty-val::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+        .bk-qty-val:focus{background:var(--surface);border-radius:var(--r-sm);box-shadow:0 0 0 2px var(--primary-muted)}
 
         /* ── slot selection ── */
         .bk-slot-section{margin-top:1.5rem;padding:1.2rem;border:1px solid var(--border);border-radius:var(--r-xl);background:var(--bg-subtle)}
@@ -994,7 +1020,15 @@ export function BookingPage() {
                                   {serviceFlow === 'event' && menuItemQty[item.id] === baseQty && <div className="bk-catalog-meta" style={{ marginTop: '-.3rem', marginBottom: '.5rem', color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
                                   <div className="bk-qty">
                                     <button className="bk-qty-btn" onClick={() => setQty(setMenuItemQty, item.id, -1, baseQty)}>−</button>
-                                    <span className="bk-qty-val">{menuItemQty[item.id] ?? 0}</span>
+                                    <input
+                                      className="bk-qty-val"
+                                      type="number"
+                                      min={0}
+                                      inputMode="numeric"
+                                      value={menuItemQty[item.id] ?? 0}
+                                      onChange={(e) => setQtyExact(setMenuItemQty, item.id, e.target.value)}
+                                      aria-label={`Quantity for ${item.itemName}`}
+                                    />
                                     <button className="bk-qty-btn" onClick={() => setQty(setMenuItemQty, item.id, 1, baseQty)}>+</button>
                                   </div>
                                 </div>
@@ -1017,7 +1051,15 @@ export function BookingPage() {
                                 {serviceFlow === 'event' && menuTrayQty[tray.id] === baseQty && <div className="bk-catalog-meta" style={{ marginTop: '-.3rem', marginBottom: '.5rem', color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
                                 <div className="bk-qty">
                                   <button className="bk-qty-btn" onClick={() => setQty(setMenuTrayQty, tray.id, -1, baseQty)}>−</button>
-                                  <span className="bk-qty-val">{menuTrayQty[tray.id] ?? 0}</span>
+                                  <input
+                                    className="bk-qty-val"
+                                    type="number"
+                                    min={0}
+                                    inputMode="numeric"
+                                    value={menuTrayQty[tray.id] ?? 0}
+                                    onChange={(e) => setQtyExact(setMenuTrayQty, tray.id, e.target.value)}
+                                    aria-label={`Quantity for ${tray.trayName}`}
+                                  />
                                   <button className="bk-qty-btn" onClick={() => setQty(setMenuTrayQty, tray.id, 1, baseQty)}>+</button>
                                 </div>
                               </div>
@@ -1036,7 +1078,15 @@ export function BookingPage() {
                               <div className="bk-catalog-price">{fmtPHP(item.unitPrice)}</div>
                               <div className="bk-qty">
                                 <button className="bk-qty-btn" onClick={() => setQty(setRentalQty, item.id, -1)}>−</button>
-                                <span className="bk-qty-val">{rentalQty[item.id] ?? 0}</span>
+                                <input
+                                  className="bk-qty-val"
+                                  type="number"
+                                  min={0}
+                                  inputMode="numeric"
+                                  value={rentalQty[item.id] ?? 0}
+                                  onChange={(e) => setQtyExact(setRentalQty, item.id, e.target.value)}
+                                  aria-label={`Quantity for ${item.itemName}`}
+                                />
                                 <button className="bk-qty-btn" onClick={() => setQty(setRentalQty, item.id, 1)}>+</button>
                               </div>
                             </div>
@@ -1053,7 +1103,15 @@ export function BookingPage() {
                               <div className="bk-catalog-price">{fmtPHP(item.unitCost)}</div>
                               <div className="bk-qty">
                                 <button className="bk-qty-btn" onClick={() => setQty(setServiceQty, item.id, -1)}>−</button>
-                                <span className="bk-qty-val">{serviceQty[item.id] ?? 0}</span>
+                                <input
+                                  className="bk-qty-val"
+                                  type="number"
+                                  min={0}
+                                  inputMode="numeric"
+                                  value={serviceQty[item.id] ?? 0}
+                                  onChange={(e) => setQtyExact(setServiceQty, item.id, e.target.value)}
+                                  aria-label={`Quantity for ${item.serviceName}`}
+                                />
                                 <button className="bk-qty-btn" onClick={() => setQty(setServiceQty, item.id, 1)}>+</button>
                               </div>
                             </div>

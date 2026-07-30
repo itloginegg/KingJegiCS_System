@@ -417,6 +417,13 @@ namespace System_ApiTest.Data
                 // ever removed.
                 e.HasOne(n => n.Booking).WithMany()
                  .HasForeignKey(n => n.BookingId).OnDelete(DeleteBehavior.Cascade);
+
+                // Direct recipient for rows with no booking (support-chat replies). The
+                // customer feed queries this OR the booking's owner, so worker-written
+                // rows keep routing exactly as before.
+                e.HasIndex(n => n.CustomerId);
+                e.HasOne(n => n.Customer).WithMany()
+                 .HasForeignKey(n => n.CustomerId).OnDelete(DeleteBehavior.Restrict);
             });
 
             // ---------------- Conversation / Conversationmessage (virtual assistant) ----------------

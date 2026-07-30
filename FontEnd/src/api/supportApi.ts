@@ -20,8 +20,29 @@ export class SupportApiError extends Error {
   get isAuthError(): boolean { return this.status === 401 || this.status === 403; }
 }
 
-/** Mirrors SupportMessageDto (sender: "Customer" | "Admin"). */
-export interface SupportMessage { id: string; sender: string; text: string; createdAt: string; }
+/**
+ * Mirrors SupportMessageDto (sender: "Customer" | "Admin").
+ * A message may be text-only, attachment-only (empty `text`), or both.
+ */
+export interface SupportMessage {
+  id: string;
+  sender: string;
+  text: string;
+  createdAt: string;
+  /** Server-relative, e.g. "/uploads/support/support_a1b2….pdf". Run through attachmentUrl(). */
+  attachmentUrl: string | null;
+  attachmentFileName: string | null;
+  attachmentContentType: string | null;
+  /** True when it should render inline as an image rather than as a download link. */
+  attachmentIsImage: boolean;
+}
+
+/** Absolute URL for an attachment served from the API's wwwroot. */
+export function attachmentUrl(urlPath?: string | null): string | null {
+  if (!urlPath) return null;
+  if (/^(https?:|blob:|data:)/.test(urlPath)) return urlPath;
+  return `${API_BASE_URL}${urlPath.startsWith('/') ? '' : '/'}${urlPath}`;
+}
 
 /** Mirrors SupportThreadDto. */
 export interface SupportThread {
@@ -61,7 +82,11 @@ async function request<T>(path: string, method: string, token: string, body?: un
   let res: Response;
   try {
     const options: RequestInit = { method, headers: { Authorization: `Bearer ${token}` } };
-    if (body !== undefined) {
+    if (body instanceof FormData) {
+      // Never set Content-Type by hand for FormData — the browser has to append the
+      // multipart boundary itself, and an explicit header would clobber it.
+      options.body = body;
+    } else if (body !== undefined) {
       options.headers = { ...options.headers, 'Content-Type': 'application/json' };
       options.body = JSON.stringify(body);
     }
@@ -84,8 +109,24 @@ async function request<T>(path: string, method: string, token: string, body?: un
 export function getMyThread(token: string): Promise<SupportThread> {
   return request<SupportThread>('/api/support/thread', 'GET', token);
 }
-export function sendSupportMessage(token: string, text: string): Promise<SupportMessage> {
-  return request<SupportMessage>('/api/support/messages', 'POST', token, { text });
+/**
+ * Posts a customer message. Always multipart — the endpoint binds [FromForm] so an
+ * attachment can ride along, and sending one shape for both cases keeps the two send
+ * paths from diverging. `text` may be empty when a file is attached.
+ */
+export function sendSupportMessage(
+  token: string,
+  text: string,
+  attachment?: File | null,
+): Promise<SupportMessage> {
+  return request<SupportMessage>('/api/support/messages', 'POST', token, buildMessageForm(text, attachment));
+}
+
+function buildMessageForm(text: string, attachment?: File | null): FormData {
+  const form = new FormData();
+  form.append('text', text);
+  if (attachment) form.append('attachment', attachment);
+  return form;
 }
 
 // ── Admin ──
@@ -96,8 +137,15 @@ export function listSupportThreads(token: string, status?: 'Open' | 'Closed'): P
 export function getSupportThread(token: string, id: string): Promise<SupportThread> {
   return request<SupportThread>(`/api/support/threads/${id}`, 'GET', token);
 }
-export function replySupport(token: string, id: string, text: string): Promise<SupportMessage> {
-  return request<SupportMessage>(`/api/support/threads/${id}/messages`, 'POST', token, { text });
+export function replySupport(
+  token: string,
+  id: string,
+  text: string,
+  attachment?: File | null,
+): Promise<SupportMessage> {
+  return request<SupportMessage>(
+    `/api/support/threads/${id}/messages`, 'POST', token, buildMessageForm(text, attachment),
+  );
 }
 export function setSupportStatus(token: string, id: string, status: 'Open' | 'Closed'): Promise<void> {
   return request<void>(`/api/support/threads/${id}/status?status=${status}`, 'POST', token);

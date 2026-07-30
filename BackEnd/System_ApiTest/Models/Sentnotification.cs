@@ -21,6 +21,40 @@ namespace System_ApiTest.Models
         /// <summary>A rental item's available stock hit the low threshold — alert to the owner.</summary>
         RentalLowStock,
 
+        // ---- Instantaneous events (v4). Unlike everything above, these are NOT
+        // discovered by the polling NotificationWorker: a discrete action that happens
+        // once at a specific instant can only be recorded by the service method that
+        // performs it. Written synchronously from the call site via
+        // Notificationwriteservice. Kind is a string column, so no migration. ----
+
+        // Staff-facing
+        /// <summary>A customer (or an admin on their behalf) created a booking.</summary>
+        BookingCreated,
+        /// <summary>A booking was marked completed.</summary>
+        BookingCompleted,
+        /// <summary>A booking was cancelled — the STAFF copy (BookingCancelled is the customer's).</summary>
+        BookingCancelledStaff,
+        /// <summary>A customer asked to cancel a confirmed booking; staff must decide.</summary>
+        BookingCancellationRequested,
+        /// <summary>A payment was recorded against an invoice and awaits verification.</summary>
+        PaymentRecorded,
+        /// <summary>A customer filed a refund request.</summary>
+        RefundRequested,
+        /// <summary>A rental, dish, or tray line was added to an existing booking.</summary>
+        BookingItemAdded,
+        /// <summary>A customer posted a support-chat message.</summary>
+        SupportMessageFromCustomer,
+
+        // Customer-facing
+        /// <summary>A payment was verified as successful.</summary>
+        PaymentConfirmed,
+        /// <summary>A refund was issued.</summary>
+        RefundApproved,
+        /// <summary>A refund request was denied.</summary>
+        RefundDenied,
+        /// <summary>Staff replied in the support chat.</summary>
+        SupportMessageFromStaff,
+
         // ---- Proactive-assistant seeds (Slice D). Deduped independently of the flat
         // emails above so enabling ProactiveAssistant later still seeds once. Kind is a
         // string column, so adding these values needs no migration. ----
@@ -57,6 +91,18 @@ namespace System_ApiTest.Models
         /// <summary>The booking this concerns, or null for cross-booking owner notifications.</summary>
         public Guid? BookingId { get; set; }
         public Booking? Booking { get; set; }
+
+        /// <summary>
+        /// The customer this is addressed to, when that can't be derived from a booking.
+        ///
+        /// Customer-directed rows were originally always booking-scoped, so the feed
+        /// routed them via Booking.CustomerId. Support-chat notifications broke that
+        /// assumption — a chat message belongs to a customer but to no booking — so this
+        /// carries the recipient directly. Null on staff-directed rows and on the
+        /// booking-scoped rows the worker writes, which still route through the booking.
+        /// </summary>
+        public Guid? CustomerId { get; set; }
+        public Customer? Customer { get; set; }
 
         [Required]
         public NotificationKind Kind { get; set; }
