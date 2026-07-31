@@ -1,67 +1,55 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
+import { readSession } from '../lib/tokenStorage';
+import { fetchRentalItems, getFullImageUrl, type AdminRentalItem } from '../api/rentalAdminApi';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Static content — design reference only, no backend calls.
+   Live catalog from /api/Rentalitems — same anonymous-GET pattern MenuPage
+   already uses. Prices and stock are whatever the admin has configured; the
+   authoritative availability is still computed server-side at booking time.
 ───────────────────────────────────────────────────────────────────────── */
 
 type RentalCategory = { id: string; label: string; icon: string };
 
 type RentalItem = {
-  id: number;
+  id: string;
   name: string;
   category: string;
   pricePerDay: number;
   stock: number;
   description: string;
+  image?: string | null;
 };
 
+/**
+ * The real RentalCategory enum (Models/Rentalitem.cs), lowercased to match the
+ * DTO's string form. The icons are presentation only — the backend has no notion
+ * of them, so they stay here.
+ */
 const CATEGORIES: RentalCategory[] = [
-  { id: 'seating', label: 'Seating', icon: '🪑' },
+  { id: 'chairs', label: 'Chairs', icon: '🪑' },
   { id: 'tables', label: 'Tables', icon: '🎪' },
   { id: 'linens', label: 'Linens', icon: '🧵' },
-  { id: 'tableware', label: 'Tableware', icon: '🍽️' },
-  { id: 'decor', label: 'Décor', icon: '✨' },
-  { id: 'sound', label: 'Sound & Lights', icon: '🎤' },
-];
-
-const RENTALS: RentalItem[] = [
-  { id: 1, name: 'Tiffany Chairs', category: 'seating', pricePerDay: 35, stock: 300, description: 'Elegant clear-back chairs for weddings and formal receptions.' },
-  { id: 2, name: 'Monoblock Chairs', category: 'seating', pricePerDay: 12, stock: 500, description: 'Sturdy all-purpose seating, with optional covers and sashes.' },
-  { id: 3, name: 'Kiddie Chairs', category: 'seating', pricePerDay: 10, stock: 120, description: 'Colorful child-sized chairs for birthday parties and play corners.' },
-  { id: 4, name: 'Lounge Sofa Set', category: 'seating', pricePerDay: 950, stock: 6, description: 'A plush 3-piece lounge set for VIP corners and photo areas.' },
-
-  { id: 5, name: 'Round Table (10-seater)', category: 'tables', pricePerDay: 120, stock: 60, description: 'Classic banquet rounds — the backbone of any reception layout.' },
-  { id: 6, name: 'Long Banquet Table', category: 'tables', pricePerDay: 100, stock: 40, description: 'Rectangular tables for buffets, head tables, and family-style dining.' },
-  { id: 7, name: 'Cocktail Table', category: 'tables', pricePerDay: 90, stock: 25, description: 'Standing-height tables for mingling areas and welcome drinks.' },
-  { id: 8, name: 'Kids Party Table', category: 'tables', pricePerDay: 80, stock: 20, description: 'Low tables sized for little guests, pairs with our kiddie chairs.' },
-
-  { id: 9, name: 'Round Table Cloth', category: 'linens', pricePerDay: 25, stock: 80, description: 'Floor-length cloths in white, ivory, and custom theme colors.' },
-  { id: 10, name: 'Chair Cover with Sash', category: 'linens', pricePerDay: 15, stock: 300, description: 'Fitted spandex covers with satin sashes in your motif.' },
-  { id: 11, name: 'Table Runner', category: 'linens', pricePerDay: 12, stock: 100, description: 'Accent runners in satin, lace, or burlap to layer your tablescape.' },
-  { id: 12, name: 'Table Skirting', category: 'linens', pricePerDay: 30, stock: 0, description: 'Pleated skirting for buffet, cake, and registration tables.' },
-
-  { id: 13, name: 'Dinner Plate Set', category: 'tableware', pricePerDay: 8, stock: 500, description: 'Porcelain dinner plates, quoted per setting.' },
-  { id: 14, name: 'Goblet Glasses', category: 'tableware', pricePerDay: 6, stock: 400, description: 'Classic stemmed goblets for water, juice, or wine service.' },
-  { id: 15, name: 'Cutlery Set', category: 'tableware', pricePerDay: 6, stock: 500, description: 'Stainless spoon-and-fork settings, polished before every event.' },
-  { id: 16, name: 'Chafing Dish', category: 'tableware', pricePerDay: 150, stock: 30, description: 'Full-size stainless chafers that keep the buffet hot for hours.' },
-
-  { id: 17, name: 'Balloon Arch Frame', category: 'decor', pricePerDay: 450, stock: 8, description: 'Freestanding arch frame — styling and balloons quoted separately.' },
-  { id: 18, name: 'Fairy Light Strand (10m)', category: 'decor', pricePerDay: 60, stock: 40, description: 'Warm-white string lights for ceilings, backdrops, and trees.' },
-  { id: 19, name: 'Flower Centerpiece', category: 'decor', pricePerDay: 85, stock: 50, description: 'Artificial floral arrangements that photograph like fresh blooms.' },
-  { id: 20, name: 'Red Carpet (10m)', category: 'decor', pricePerDay: 350, stock: 5, description: 'A grand entrance runner for debuts, premieres, and weddings.' },
-
-  { id: 21, name: 'Sound System Package', category: 'sound', pricePerDay: 1800, stock: 6, description: 'Two speakers, mixer, and cabling — covers up to 200 guests.' },
-  { id: 22, name: 'Wireless Microphone', category: 'sound', pricePerDay: 250, stock: 12, description: 'Handheld wireless mics for hosts, toasts, and videoke sessions.' },
-  { id: 23, name: 'Party Lights Set', category: 'sound', pricePerDay: 400, stock: 15, description: 'Moving-head and wash lights to turn any hall into a dance floor.' },
-  { id: 24, name: 'Projector & Screen', category: 'sound', pricePerDay: 900, stock: 4, description: 'HD projector with tripod screen for AVPs and same-day edits.' },
+  { id: 'lights', label: 'Lights', icon: '💡' },
+  { id: 'others', label: 'Others', icon: '✨' },
 ];
 
 const CATEGORY_META = new Map(CATEGORIES.map((c) => [c.id, c]));
+
+/**
+ * The catalog has no description field, so the card copy is derived from the real
+ * inventory numbers rather than invented — how many are owned, and how many of
+ * those are currently out on other bookings.
+ */
+const describeItem = (r: AdminRentalItem) => {
+  const label = CATEGORY_META.get(r.category.toLowerCase())?.label ?? r.category;
+  const out = r.quantityOut > 0 ? `, ${r.quantityOut} currently out on other events` : '';
+  return `${label} — ${r.totalQuantity} in our inventory${out}.`;
+};
 
 const LOW_STOCK_AT = 10;
 const MAX_DAYS = 14;
@@ -73,11 +61,45 @@ const MAX_DAYS = 14;
 export function RentalsPage() {
   const [category, setCategory] = useState<'all' | string>('all');
   const [days, setDays] = useState(1);
-  const [quantities, setQuantities] = useState<Record<number, number>>({});
-  const [plan, setPlan] = useState<Record<number, number>>({});
-  const [flashId, setFlashId] = useState<number | null>(null);
+  // Keyed by the catalog's real GUID ids, not the old static numeric ones.
+  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [plan, setPlan] = useState<Record<string, number>>({});
+  const [flashId, setFlashId] = useState<string | null>(null);
 
-  const qtyOf = (id: number) => quantities[id] ?? 1;
+  /* live catalog */
+  const [rentals, setRentals] = useState<RentalItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadCatalog = async () => {
+    setLoading(true);
+    setLoadError(null);
+    const token = readSession()?.token ?? '';   // catalog GETs are anonymous
+    try {
+      const items = await fetchRentalItems(token);
+      setRentals(
+        items
+          .filter((r) => r.isActive)
+          .map((r) => ({
+            id: r.id,
+            name: r.itemName,
+            category: r.category.toLowerCase(),
+            pricePerDay: r.unitPrice,
+            stock: r.stock,
+            description: describeItem(r),
+            image: getFullImageUrl(r.imageUrl),
+          })),
+      );
+    } catch {
+      setLoadError('Unable to load the rental catalog. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadCatalog(); }, []);
+
+  const qtyOf = (id: string) => quantities[id] ?? 1;
   const bumpQty = (item: RentalItem, delta: number) =>
     setQuantities((prev) => ({
       ...prev,
@@ -85,22 +107,22 @@ export function RentalsPage() {
     }));
 
   const visible = useMemo(
-    () => (category === 'all' ? RENTALS : RENTALS.filter((r) => r.category === category)),
-    [category],
+    () => (category === 'all' ? rentals : rentals.filter((r) => r.category === category)),
+    [category, rentals],
   );
 
   const countFor = (id: 'all' | string) =>
-    id === 'all' ? RENTALS.length : RENTALS.filter((r) => r.category === id).length;
+    id === 'all' ? rentals.length : rentals.filter((r) => r.category === id).length;
 
-  /* estimate (display-only — no backend) */
+  /* estimate (display-only — the authoritative total is computed by the backend) */
   const planPieces = useMemo(() => Object.values(plan).reduce((a, b) => a + b, 0), [plan]);
   const planPerDay = useMemo(
     () =>
       Object.entries(plan).reduce((sum, [id, qty]) => {
-        const item = RENTALS.find((r) => r.id === Number(id));
+        const item = rentals.find((r) => r.id === id);
         return sum + (item ? item.pricePerDay * qty : 0);
       }, 0),
-    [plan],
+    [plan, rentals],
   );
 
   const addToPlan = (item: RentalItem) => {
@@ -516,7 +538,25 @@ export function RentalsPage() {
             </div>
 
             {/* ── grid ── */}
-            {visible.length === 0 ? (
+            {loading ? (
+              <div className="rnt-empty fade-up">
+                <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)' }}>
+                  Loading our inventory…
+                </p>
+              </div>
+            ) : loadError ? (
+              <div className="rnt-empty fade-up">
+                <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  Couldn't load the rental catalog
+                </p>
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--danger)', marginBottom: '1.2rem' }}>
+                  {loadError}
+                </p>
+                <button type="button" className="btn-outline" onClick={() => void loadCatalog()}>
+                  Try Again
+                </button>
+              </div>
+            ) : visible.length === 0 ? (
               <div className="rnt-empty fade-up">
                 <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
                   Nothing in this category yet
@@ -537,8 +577,11 @@ export function RentalsPage() {
                       className={`rnt-card fade-up${soldOut ? ' sold-out' : ''}`}
                       style={{ animationDelay: `${Math.min(i, 10) * 0.05}s` }}
                     >
-                      <div className="rnt-tile">
-                        <span className="icon" aria-hidden="true">{meta?.icon}</span>
+                      <div
+                        className="rnt-tile"
+                        style={item.image ? { backgroundImage: `url('${item.image}')`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                      >
+                        {!item.image && <span className="icon" aria-hidden="true">{meta?.icon}</span>}
                         <span className={`rnt-stock${soldOut ? ' none' : lowStock ? ' low' : ''}`}>
                           {soldOut ? 'Out of stock' : lowStock ? `Only ${item.stock} left` : `${item.stock} in stock`}
                         </span>

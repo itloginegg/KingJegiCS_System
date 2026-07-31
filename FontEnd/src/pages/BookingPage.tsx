@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { PlanByBudget } from '../components/suggestions/PlanByBudget';
@@ -62,9 +62,24 @@ export function BookingPage() {
   const navigate = useNavigate();
 
   /* ── wizard state ── */
-  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(null);
-  const [step, setStep] = useState(0);
-  const [planMode, setPlanMode] = useState(false);   // Step-0 "Plan by Budget" card
+  /**
+   * Arriving from the landing page's Reserve-this-Date modal, which passes the picked
+   * date and the chosen path in router state. When both are present we skip the
+   * Step-0 service picker — the visitor already answered that question.
+   */
+  const location = useLocation();
+  const preset = (location.state ?? {}) as {
+    presetDate?: string;
+    /** 'plan' opens Step 0's Plan-by-Budget panel rather than a wizard flow. */
+    presetFlow?: ServiceFlow | 'plan';
+  };
+  const presetService = preset.presetFlow === 'plan' ? null : preset.presetFlow ?? null;
+
+  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService);
+  const [step, setStep] = useState(presetService ? 1 : 0);
+  // Step-0 "Plan by Budget" card. Opens straight away when the landing page's
+  // reserve modal sent us here with that path chosen.
+  const [planMode, setPlanMode] = useState(preset.presetFlow === 'plan');
 
   // Step 1 — Contact
   const [fullName, setFullName] = useState('');
@@ -77,7 +92,7 @@ export function BookingPage() {
   // Step 2 — Event
   const [eventType, setEventType] = useState('');
   const [guests, setGuests] = useState(50);
-  const [eventDate, setEventDate] = useState('');
+  const [eventDate, setEventDate] = useState(preset.presetDate ?? '');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');

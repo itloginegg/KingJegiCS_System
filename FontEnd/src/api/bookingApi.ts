@@ -87,6 +87,8 @@ export interface BookingResponse {
   cancellationRequested: boolean;
   cancellationRequestReason: string | null;
   createdAt: string;
+  /** Internal staff note. Always null for a customer — the server only fills it for admins. */
+  adminNote: string | null;
 }
 
 /** Matches BookingDetailDto — returned by GET /api/Bookings/{id}. */
@@ -405,6 +407,19 @@ export function completeBooking(token: string, bookingId: string): Promise<Booki
 
 export function cancelBooking(token: string, bookingId: string): Promise<BookingResponse> {
   return request<BookingResponse>(`/api/Bookings/${bookingId}/cancel`, 'POST', token);
+}
+
+/**
+ * Owner/Assistant: set or clear a booking's internal staff note. Send null/empty to
+ * clear. Separate from updateBooking because that path is Draft-only, while a note is
+ * most useful on a Confirmed booking.
+ */
+export function setBookingAdminNote(
+  token: string,
+  bookingId: string,
+  note: string | null,
+): Promise<BookingResponse> {
+  return request<BookingResponse>(`/api/Bookings/${bookingId}/admin-note`, 'PUT', token, { note });
 }
 
 /**

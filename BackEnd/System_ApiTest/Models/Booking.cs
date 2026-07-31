@@ -163,6 +163,17 @@ namespace System_ApiTest.Models
         [MaxLength(500)]
         public string? CancellationRequestReason { get; set; }
 
+        /// <summary>
+        /// Free-text staff note about this booking (allergies, access instructions, who
+        /// to call on site). Internal only — never shown to the customer.
+        ///
+        /// Set through its own narrow path, not the general edit: UpdateAsync is
+        /// Draft-only by design, and a note is most useful precisely on a Confirmed
+        /// booking. See Bookingservice.SetAdminNoteAsync.
+        /// </summary>
+        [MaxLength(2000)]
+        public string? AdminNote { get; set; }
+
         /// <summary>0 or 1 invoice. Restrict on delete so an invoice is never silently lost.</summary>
         public Invoice? Invoice { get; set; }
     }

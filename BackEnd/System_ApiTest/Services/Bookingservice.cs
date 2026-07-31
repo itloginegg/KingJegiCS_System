@@ -117,6 +117,11 @@ namespace System_ApiTest.Services
                 }
             }
 
+            // Fail early if this window can never be confirmed, rather than letting the
+            // customer build out a booking on a date that's already taken. Confirmation
+            // still re-checks under a row lock — this doesn't replace that guarantee.
+            await EnsureSlotOpenForNewWindowAsync(null, bookingType, eventDate, start, endDate, end);
+
             await using var tx = await _db.Database.BeginTransactionAsync();
 
             // Get-or-create the calendar day. Insert it on its own first so a collision
@@ -457,19 +462,35 @@ namespace System_ApiTest.Services
 
         /// <summary>The overlap test itself (buffer-expanded, overnight-aware). Callers decide about locking.</summary>
         private async Task CheckTimeSlotConflictAsync(Booking booking)
+            => await CheckTimeSlotConflictAsync(
+                booking.Id, booking.EventDate, booking.StartTime, booking.EndDate, booking.EndTime);
+
+        /// <summary>
+        /// The overlap test, expressed over the window's FIELDS rather than a persisted
+        /// Booking — so it can also run before the row exists (creation) or against a
+        /// proposed new date (edit). <paramref name="excludeBookingId"/> is the booking
+        /// being placed, excluded so it never conflicts with itself; pass null when
+        /// there isn't one yet.
+        ///
+        /// Only CONFIRMED events are candidates. That's deliberate: an unconfirmed
+        /// booking has not paid for and does not own its slot, so it must not block
+        /// anyone else from taking the date.
+        /// </summary>
+        private async Task CheckTimeSlotConflictAsync(
+            Guid? excludeBookingId, DateOnly eventDate, TimeOnly startTime, DateOnly? endDate, TimeOnly? endTime)
         {
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
             var buffer = TimeSpan.FromHours((double)(settings?.EventBufferHours ?? 3m));
 
-            var newStart = booking.EventDate.ToDateTime(booking.StartTime);
-            var newEnd = (booking.EndDate ?? booking.EventDate).ToDateTime(booking.EndTime ?? booking.StartTime);
+            var newStart = eventDate.ToDateTime(startTime);
+            var newEnd = (endDate ?? eventDate).ToDateTime(endTime ?? startTime);
 
             // Candidate confirmed events near this window (widen for overnight spans).
             var lowDate = DateOnly.FromDateTime(newStart.AddDays(-2));
             var highDate = DateOnly.FromDateTime(newEnd.AddDays(2));
 
             var candidates = await _db.Bookings.AsNoTracking()
-                .Where(b => b.Id != booking.Id
+                .Where(b => (excludeBookingId == null || b.Id != excludeBookingId)
                             && b.BookingType == BookingType.FullService
                             && b.Status == BookingStatus.Confirmed
                             && b.EventDate >= lowDate && b.EventDate <= highDate)
@@ -488,6 +509,34 @@ namespace System_ApiTest.Services
                         "This time slot conflicts with an already-confirmed event on this date " +
                         $"(a {buffer.TotalHours:0.#}-hour gap is required between events).");
             }
+        }
+
+        /// <summary>
+        /// Rejects a proposed booking window that can never be confirmed, at the moment
+        /// it's being created or re-dated rather than only at confirmation.
+        ///
+        /// Confirmation remains the authoritative, race-proof gate (it re-runs this
+        /// under a row lock on the calendar day). This is the early, friendlier failure:
+        /// it stops customers from building out a booking on a date that is already
+        /// spoken for, and stops the admin queue filling with drafts that are doomed.
+        /// Only Confirmed bookings block, so several parties may still hold competing
+        /// interest in a date nobody has paid for.
+        /// </summary>
+        private async Task EnsureSlotOpenForNewWindowAsync(
+            Guid? excludeBookingId, BookingType bookingType,
+            DateOnly eventDate, TimeOnly startTime, DateOnly? endDate, TimeOnly? endTime)
+        {
+            if (bookingType == BookingType.FoodDelivery)
+            {
+                // A delivery has no time window; its scarcity rule is the whole-day one.
+                if (await DateHasConfirmedEventAsync(eventDate))
+                    throw new BookingRuleException(
+                        "This date already has a booked event and isn't available for delivery. " +
+                        "Please choose another date.");
+                return;
+            }
+
+            await CheckTimeSlotConflictAsync(excludeBookingId, eventDate, startTime, endDate, endTime);
         }
 
         /// <summary>
@@ -572,6 +621,31 @@ namespace System_ApiTest.Services
 
             // Staff must decide on this — the booking itself hasn't changed status.
             await _notifications.WriteAsync(NotificationKind.BookingCancellationRequested, bookingId);
+        }
+
+        /// <summary>
+        /// Sets (or clears) the internal staff note on a booking.
+        ///
+        /// Deliberately its own narrow method rather than a field on UpdateAsync: that
+        /// path is Draft-only by design — it freezes once a booking is submitted and
+        /// invoiced — whereas a note is most useful on a Confirmed booking. Loosening
+        /// EnsureEditableAsync to allow this would weaken a guard that protects totals.
+        ///
+        /// Allowed on any non-terminal booking. A note doesn't affect money, capacity or
+        /// scheduling, so it needs no transaction and writes no history snapshot.
+        /// </summary>
+        public async Task<Booking> SetAdminNoteAsync(Guid bookingId, string? note)
+        {
+            var booking = await _db.Bookings.FindAsync(bookingId)
+                ?? throw new BookingRuleException("Booking not found.");
+
+            if (booking.Status == BookingStatus.Cancelled)
+                throw new BookingRuleException("A cancelled booking can no longer be annotated.");
+
+            var trimmed = note?.Trim();
+            booking.AdminNote = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+            await _db.SaveChangesAsync();
+            return booking;
         }
 
         /// <summary>
@@ -785,6 +859,16 @@ namespace System_ApiTest.Services
                 if (eventDate < earliest)
                     throw new BookingRuleException(
                         $"The new date must be at least {leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
+            }
+
+            // The window can change here (date and/or times), so re-run the same early
+            // conflict guard as creation. Excludes this booking so it can't clash with
+            // its own current slot.
+            if (booking.EventDate != eventDate || booking.StartTime != start
+                || booking.EndDate != endDate || booking.EndTime != end)
+            {
+                await EnsureSlotOpenForNewWindowAsync(
+                    bookingId, booking.BookingType, eventDate, start, endDate, end);
             }
 
             // Snapshot the current state before mutating it.

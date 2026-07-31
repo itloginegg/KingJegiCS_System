@@ -9,12 +9,17 @@ import {
 } from 'framer-motion';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
+import { readSession } from '../lib/tokenStorage';
+import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Static content — design reference only, no backend calls.
+   Live catalog from /api/MenuPackages — same anonymous-GET pattern MenuPage
+   already uses. Only the hero slideshow and the per-card photography remain
+   static: MenuPackage carries no image field, so the card art is drawn from
+   this pool rather than invented per package.
 ───────────────────────────────────────────────────────────────────────── */
 
 const PKG_HERO_SLIDES = [
@@ -23,8 +28,16 @@ const PKG_HERO_SLIDES = [
   'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=2000&q=80',
 ];
 
+/** Card art pool, assigned round-robin — the catalog has no per-package photo. */
+const PKG_CARD_IMAGES = [
+  'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=1200&q=80',
+  'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1200&q=80',
+];
+
 type Pkg = {
-  id: number;
+  id: string;
   name: string;
   price: string;
   unit: string;
@@ -35,87 +48,37 @@ type Pkg = {
   details: string[];
 };
 
-const PACKAGES: Pkg[] = [
-  {
-    id: 1,
-    name: 'Birthday Package',
-    price: '₱65,000',
-    unit: 'per event',
-    highlight: false,
-    image:
-      'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=1200&q=80',
-    description:
-      'A complete birthday celebration for up to 100 guests — themed styling, full buffet, sound system, and a dedicated crew so you can enjoy the party.',
-    features: [
-      'Buffet for up to 100 guests',
-      'Themed balloon & backdrop styling',
-      'Sound system with host microphone',
-      'Full service staff & cleanup',
-    ],
-    details: [
-      'Buffet: 3 mains, pasta, rice, dessert & drinks',
-      'Themed décor with centerpieces',
-      'Tables, chairs & linens for 100',
-      'Cake table & gift station setup',
-      '4-hour service window',
-      'Waitstaff & cleanup crew',
-      'Event coordinator on the day',
-      'Free food tasting for 2',
-    ],
-  },
-  {
-    id: 2,
-    name: 'Wedding Package',
-    price: '₱80,000',
-    unit: 'per event',
-    highlight: true,
-    image:
-      'https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1200&q=80',
-    description:
-      'Our signature wedding setup — elegant floral styling, plated or buffet dining for 150, and full on-the-day coordination from prep to send-off.',
-    features: [
-      'Plated or buffet dining for 150 guests',
-      'Elegant floral & fabric styling',
-      "Couple's table & cake setup",
-      'Full coordination on the day',
-    ],
-    details: [
-      'Menu: 4 mains, carving station, dessert bar',
-      'Fresh floral centerpieces & aisle styling',
-      'Tiffany chairs, linens & tableware for 150',
-      "Sweetheart table & couple's toast set",
-      '6-hour service window',
-      'Uniformed waitstaff & captain',
-      'Dedicated wedding coordinator',
-      'Free food tasting for 4',
-    ],
-  },
-  {
-    id: 3,
-    name: 'Custom Package',
-    price: 'Custom',
-    unit: 'tailored quote',
-    highlight: false,
-    image:
-      'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1200&q=80',
-    description:
-      'Have something unique in mind? Build your dream event from the ground up — menu, styling, and staffing tailored to your vision, budget, and guest count.',
-    features: [
-      'Any guest count, any venue',
-      'Menu built around your favorites',
-      'Styling matched to your theme',
-      'Flexible add-ons & rentals',
-    ],
-    details: [
-      'One-on-one planning consultation',
-      'Custom menu proposal & tasting',
-      'Décor & styling concept board',
-      'Rentals: tents, sound, lights & more',
-      'Staffing scaled to your event',
-      'Itemized quote within 48 hours',
-    ],
-  },
-];
+/**
+ * Maps a real MenuPackage onto the card shape this page already renders.
+ *
+ * `features` are the package's own inclusions. `details` are derived from actual
+ * catalog data — pax range, extra-guest pricing, fixed dishes, and the choose-N
+ * slots — rather than restating marketing copy the backend doesn't hold.
+ * `highlight` marks the priciest package, since the design uses it for emphasis
+ * and the catalog has no "featured" flag.
+ */
+const toCard = (p: AdminPackage, index: number, isTopPriced: boolean): Pkg => {
+  const details: string[] = [`Serves ${p.minPax}–${p.maxPax} guests`];
+  if (p.pricePerExtraPax > 0) details.push(`${fmtPHP(p.pricePerExtraPax)} per guest beyond ${p.minPax}`);
+  if (p.fixedItems.length > 0) details.push(`Always included: ${p.fixedItems.map((f) => f.itemName).join(', ')}`);
+  for (const slot of p.slots) {
+    details.push(`Choose ${slot.chooseCount} — ${slot.label}`);
+  }
+
+  return {
+    id: p.id,
+    name: p.packageName,
+    price: fmtPHP(p.basePrice),
+    unit: `for ${p.minPax} pax`,
+    highlight: isTopPriced,
+    image: PKG_CARD_IMAGES[index % PKG_CARD_IMAGES.length],
+    description: p.description,
+    features: p.inclusions,
+    details,
+  };
+};
+/* The static PACKAGES array that used to live here is gone — cards now come from
+   fetchPackages() in the component below. */
 
 type PartyTray = {
   id: number;
@@ -427,6 +390,31 @@ function TrayCard({ tray, tabbable }: { tray: PartyTray; tabbable: boolean }) {
 
 export function PackagePage() {
   const [selected, setSelected] = useState<Pkg | null>(null);
+
+  /* live catalog */
+  const [packages, setPackages] = useState<Pkg[]>([]);
+  const [loadingPackages, setLoadingPackages] = useState(true);
+  const [packagesError, setPackagesError] = useState<string | null>(null);
+
+  const loadPackages = async () => {
+    setLoadingPackages(true);
+    setPackagesError(null);
+    const token = readSession()?.token ?? '';   // catalog GETs are anonymous
+    try {
+      const rows = await fetchPackages(token);
+      const topPrice = rows.reduce((max, p) => Math.max(max, p.basePrice), 0);
+      // Only the single priciest package is highlighted, so a tie doesn't light up
+      // every card at once.
+      const topIndex = rows.findIndex((p) => p.basePrice === topPrice);
+      setPackages(rows.map((p, i) => toCard(p, i, i === topIndex && rows.length > 1)));
+    } catch {
+      setPackagesError('Unable to load our packages. Please try again.');
+    } finally {
+      setLoadingPackages(false);
+    }
+  };
+
+  useEffect(() => { void loadPackages(); }, []);
   const [slideIndex, setSlideIndex] = useState(0);
 
   /* auto-advance slideshow */
@@ -731,16 +719,33 @@ export function PackagePage() {
           </div>
 
           {/* ── packages slider: full-bleed, drifts left → right ── */}
-          <CenterFocusSlider
-            items={PACKAGES}
-            getKey={(p) => p.id}
-            direction={1}
-            speed={55}
-            label="Catering packages"
-            renderItem={(pkg, tabbable) => (
-              <PackageCard pkg={pkg} onSelect={setSelected} tabbable={tabbable} />
-            )}
-          />
+          {loadingPackages ? (
+            <p style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--text-muted)', padding: '3rem 1rem' }}>
+              Loading our packages…
+            </p>
+          ) : packagesError ? (
+            <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--danger)', marginBottom: '1rem' }}>
+                {packagesError}
+              </p>
+              <button type="button" className="btn-outline" onClick={() => void loadPackages()}>Try Again</button>
+            </div>
+          ) : packages.length === 0 ? (
+            <p style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--text-muted)', padding: '3rem 1rem' }}>
+              No packages are published yet — please check back soon.
+            </p>
+          ) : (
+            <CenterFocusSlider
+              items={packages}
+              getKey={(p) => p.id}
+              direction={1}
+              speed={55}
+              label="Catering packages"
+              renderItem={(pkg, tabbable) => (
+                <PackageCard pkg={pkg} onSelect={setSelected} tabbable={tabbable} />
+              )}
+            />
+          )}
         </section>
 
         {/* ═══════════════════════ PARTY TRAY SETS ═══════════════════════ */}

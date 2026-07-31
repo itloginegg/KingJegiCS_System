@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { getCalendarDays } from '../api/calendarApi';
 import { getApprovedTestimonials, type PublicTestimonial } from '../api/testimonialsApi';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
+
+/** The paths BookingPage can be opened straight into from the reserve modal. */
+type BookingPreset = 'event' | 'rentals' | 'plan';
+
+/** "2026-08-14" → "August 14, 2026" for the reserve button and modal heading. */
+const fmtSelected = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-PH', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+};
  
 /* ─────────────────────────────────────────────────────────────────────────
    Static content — design reference only, no backend calls.
@@ -26,7 +38,7 @@ const SERVICES = [
     title: 'Catering Services',
     description:
       'Full-service Filipino catering for any occasion — buffet, plated, or family-style. Fresh ingredients, professional staff, memorable flavors.',
-    href: '#menus',
+    to: '/menus',
     cta: 'Explore Menu',
   },
   {
@@ -34,7 +46,7 @@ const SERVICES = [
     title: 'Catering Packages',
     description:
       'Curated all-in-one packages covering food, setup, and service staff. Choose Starter, Classic, or Premium to fit your guest count and budget.',
-    href: '#packages',
+    to: '/packages',
     cta: 'View Packages',
   },
   {
@@ -42,7 +54,7 @@ const SERVICES = [
     title: 'Party Rentals',
     description:
       'Tables, chairs, tents, sound systems, and décor — everything you need to transform any space into a beautiful event venue.',
-    href: '#services',
+    to: '/rentals',
     cta: 'Browse Rentals',
   },
 ];
@@ -659,9 +671,82 @@ export function LandingPage() {
     return () => { cancelled = true; };
   }, [calYear, calMonth]);
 
+  /* Reserve-this-Date flow: pick an open day on the calendar, then choose which
+     booking path to start. The chosen date rides to /book in router state so the
+     wizard can pre-fill it and skip its own Step-0 picker. */
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [reserveOpen, setReserveOpen] = useState(false);
+  const navigate = useNavigate();
+
+  /**
+   * All three paths go to /book — including Plan by Budget, which BookingPage's
+   * Step 0 already offers and which works for signed-out visitors (PlanByBudget
+   * asks for a login itself, but only at the point it actually needs one, to
+   * materialize a draft). Sending guests to /login up front would gate a flow
+   * that doesn't require it.
+   */
+  const startBooking = (flow: BookingPreset) => {
+    setReserveOpen(false);
+    navigate('/book', { state: { presetDate: selectedDate, presetFlow: flow } });
+  };
+
   /* Approved testimonials, newest first. Falls back to the built-in samples until
      the business has approved some of its own. */
   const [reviews, setReviews] = useState<PublicTestimonial[]>([]);
+
+  /**
+   * One-shot scroll reveal for the testimonial cards.
+   *
+   * Re-runs when `reviews` changes, because the cards are replaced once the real
+   * approved reviews land — the observer has to be pointed at the new nodes.
+   * Unobserves each card after it fires so scrolling back up doesn't replay it.
+   */
+  const testiGridRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const grid = testiGridRef.current;
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.testi-card'));
+    if (cards.length === 0) return;
+
+    const reveal = (card: HTMLElement) => {
+      card.classList.remove('testi-pending');
+      card.classList.add('testi-in');
+    };
+
+    // Respect the OS setting, and don't hide anything if the browser can't observe.
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          reveal(entry.target as HTMLElement);
+          observer.unobserve(entry.target);
+        }
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -40px 0px' },
+    );
+
+    cards.forEach((card, i) => {
+      // Stagger reads as one wave across the row rather than all at once.
+      card.style.transitionDelay = `${Math.min(i, 5) * 90}ms`;
+      card.classList.add('testi-pending');
+      observer.observe(card);
+    });
+
+    // Safety net: if the observer never fires — a background tab, a headless or
+    // non-compositing renderer — show everything anyway rather than leaving the
+    // section blank.
+    const failSafe = window.setTimeout(() => cards.forEach(reveal), 2500);
+
+    return () => {
+      window.clearTimeout(failSafe);
+      observer.disconnect();
+    };
+  }, [reviews]);
 
   useEffect(() => {
     let cancelled = false;
@@ -980,6 +1065,69 @@ export function LandingPage() {
           background: var(--primary-muted);
           color: var(--primary);
         }
+        /* A picked date stays visibly picked even after the pointer leaves. */
+        .cal-selected {
+          outline: 2px solid var(--accent);
+          outline-offset: -2px;
+          font-weight: 600;
+        }
+        .cal-day[role="button"] { cursor: pointer; }
+        .cal-day[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+        /* ── reserve-this-date modal ── */
+        .lp-overlay {
+          position: fixed; inset: 0; z-index: 150;
+          background: rgba(20, 14, 8, 0.55);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          display: flex; align-items: center; justify-content: center; padding: 1.5rem;
+          animation: lpFade 0.2s ease both;
+        }
+        @keyframes lpFade { from { opacity: 0; } to { opacity: 1; } }
+        .lp-modal {
+          position: relative; width: min(460px, 100%);
+          background: var(--surface); border: 1px solid var(--border);
+          border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+          padding: 2rem 1.8rem 1.8rem;
+        }
+        .lp-modal-close {
+          position: absolute; top: 0.9rem; right: 1rem;
+          background: transparent; border: none; cursor: pointer;
+          color: var(--text-dim); font-size: 0.85rem; line-height: 1;
+        }
+        .lp-modal-eyebrow {
+          font-family: var(--font-body); font-size: 0.58rem; font-weight: 500;
+          letter-spacing: 0.24em; text-transform: uppercase; color: var(--text-dim);
+        }
+        .lp-modal-title {
+          font-family: var(--font-display); font-size: 1.5rem; font-weight: 500;
+          color: var(--text-primary); margin: 0.3rem 0 0.4rem;
+        }
+        .lp-modal-sub {
+          font-family: var(--font-body); font-size: 0.82rem; font-weight: 300;
+          color: var(--text-muted); margin-bottom: 1.3rem;
+        }
+        .lp-modal-options { display: flex; flex-direction: column; gap: 0.6rem; }
+        .lp-option {
+          display: flex; align-items: flex-start; gap: 0.85rem; text-align: left;
+          width: 100%; padding: 0.9rem 1rem; cursor: pointer;
+          background: var(--bg-subtle); border: 1px solid var(--border);
+          border-radius: var(--r-lg);
+          transition: border-color 0.2s, background 0.2s, transform 0.2s;
+        }
+        .lp-option:hover {
+          border-color: var(--border-accent);
+          background: var(--primary-muted);
+          transform: translateY(-2px);
+        }
+        .lp-option-icon { font-size: 1.15rem; line-height: 1.3; flex-shrink: 0; }
+        .lp-option strong {
+          display: block; font-family: var(--font-body); font-size: 0.85rem;
+          font-weight: 600; color: var(--text-primary); margin-bottom: 0.15rem;
+        }
+        .lp-option small {
+          display: block; font-family: var(--font-body); font-size: 0.72rem;
+          font-weight: 300; color: var(--text-muted); line-height: 1.5;
+        }
         .cal-today    { background: var(--primary); color: var(--primary-text) !important; font-weight: 600; }
         .cal-booked   { background: var(--danger-muted); color: var(--danger); cursor: not-allowed; }
         .cal-booked::after {
@@ -1019,6 +1167,36 @@ export function LandingPage() {
         }
         .testi-card > div:last-child {
           margin-top: auto;
+        }
+
+        /* Scroll-triggered entrance.
+           Cards are VISIBLE by default and only hidden once JS has confirmed it can
+           reveal them again (it adds .testi-pending, then .testi-in on intersect).
+           That ordering matters: a decorative animation must never be able to leave
+           real testimonials invisible if JS is blocked or the observer never fires. */
+        .testi-card {
+          transition:
+            opacity 0.6s ease,
+            transform 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 0.3s,
+            border-color 0.3s;
+        }
+        .testi-card.testi-pending {
+          opacity: 0;
+          transform: translateY(22px);
+        }
+        .testi-card.testi-in {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        /* Reduced motion: show the cards outright rather than animating them in,
+           and drop the hover lift too so nothing moves unexpectedly. */
+        @media (prefers-reduced-motion: reduce) {
+          .testi-card, .testi-card.testi-pending {
+            opacity: 1; transform: none;
+            transition: box-shadow 0.3s, border-color 0.3s;
+          }
+          .testi-card:hover { transform: none; }
         }
         .testi-card:hover {
           box-shadow: var(--shadow-md);
@@ -1384,12 +1562,12 @@ export function LandingPage() {
               </p>
  
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                <a href="#availability" className="btn-hero-primary">
+                <Link to="/book" className="btn-hero-primary">
                   Book Your Event
-                </a>
-                <a href="#menus" className="btn-hero-outline">
+                </Link>
+                <Link to="/menus" className="btn-hero-outline">
                   Explore Our Menu
-                </a>
+                </Link>
               </div>
  
               <div
@@ -1468,8 +1646,8 @@ export function LandingPage() {
                     ₱350
                     <span style={{ fontSize: '0.9rem', fontWeight: 300, color: 'rgba(255,255,255,0.6)' }}>/head</span>
                   </span>
-                  <a
-                    href="#menus"
+                  <Link
+                    to="/menus"
                     style={{
                       background: 'rgba(255,255,255,0.15)',
                       color: '#fff', padding: '0.5rem 1.25rem',
@@ -1481,7 +1659,7 @@ export function LandingPage() {
                     }}
                   >
                     View Menu
-                  </a>
+                  </Link>
                 </div>
               </div>
  
@@ -1604,8 +1782,8 @@ export function LandingPage() {
                     <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: 1.7, fontWeight: 300, marginBottom: '1.5rem' }}>
                       {svc.description}
                     </p>
-                    <a
-                      href={svc.href}
+                    <Link
+                      to={svc.to}
                       style={{
                         fontFamily: 'var(--font-body)', fontSize: '0.62rem',
                         letterSpacing: '0.2em', textTransform: 'uppercase',
@@ -1614,7 +1792,7 @@ export function LandingPage() {
                       }}
                     >
                       {svc.cta} →
-                    </a>
+                    </Link>
                   </div>
                 ))}
               </div>
@@ -1679,8 +1857,8 @@ export function LandingPage() {
                   <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.65, fontWeight: 300, marginBottom: '1.5rem' }}>
                     {pkg.description}
                   </p>
-                  <a
-                    href="#availability"
+                  <Link
+                    to="/packages"
                     style={{
                       marginTop: 'auto',
                       display: 'block', textAlign: 'center',
@@ -1696,13 +1874,13 @@ export function LandingPage() {
                     }}
                   >
                     Learn More
-                  </a>
+                  </Link>
                 </div>
               ))}
             </div>
             <div style={{ textAlign: 'center', marginTop: '3rem' }}>
-              <a
-                href="#packages"
+              <Link
+                to="/packages"
                 style={{
                   fontFamily: 'var(--font-body)', fontSize: '0.65rem',
                   letterSpacing: '0.22em', textTransform: 'uppercase',
@@ -1711,7 +1889,7 @@ export function LandingPage() {
                 }}
               >
                 View All Packages →
-              </a>
+              </Link>
             </div>
           </div>
         </section>
@@ -1862,9 +2040,9 @@ export function LandingPage() {
               ))}
             </div>
             <div style={{ textAlign: 'center', marginTop: '3rem' }}>
-              <a href="#menus" className="btn-hero-primary">
+              <Link to="/menus" className="btn-hero-primary">
                 Full Menu →
-              </a>
+              </Link>
             </div>
           </div>
         </section>
@@ -1940,9 +2118,15 @@ export function LandingPage() {
                     </div>
                   ))}
                 </div>
-                <a href="#availability" className="btn-hero-primary" style={{ display: 'inline-block' }}>
-                  Reserve This Date
-                </a>
+                <button
+                  type="button"
+                  className="btn-hero-primary"
+                  style={{ display: 'inline-block', border: 'none', cursor: selectedDate ? 'pointer' : 'not-allowed', opacity: selectedDate ? 1 : 0.55 }}
+                  disabled={!selectedDate}
+                  onClick={() => setReserveOpen(true)}
+                >
+                  {selectedDate ? `Reserve ${fmtSelected(selectedDate)}` : 'Pick a date above'}
+                </button>
               </div>
  
               <div
@@ -1990,13 +2174,33 @@ export function LandingPage() {
                     const isToday = iso === todayISO;
                     const isBooked = bookedDates.has(iso);
                     const isPast = iso < todayISO && !isToday;
+                    // Only a real, still-bookable date can be picked.
+                    const selectable = !isBooked && !isPast;
+                    const isSelected = selectedDate === iso;
                     return (
                       <div
                         key={day}
-                        className={['cal-day', isToday ? 'cal-today' : '', isBooked ? 'cal-booked' : '', isPast ? 'cal-past' : ''].join(' ')}
+                        role={selectable ? 'button' : undefined}
+                        tabIndex={selectable ? 0 : undefined}
+                        aria-pressed={selectable ? isSelected : undefined}
+                        className={[
+                          'cal-day',
+                          isToday ? 'cal-today' : '',
+                          isBooked ? 'cal-booked' : '',
+                          isPast ? 'cal-past' : '',
+                          isSelected ? 'cal-selected' : '',
+                        ].join(' ')}
                         onMouseEnter={() => setHovered(day)}
                         onMouseLeave={() => setHovered(null)}
-                        title={isBooked ? 'Already booked' : `Book ${iso}`}
+                        onClick={() => selectable && setSelectedDate(isSelected ? null : iso)}
+                        onKeyDown={(e) => {
+                          if (!selectable) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedDate(isSelected ? null : iso);
+                          }
+                        }}
+                        title={isBooked ? 'Already booked' : isPast ? 'Past date' : `Select ${iso}`}
                       >
                         <span>{day}</span>
                       </div>
@@ -2025,7 +2229,7 @@ export function LandingPage() {
  
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative', zIndex: 1 }}>
             <SectionHeader eyebrow="Client Stories" title="What Our" accent="Clients Say" italic align="right" />
-            <div className="testi-grid">
+            <div className="testi-grid" ref={testiGridRef}>
               {/* Approved reviews from the backend; the built-in samples stand in only
                   until the business has approved some of its own. */}
               {(reviews.length > 0
@@ -2125,8 +2329,8 @@ export function LandingPage() {
             </p>
  
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <a
-                href="#availability"
+              <Link
+                to="/book"
                 style={{
                   background: '#fff', color: 'var(--primary)',
                   padding: '1rem 2.5rem',
@@ -2137,9 +2341,9 @@ export function LandingPage() {
                 }}
               >
                 Reserve Your Event
-              </a>
-              <a
-                href="#packages"
+              </Link>
+              <Link
+                to="/packages"
                 style={{
                   background: 'transparent', color: '#fff',
                   border: '1px solid rgba(255,255,255,0.4)',
@@ -2151,7 +2355,7 @@ export function LandingPage() {
                 }}
               >
                 View Packages
-              </a>
+              </Link>
             </div>
  
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'rgba(255,255,255,0.35)', marginTop: '1.5rem', letterSpacing: '0.1em' }}>
@@ -2181,6 +2385,45 @@ export function LandingPage() {
         </footer>
       </main>
  
+      {/* ═══════════════════════ RESERVE-THIS-DATE MODAL ═══════════════════════ */}
+      {reserveOpen && selectedDate && (
+        <div className="lp-overlay" role="dialog" aria-modal="true" aria-label="Choose how to book" onClick={() => setReserveOpen(false)}>
+          <div className="lp-modal" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="lp-modal-close" onClick={() => setReserveOpen(false)} aria-label="Close">✕</button>
+
+            <p className="lp-modal-eyebrow">Reserving</p>
+            <h3 className="lp-modal-title">{fmtSelected(selectedDate)}</h3>
+            <p className="lp-modal-sub">How would you like to plan this event?</p>
+
+            <div className="lp-modal-options">
+              <button type="button" className="lp-option" onClick={() => startBooking('event')}>
+                <span className="lp-option-icon" aria-hidden="true">🍽️</span>
+                <span>
+                  <strong>Full Event Catering</strong>
+                  <small>Food, staff, and setup for your celebration.</small>
+                </span>
+              </button>
+
+              <button type="button" className="lp-option" onClick={() => startBooking('rentals')}>
+                <span className="lp-option-icon" aria-hidden="true">🎪</span>
+                <span>
+                  <strong>Rental Items Only</strong>
+                  <small>Tables, chairs, lights, and equipment.</small>
+                </span>
+              </button>
+
+              <button type="button" className="lp-option" onClick={() => startBooking('plan')}>
+                <span className="lp-option-icon" aria-hidden="true">✨</span>
+                <span>
+                  <strong>Plan by Budget</strong>
+                  <small>Tell us your budget — we’ll suggest kitchen-priced options.</small>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ChatWidget />
     </>
   );

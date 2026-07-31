@@ -20,15 +20,17 @@ namespace System_ApiTest.Controllers
         private readonly Rentalservice _rentals;
         private readonly Packageservice _packages;
         private readonly Invoiceservice _invoices;
+        private readonly Auditlogservice _audit;
 
         public BookingsController(AppDbContext db, Bookingservice bookings, Rentalservice rentals,
-                                  Packageservice packages, Invoiceservice invoices)
+                                  Packageservice packages, Invoiceservice invoices, Auditlogservice audit)
         {
             _db = db;
             _bookings = bookings;
             _rentals = rentals;
             _packages = packages;
             _invoices = invoices;
+            _audit = audit;
         }
 
         // ---------------- Reads ----------------
@@ -54,7 +56,7 @@ namespace System_ApiTest.Controllers
             if (status is not null) query = query.Where(b => b.Status == status);
 
             var list = await query.OrderByDescending(b => b.CreatedAt).ToListAsync();
-            return Ok(list.Select(ToDto));
+            return Ok(list.Select(b => ToDto(b)));
         }
 
         /// <summary>Booking detail: scalars plus every line item (rental lines carry
@@ -210,6 +212,25 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>Marks a Confirmed booking Completed (for a delivery order, this is "delivered").</summary>
+        /// <summary>
+        /// Sets the internal staff note on a booking. Owner/Assistant only — the note is
+        /// never returned to a customer (see ToDto). Send a blank body to clear it.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPut("{id:guid}/admin-note")]
+        public async Task<IActionResult> SetAdminNote(Guid id, [FromBody] SetAdminNoteDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            try
+            {
+                var booking = await _bookings.SetAdminNoteAsync(id, dto.Note);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_NOTE", id.ToString(),
+                    null, new { booking.AdminNote });
+                return Ok(ToDto(booking));
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost("{id:guid}/complete")]
         public async Task<IActionResult> Complete(Guid id)
@@ -406,11 +427,17 @@ namespace System_ApiTest.Controllers
             return Guid.TryParse(sub, out var id) ? id : null;
         }
 
-        private static BookingResponseDto ToDto(Booking b) => new(
+        /// <summary>
+        /// Maps a booking for the current caller. AdminNote is an INTERNAL staff note, so
+        /// it is only ever populated for an Owner/Assistant — a customer reading their own
+        /// booking through this same endpoint gets null, never the note's contents.
+        /// </summary>
+        private BookingResponseDto ToDto(Booking b) => new(
             b.Id, b.BookingName, b.CustomerId, b.BookingType.ToString(),
             b.EventDate, b.StartTime, b.EndDate, b.EndTime,
             b.EventType?.ToString(), b.VenueAddress, b.ContactNumber, b.GuestCount, b.Status.ToString(),
             b.DepositStatus.ToString(), b.TotalAmount, b.MenuPackageId,
-            b.CancellationRequested, b.CancellationRequestReason, b.CreatedAt);
+            b.CancellationRequested, b.CancellationRequestReason, b.CreatedAt,
+            IsAdmin() ? b.AdminNote : null);
     }
 }

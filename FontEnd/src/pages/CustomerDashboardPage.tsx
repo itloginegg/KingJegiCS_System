@@ -6,7 +6,7 @@ import { ChatWidget } from '../components/landing/ChatWidget';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
   LayoutDashboard, CalendarDays, CreditCard, Package,
-  Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake,
+  Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake, Truck,
   Cake, PartyPopper, Building2, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
 } from 'lucide-react';
 import {
@@ -74,7 +74,20 @@ const EVENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
   birthday: { label: 'Birthday Celebration', icon: <Cake size={16} /> },
   debut: { label: 'Debut Celebration', icon: <PartyPopper size={16} /> },
   corporate: { label: 'Corporate Event', icon: <Building2 size={16} /> },
+  delivery: { label: 'Food Delivery', icon: <Truck size={16} /> },
 };
+
+/**
+ * The right EVENT_META entry for a booking.
+ *
+ * A FoodDelivery order has no eventType at all (null, by backend design), so it must
+ * be branched on FIRST — otherwise normalizeType(null) returns its 'wedding' default
+ * and every delivery renders as "Wedding Event".
+ */
+const bookingMeta = (booking: { bookingType: string; eventType: string | null }) =>
+  booking.bookingType === 'FoodDelivery'
+    ? EVENT_META.delivery
+    : EVENT_META[normalizeType(booking.eventType)] ?? EVENT_META.wedding;
 
 const BOOKING_STATUS: Record<string, { label: string; color: string }> = {
   pending: { label: 'Pending Approval', color: 'var(--accent)' },
@@ -232,7 +245,7 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
     void fetchDetail();
   }, [booking.id]);
 
-  const meta = EVENT_META[normalizeType(booking.eventType)] || EVENT_META.wedding;
+  const meta = bookingMeta(booking);
   const st = statusBadge || BOOKING_STATUS[normalizeStatus(booking.status)] || BOOKING_STATUS.pending;
   return (
     <div className="cds-overlay" onClick={onClose}>
@@ -1049,7 +1062,7 @@ export function CustomerDashboardPage() {
     return bookings
       .filter((b) => statusFilter === 'all' || b.status === statusFilter)
       .filter((b) => {
-        const meta = EVENT_META[normalizeType(b.eventType) as keyof typeof EVENT_META] || EVENT_META.wedding;
+        const meta = bookingMeta(b);
         return (
           q === '' ||
           b.id.toLowerCase().includes(q) ||
@@ -1720,7 +1733,7 @@ export function CustomerDashboardPage() {
                     <div style={{ flex: 1, padding: '1.4rem 1.75rem', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '0.5rem' }}>
                       <div><StatusBadge label={deriveBookingStatus(nextBooking).label} color={deriveBookingStatus(nextBooking).color} /></div>
                       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.45rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0, lineHeight: 1.15 }}>
-                        {(EVENT_META[normalizeType(nextBooking.eventType)] || EVENT_META.wedding).label}
+                        {bookingMeta(nextBooking).label}
                       </h3>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem 1.4rem', fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><MapPin size={12} /> {nextBooking.venueAddress}</span>
@@ -1780,10 +1793,10 @@ export function CustomerDashboardPage() {
                     </div>
                     {bookings.slice(0, 4).map((b) => (
                       <div key={b.id} className="cds-row">
-                        <div className="cds-glyph">{EVENT_META[normalizeType(b.bookingType) as keyof typeof EVENT_META].icon}</div>
+                        <div className="cds-glyph">{bookingMeta(b).icon}</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {EVENT_META[normalizeType(b.bookingType) as keyof typeof EVENT_META].label}
+                            {bookingMeta(b).label}
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.1rem' }}>
                             {fmtDate(b.eventDate || '')} · {b.guestCount} guests
@@ -1854,7 +1867,7 @@ export function CustomerDashboardPage() {
     <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-dim)' }}>Loading bookings...</div>
   ) : filteredBookings.map((b) => {
                     const order = invoiceOf(b);
-                    const meta = EVENT_META[normalizeType(b.eventType) as keyof typeof EVENT_META] || EVENT_META.wedding;
+                    const meta = bookingMeta(b);
                     const st = deriveBookingStatus(b);
                     const rawStatus = b.status.toLowerCase();
                     const cancellable = rawStatus === 'draft' || rawStatus === 'pending';

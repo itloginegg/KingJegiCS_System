@@ -158,7 +158,18 @@ namespace System_ApiTest.DTOs
         Guid? MenuPackageId,
         bool CancellationRequested,
         string? CancellationRequestReason,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+        /* Internal staff note. Present on the shared response DTO, so it is only ever
+           returned to admins by the endpoints that are already role-gated — see
+           BookingsController.SetAdminNote. */
+        string? AdminNote);
+
+    /// <summary>Body for setting a booking's internal staff note. Null or blank clears it.</summary>
+    public class SetAdminNoteDto
+    {
+        [MaxLength(2000, ErrorMessage = "Note is too long (2000 characters maximum).")]
+        public string? Note { get; set; }
+    }
 
     // ===== Booking line items (shown on the booking detail) =====
 

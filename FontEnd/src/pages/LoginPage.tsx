@@ -7,7 +7,8 @@ import { LoginForm } from '../components/auth/LoginForm';
 import { dashboardPathFor } from '../routes/paths';
 
 interface RedirectState {
-  from?: { pathname: string };
+  /** ProtectedRoute stores the whole location, so this can carry a query string too. */
+  from?: { pathname: string; search?: string };
   /** Set by RegisterPage after a successful sign-up. */
   registeredEmail?: string;
 }
@@ -42,7 +43,11 @@ export function LoginPage() {
       // Prefer the page the user was originally headed to (set by ProtectedRoute),
       // otherwise fall back to the role's default dashboard.
       const state = location.state as RedirectState | null;
-      const target = state?.from?.pathname ?? dashboardPathFor(signedInUser.user.role);
+      // Keep the query string as well — dropping it lost things like ?tab=payments,
+      // landing the user on the right page but the wrong view.
+      const target = state?.from
+        ? `${state.from.pathname}${state.from.search ?? ''}`
+        : dashboardPathFor(signedInUser.user.role);
       navigate(target, { replace: true });
     } catch {
       setOtpStep(false);

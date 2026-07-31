@@ -46,6 +46,7 @@ import {
   cancelBooking,
   submitBooking,
   generateInvoice,
+  setBookingAdminNote,
   getBookingDetail,
   getBookingHistory,
   getInvoiceByBooking,
@@ -1113,6 +1114,36 @@ export function AdminDashboardPage() {
   const [resSearch, setResSearch] = useState('');
   const [cancelResId, setCancelResId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+
+  /* internal staff notes — one open editor at a time, keyed by booking id */
+  const [noteResId, setNoteResId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
+
+  const openNoteEditor = (b: BookingResponse) => {
+    setNoteResId(b.id);
+    setNoteDraft(b.adminNote ?? '');
+  };
+
+  const saveAdminNote = async (bookingId: string) => {
+    const session = readSession();
+    if (!session?.token) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setNoteBusyId(bookingId);
+    try {
+      // Blank clears the note server-side, so "save an empty box" reads as "delete".
+      const updated = await setBookingAdminNote(session.token, bookingId, noteDraft.trim() || null);
+      setReservations((prev) => prev.map((r) => (r.id === bookingId ? updated : r)));
+      setNoteResId(null);
+      notify('success', updated.adminNote ? 'Note saved.' : 'Note cleared.');
+    } catch (err) {
+      notify('error', err instanceof BookingApiError ? err.message : 'Could not save the note.');
+    } finally {
+      setNoteBusyId(null);
+    }
+  };
 
   /* payments tab state */
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentStatusKey>('all');
@@ -3024,6 +3055,15 @@ export function AdminDashboardPage() {
                               {contractBusyId === r.id ? 'Preparing…' : 'Generate Contract'}
                             </button>
                           )}
+                          {r.status === 'Confirmed' && (
+                            <button
+                              type="button"
+                              className="adm-btn outline"
+                              onClick={() => (noteResId === r.id ? setNoteResId(null) : openNoteEditor(r))}
+                            >
+                              {r.adminNote ? '📝 Edit Note' : '📝 Add Note'}
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="adm-btn outline"
@@ -3035,6 +3075,34 @@ export function AdminDashboardPage() {
                             <button type="button" className="adm-btn danger" onClick={() => { setCancelResId(r.id); setCancelReason(''); }}>Cancel</button>
                           )}
                         </div>
+
+                        {/* Internal staff note. Shown read-only when set and the editor
+                            is closed, so it's visible at a glance without a click. */}
+                        {r.status === 'Confirmed' && r.adminNote && noteResId !== r.id && (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.8rem', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.55rem 0.8rem', borderLeft: '2px solid var(--border-accent)', whiteSpace: 'pre-wrap' }}>
+                            <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Staff note:</strong> {r.adminNote}
+                          </p>
+                        )}
+
+                        {noteResId === r.id && (
+                          <div style={{ marginTop: '0.9rem' }}>
+                            <FieldLabel text="Internal staff note — not shown to the customer" />
+                            <textarea
+                              className="adm-input"
+                              style={{ width: '100%', minHeight: 80, marginTop: '0.35rem', resize: 'vertical' }}
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value)}
+                              maxLength={2000}
+                              placeholder="Allergies, venue access, who to call on site…"
+                            />
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                              <button type="button" className="adm-btn primary" disabled={noteBusyId === r.id} onClick={() => void saveAdminNote(r.id)}>
+                                {noteBusyId === r.id ? 'Saving…' : 'Save Note'}
+                              </button>
+                              <button type="button" className="adm-btn outline" onClick={() => setNoteResId(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        )}
 
                         {cancelling && (
                           <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.9rem' }}>
