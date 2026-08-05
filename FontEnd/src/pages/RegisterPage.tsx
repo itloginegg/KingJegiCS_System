@@ -8,6 +8,8 @@ import {
   verifyEmail,
 } from '../api/authApi';
 import { hasErrors, validateRegistration } from '../lib/validation';
+import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
+import { formatPhPhone, toE164 } from '../lib/phone';
 import { useAuth } from '../hooks/useAuth';
 import { dashboardPathFor } from '../routes/paths';
 
@@ -56,6 +58,17 @@ export function RegisterPage() {
       setValues(next);
       if (submitted) setErrors(validateRegistration(next));
     };
+
+  /**
+   * The phone field shows the "+63 000-000-0000" mask but `values.phoneNumber`
+   * stays canonical E.164 — both validateRegistration() and the server's
+   * `^\+[1-9]\d{6,14}$` annotation reject anything with spaces or dashes.
+   */
+  const setPhoneNumber = (masked: string) => {
+    const next = { ...values, phoneNumber: toE164(masked) };
+    setValues(next);
+    if (submitted) setErrors(validateRegistration(next));
+  };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -302,13 +315,11 @@ export function RegisterPage() {
               {field(
                 'phoneNumber',
                 'Phone number',
-                <input
+                <PhoneNumberInput
                   {...inputProps('phoneNumber')}
-                  type="tel"
                   name="phoneNumber"
-                  autoComplete="tel"
-                  inputMode="tel"
-                  placeholder="+639171234567"
+                  value={formatPhPhone(values.phoneNumber)}
+                  onChange={setPhoneNumber}
                 />,
               )}
 

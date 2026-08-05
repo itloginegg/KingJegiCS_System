@@ -756,7 +756,7 @@ namespace System_ApiTest.Services
                     "guestCount": { "type": "INTEGER", "description": "Number of guests to feed." },
                     "eventDate": { "type": "STRING", "description": "Event or delivery date, YYYY-MM-DD." },
                     "bookingType": { "type": "STRING", "enum": ["FullService", "FoodDelivery"] },
-                    "eventType": { "type": "STRING", "enum": ["Wedding", "Corporate", "Birthday", "Others"], "description": "Optional; only meaningful for FullService." },
+                    "eventType": { "type": "STRING", "enum": ["Wedding", "Corporate", "Birthday", "Debut", "Others"], "description": "Optional; only meaningful for FullService." },
                     "preferences": {
                       "type": "OBJECT",
                       "properties": {

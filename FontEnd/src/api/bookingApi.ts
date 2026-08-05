@@ -37,10 +37,24 @@ export class BookingApiError extends Error {
 
 // ── Types ──────────────────────────────────────────────────────────────
 
+/**
+ * Matches the backend BookingType enum (Models/Booking.cs).
+ * RentalService is equipment-only: event-dated and deposit-based like FullService,
+ * but it doesn't consume a calendar event slot and reserves on 5% of its total.
+ */
+export type BookingTypeName = 'FullService' | 'FoodDelivery' | 'RentalService';
+
+/** Display labels, so every screen names the types the same way. */
+export const BOOKING_TYPE_LABELS: Record<BookingTypeName, string> = {
+  FullService: 'Full Service',
+  FoodDelivery: 'Food Delivery',
+  RentalService: 'Rental Service',
+};
+
 /** Matches BookingCreateDto on the backend. */
 export interface BookingCreatePayload {
   customerId: string;
-  bookingType: 'FullService' | 'FoodDelivery';
+  bookingType: BookingTypeName;
   eventDate: string;          // "YYYY-MM-DD"
   startTime: string;          // "HH:mm:ss"
   endDate?: string | null;
@@ -407,6 +421,32 @@ export function completeBooking(token: string, bookingId: string): Promise<Booki
 
 export function cancelBooking(token: string, bookingId: string): Promise<BookingResponse> {
   return request<BookingResponse>(`/api/Bookings/${bookingId}/cancel`, 'POST', token);
+}
+
+/**
+ * Deletes an abandoned Draft booking. Draft-only server-side; anything further along
+ * returns 400 and must be cancelled instead.
+ */
+export function deleteDraftBooking(token: string, bookingId: string): Promise<void> {
+  return request<void>(`/api/Bookings/${bookingId}`, 'DELETE', token);
+}
+
+/**
+ * Fire-and-forget variant for page unload. `keepalive` lets the browser finish the
+ * request after the page starts tearing down, which a plain fetch won't — but it's
+ * still best-effort, so the backend's DraftCleanupWorker is the real guarantee, not
+ * this call. Never throws.
+ */
+export function deleteDraftBookingOnUnload(token: string, bookingId: string): void {
+  try {
+    void fetch(`${API_BASE_URL}/api/Bookings/${bookingId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* unload-time failures are expected; the sweep cleans up */
+  }
 }
 
 /**

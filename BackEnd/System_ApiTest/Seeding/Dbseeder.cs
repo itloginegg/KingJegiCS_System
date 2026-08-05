@@ -36,7 +36,7 @@ namespace System_ApiTest.Seeding
             if (!await db.SystemSettings.AnyAsync())
             {
                 // Entity property initializers supply the business defaults
-                // (12% tax, 50% deposit, capacity 3, ₱5,000 fee, 3h buffer, 3/1 lead days).
+                // (12% tax, 50% deposit, capacity 3, ₱5,000 fee, 3h buffer, 7/1 lead days).
                 db.SystemSettings.Add(new Systemsettings());
                 await db.SaveChangesAsync();
                 logger.LogInformation("Seeded SystemSettings singleton with defaults.");

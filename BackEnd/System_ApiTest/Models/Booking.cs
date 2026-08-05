@@ -9,7 +9,15 @@ namespace System_ApiTest.Models
         Wedding,
         Corporate,
         Birthday,
-        Others
+        Others,
+
+        /// <summary>
+        /// Debut (18th birthday) — a distinct occasion here, not a generic birthday.
+        /// The booking wizard and the customer dashboard have always offered it; the
+        /// enum simply never had it, so choosing it made the whole request body fail to
+        /// deserialize. Appended last, and the column is nvarchar, so no migration.
+        /// </summary>
+        Debut
     }
 
     /// <summary>
@@ -21,7 +29,21 @@ namespace System_ApiTest.Models
     public enum BookingType
     {
         FullService,
-        FoodDelivery
+        FoodDelivery,
+
+        /// <summary>
+        /// Equipment only — chairs, tables, lights — with no catering attached.
+        /// Event-dated and deposit-based like FullService, but it does NOT consume one
+        /// of the day's event slots: renting out chairs doesn't occupy the venue, and
+        /// its real scarcity limit is rental stock, which is enforced at confirm.
+        ///
+        /// Its reservation fee is 5% of the total rather than the flat SystemSettings
+        /// amount (see BookingMath.ReservationFeeFor).
+        ///
+        /// Appended last, and the column is nvarchar (HasConversion&lt;string&gt;()), so
+        /// no migration and no risk to existing stored values.
+        /// </summary>
+        RentalService
     }
 
     /// <summary>Lifecycle status of a booking. New bookings start as Draft.</summary>

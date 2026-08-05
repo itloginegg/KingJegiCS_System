@@ -213,6 +213,32 @@ namespace System_ApiTest.Controllers
 
         /// <summary>Marks a Confirmed booking Completed (for a delivery order, this is "delivered").</summary>
         /// <summary>
+        /// Deletes an abandoned Draft booking. Used when a customer leaves the booking
+        /// wizard without submitting, and by the background sweep for stale Drafts.
+        ///
+        /// Draft-only and ownership-checked: a customer may erase their own unsubmitted
+        /// draft, staff may erase any. Anything Pending or later has history, an invoice
+        /// and possibly payments — those must be cancelled, never deleted, so this
+        /// refuses them.
+        /// </summary>
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> DeleteDraft(Guid id)
+        {
+            var booking = await _db.Bookings.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id);
+            if (booking is null) return NotFound();
+
+            if (!IsAdmin() && booking.CustomerId != CurrentUserId())
+                return Forbid();
+
+            try
+            {
+                await _bookings.DeleteDraftAsync(id);
+                return NoContent();
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        /// <summary>
         /// Sets the internal staff note on a booking. Owner/Assistant only — the note is
         /// never returned to a customer (see ToDto). Send a blank body to clear it.
         /// </summary>

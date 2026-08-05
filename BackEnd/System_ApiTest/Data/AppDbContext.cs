@@ -52,6 +52,9 @@ namespace System_ApiTest.Data
         // Notifications (background worker idempotency ledger)
         public DbSet<Sentnotification> SentNotifications => Set<Sentnotification>();
 
+        // Admin broadcasts to the customer base (delivered via the ledger above)
+        public DbSet<Announcement> Announcements => Set<Announcement>();
+
         // Virtual assistant (conversation history)
         public DbSet<Conversation> Conversations => Set<Conversation>();
         public DbSet<Conversationmessage> ConversationMessages => Set<Conversationmessage>();
@@ -349,6 +352,10 @@ namespace System_ApiTest.Data
                     t.HasCheckConstraint("CK_SystemSettings_BufferNonNeg", "[EventBufferHours] >= 0");
                     t.HasCheckConstraint("CK_SystemSettings_LeadDaysNonNeg",
                         "[MinLeadDaysFullService] >= 0 AND [MinLeadDaysDelivery] >= 0");
+                    // A start at or after the end would make the open-slot window empty
+                    // or negative, so every date would advertise as fully booked.
+                    t.HasCheckConstraint("CK_SystemSettings_OperatingHoursOrder",
+                        "[OperatingHoursEnd] > [OperatingHoursStart]");
                 });
             });
 
@@ -424,6 +431,18 @@ namespace System_ApiTest.Data
                 e.HasIndex(n => n.CustomerId);
                 e.HasOne(n => n.Customer).WithMany()
                  .HasForeignKey(n => n.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- Announcement (admin broadcast) ----------------
+            b.Entity<Announcement>(e =>
+            {
+                // The admin list is newest-first.
+                e.HasIndex(a => a.CreatedAt);
+
+                // An announcement outlives nothing: the admin who posted it can't be
+                // removed out from under it. Same Restrict stance as AuditLog.
+                e.HasOne(a => a.CreatedBy).WithMany()
+                 .HasForeignKey(a => a.CreatedById).OnDelete(DeleteBehavior.Restrict);
             });
 
             // ---------------- Conversation / Conversationmessage (virtual assistant) ----------------

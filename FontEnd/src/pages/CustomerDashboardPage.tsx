@@ -107,6 +107,20 @@ const fmtDate = (iso: string) => {
   }
 };
 
+/**
+ * "14:30:00" → "2:30 PM". The API sends TimeOnly as HH:mm:ss, which isn't a date, so
+ * it's parsed positionally rather than through Date(). Null/absent renders as an
+ * em dash (a FoodDelivery order has no end time at all).
+ */
+const fmtTime = (hms: string | null | undefined) => {
+  if (!hms) return '—';
+  const [h, m] = hms.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hms;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+};
+
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
     <span
@@ -266,6 +280,15 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
         <div className="cds-modal-body" style={{ overflowY: 'auto', padding: '1.6rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.1rem', marginBottom: '1.5rem' }}>
             <div><FieldLabel text="Event Date" /><strong className="cds-value">{(booking.eventDate ? fmtDate(booking.eventDate) : 'TBD')}</strong></div>
+            <div><FieldLabel text="Start Time" /><strong className="cds-value">{fmtTime(booking.startTime)}</strong></div>
+            {/* End date/time only exist on event-style bookings — a FoodDelivery order
+                has neither by backend design, so showing empty rows would be noise. */}
+            {booking.bookingType !== 'FoodDelivery' && (
+              <>
+                <div><FieldLabel text="End Date" /><strong className="cds-value">{booking.endDate ? fmtDate(booking.endDate) : '—'}</strong></div>
+                <div><FieldLabel text="End Time" /><strong className="cds-value">{fmtTime(booking.endTime)}</strong></div>
+              </>
+            )}
             <div><FieldLabel text="Status" /><strong className="cds-value" style={{ color: st.color }}>{st.label}</strong></div>
             <div><FieldLabel text="Venue" /><strong className="cds-value">{booking.venueAddress}</strong></div>
             <div><FieldLabel text="Guests" /><strong className="cds-value">{booking.guestCount}</strong></div>
@@ -1034,11 +1057,21 @@ export function CustomerDashboardPage() {
   const invoiceOf = (b: BookingResponseDto) => invoices.find((i) => i.bookingId === b.id);
   const deriveBookingStatus = (b: BookingResponseDto) => {
     if (b.status.toLowerCase().includes('cancel')) return { label: 'Cancelled', color: 'var(--danger)' };
+
+    // "Completed" is a LIFECYCLE fact — the event actually happened and an admin said
+    // so — and it lives on Booking.Status. It is not the same as being fully paid.
+    // This used to read the invoice's 'Paid' state and call that Completed, which told
+    // customers their event was over the moment they settled the balance, sometimes
+    // months early. Booking status is checked first so payment state can never
+    // override it.
+    if (b.status.toLowerCase() === 'completed') return { label: 'Completed', color: 'var(--success)' };
+
     const order = invoiceOf(b);
     if (!order) return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
     if (order.status === 'Unpaid') return { label: 'Pending', color: 'var(--accent)' };
+    // Fully paid but not yet held: still Confirmed, with the payment state said plainly.
+    if (order.status === 'Paid') return { label: 'Confirmed · Fully Paid', color: 'var(--primary)' };
     if (order.status === 'Partial' || order.status === 'Reserved') return { label: 'Confirmed', color: 'var(--primary)' };
-    if (order.status === 'Paid') return { label: 'Completed', color: 'var(--success)' };
     return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
   };
 
@@ -1050,6 +1083,30 @@ export function CustomerDashboardPage() {
   const nextBooking = [...activeBookings]
     .filter((b) => new Date(b.eventDate || '') >= new Date())
     .sort((a, b) => +new Date(a.eventDate || '') - +new Date(b.eventDate || ''))[0];
+
+  /**
+   * One row per invoiced booking for the Payment Summary breakdown. Sourced from the
+   * invoice (the authoritative money record), with the booking supplying only its
+   * name. Ordered by outstanding amount so whatever needs paying first is on top.
+   */
+  const paymentBreakdown = useMemo(
+    () =>
+      invoices
+        .map((inv) => {
+          const booking = bookings.find((b) => b.id === inv.bookingId);
+          const due = inv.grandTotal - inv.paidTotal;
+          return {
+            id: inv.id,
+            name: booking ? bookingMeta(booking).label : 'Booking',
+            total: inv.grandTotal,
+            paid: inv.paidTotal,
+            due,
+            pct: inv.grandTotal > 0 ? Math.round((inv.paidTotal / inv.grandTotal) * 100) : 0,
+          };
+        })
+        .sort((a, b) => b.due - a.due),
+    [invoices, bookings],
+  );
 
   const totalValue = invoices.reduce((s, i) => s + i.grandTotal, 0);
   const totalPaid = invoices.reduce((s, i) => s + i.paidTotal, 0);
@@ -1775,6 +1832,34 @@ export function CustomerDashboardPage() {
                         Total contract value: {fmt(totalValue)}
                       </span>
                     </div>
+
+                    {/* Per-booking breakdown. The totals above answer "how much do I owe
+                        overall"; this answers "which event is that on", which the summary
+                        alone couldn't. Only invoiced bookings appear — a booking with no
+                        invoice yet has nothing to owe. */}
+                    {paymentBreakdown.length > 0 && (
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+                        <FieldLabel text="By Booking" />
+                        {paymentBreakdown.map((row) => (
+                          <div key={row.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.6rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem' }}>
+                              <span style={{ color: 'var(--text-primary)', fontWeight: 500, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {row.name}
+                              </span>
+                              <span style={{ color: 'var(--text-dim)', fontWeight: 300, whiteSpace: 'nowrap' }}>
+                                {row.pct}%
+                              </span>
+                            </div>
+                            <div className="cds-bar"><div style={{ width: `${row.pct}%` }} /></div>
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                              {fmt(row.paid)} paid of {fmt(row.total)}
+                              {row.due > 0 && <> · <span style={{ color: 'var(--danger)' }}>{fmt(row.due)} due</span></>}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <button type="button" className="cds-btn outline" style={{ alignSelf: 'flex-start' }} onClick={() => setTab('payments')}>
                       Go to Payments →
                     </button>
@@ -2100,9 +2185,13 @@ export function CustomerDashboardPage() {
                               : p.status === 'Failed' ? 'var(--danger)'
                               : p.status === 'Pending' ? 'var(--accent)'
                               : '#4a90d9';
+                            // A completed event has already been delivered, so its
+                            // payments are no longer refundable — asking would be a
+                            // dispute, not a refund request.
+                            const bookingCompleted = bk?.status?.toLowerCase() === 'completed';
                             const refundable =
                               (p.status === 'Success' || p.status === 'PartiallyRefunded') &&
-                              p.refundableRemaining > 0 && !p.refundRequested;
+                              p.refundableRemaining > 0 && !p.refundRequested && !bookingCompleted;
                             return (
                               <tr key={p.id}>
                                 <td style={{ padding: '0.8rem 1.4rem' }}>

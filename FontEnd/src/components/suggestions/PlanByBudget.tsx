@@ -11,6 +11,14 @@ import {
 import { BookingApiError } from '../../api/bookingApi';
 import { readSession } from '../../lib/tokenStorage';
 import { ProposalCard, ProposalCardStyles } from './ProposalCard';
+import { PhoneNumberInput } from '../forms/PhoneNumberInput';
+import { VenueAddressFields } from '../forms/VenueAddressFields';
+import {
+  composeVenueAddress,
+  emptyVenueAddress,
+  isVenueAddressComplete,
+  type VenueAddress,
+} from '../../lib/venue';
 
 /*
  * Plan by Budget — relocated out of CustomerDashboardPage into BookingPage's Step 0.
@@ -47,7 +55,7 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
   const [authPrompt, setAuthPrompt] = useState(false);
 
   const [chosen, setChosen] = useState<Proposal | null>(null);
-  const [venue, setVenue] = useState('');
+  const [venue, setVenue] = useState<VenueAddress>(emptyVenueAddress);
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -93,15 +101,15 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
     setAuthPrompt(false);
     setChosen(p);
     setEndDate(eventDate);
-    setStartTime(''); setEndTime(''); setVenue(''); setContact(''); setMError('');
+    setStartTime(''); setEndTime(''); setVenue(emptyVenueAddress); setContact(''); setMError('');
   };
 
   const materialize = async () => {
     if (!chosen) return;
     const session = readSession();
     if (!session) { onRequireLogin(); return; }
-    if (!venue.trim() || !startTime || (isFull && (!endDate || !endTime))) {
-      setMError('Please fill in the venue, start time, and (for events) end date and time.');
+    if (!isVenueAddressComplete(venue) || !startTime || (isFull && (!endDate || !endTime))) {
+      setMError('Please fill in the venue street and city, start time, and (for events) end date and time.');
       return;
     }
     if (isFull) {
@@ -122,7 +130,7 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
         endDate: isFull ? (endDate || eventDate) : null,
         endTime: isFull ? toHms(endTime) : null,
         eventType: isFull ? eventType : null,
-        venueAddress: venue.trim(),
+        venueAddress: composeVenueAddress(venue),
         guestCount: isFull ? Number(guestCount) : null,
         contactNumber: contact.trim() || null,
         proposal: {
@@ -259,13 +267,20 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <label><span className="pbg-label">Venue / delivery address</span><input className="pbg-input" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="Street, City" required /></label>
+              <VenueAddressFields
+                value={venue}
+                onChange={setVenue}
+                labelClassName="pbg-label"
+                inputClassName="pbg-input"
+                required
+                labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
+              />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.9rem' }}>
                 <label><span className="pbg-label">{isFull ? 'Start time' : 'Delivery time'}</span><input className="pbg-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required /></label>
                 {isFull && <label><span className="pbg-label">End time</span><input className="pbg-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required /></label>}
               </div>
               {isFull && <label><span className="pbg-label">End date</span><input className="pbg-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required /></label>}
-              <label><span className="pbg-label">Contact number (optional)</span><input className="pbg-input" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="09xx xxx xxxx" /></label>
+              <label><span className="pbg-label">Contact number (optional)</span><PhoneNumberInput className="pbg-input" value={contact} onChange={setContact} /></label>
 
               {mError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem' }}>{mError}</div>}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.2rem' }}>

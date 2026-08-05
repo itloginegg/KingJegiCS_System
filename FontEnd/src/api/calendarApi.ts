@@ -2,8 +2,10 @@
  * Calendar API — talks to CalendarDaysController.
  *
  * Endpoint inventory:
- *   GET /api/CalendarDays?from=&to=  → real per-day lock state (anonymous)
- *   PUT /api/CalendarDays/lock       → manually lock/unlock a day (Owner/Assistant)
+ *   GET /api/CalendarDays?from=&to=      → real per-day lock state (anonymous)
+ *   GET /api/CalendarDays/booking-rules  → configured lead times (anonymous)
+ *   GET /api/CalendarDays/time-slots?date= → open/busy windows for a date (anonymous)
+ *   PUT /api/CalendarDays/lock           → manually lock/unlock a day (Owner/Assistant)
  *
  * The read is the single source of truth for "is this date available": it returns the
  * same numbers Calendarday.RecalculateLock() derives on the server, so no caller has to
@@ -93,6 +95,64 @@ async function request<T>(path: string, method: string, token?: string, body?: u
 export function getCalendarDays(from: string, to: string): Promise<CalendarDay[]> {
   return request<CalendarDay[]>(
     `/api/CalendarDays?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    'GET',
+  );
+}
+
+/** Matches BookingRulesDto on the backend. */
+export interface BookingRules {
+  minLeadDaysFullService: number;
+  minLeadDaysDelivery: number;
+  /** "YYYY-MM-DD" — the earliest legal full-service/rental date, per the SERVER's clock. */
+  earliestFullServiceDate: string;
+  /** "YYYY-MM-DD" — the earliest legal food-delivery date. */
+  earliestDeliveryDate: string;
+}
+
+/**
+ * The configured lead times, so a form can reject a too-soon date before submitting.
+ *
+ * Fetched rather than hardcoded because the lead time is an owner-editable setting:
+ * a copy in the frontend would silently disagree with the API the moment it's changed.
+ * Anonymous — guests fill in the booking wizard before signing in.
+ */
+export function getBookingRules(): Promise<BookingRules> {
+  return request<BookingRules>('/api/CalendarDays/booking-rules', 'GET');
+}
+
+/** One [start, end) span on a single day. Times are "HH:mm:ss". */
+export interface TimeWindow {
+  start: string;
+  end: string;
+}
+
+/** Matches DayTimeSlotsDto. */
+export interface DayTimeSlots {
+  date: string;
+  opensAt: string;
+  closesAt: string;
+  bufferHours: number;
+  dayLocked: boolean;
+  /** What confirmed events occupy, clipped to the day. */
+  busy: TimeWindow[];
+  /**
+   * What a NEW event could take — busy spans expanded by the buffer, subtracted from
+   * operating hours. Deliberately narrower than the complement of `busy`; the
+   * difference is the required setup/teardown gap.
+   */
+  free: TimeWindow[];
+}
+
+/**
+ * Open and occupied windows for one date.
+ *
+ * The gaps are computed server-side from EventBufferHours and the same overlap rule
+ * the booking service enforces — recomputing them here would drift the moment the
+ * buffer changed. Anonymous: the landing calendar calls this without a token.
+ */
+export function getDayTimeSlots(date: string): Promise<DayTimeSlots> {
+  return request<DayTimeSlots>(
+    `/api/CalendarDays/time-slots?date=${encodeURIComponent(date)}`,
     'GET',
   );
 }

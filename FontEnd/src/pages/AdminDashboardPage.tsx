@@ -51,6 +51,8 @@ import {
   getBookingHistory,
   getInvoiceByBooking,
   BookingApiError,
+  BOOKING_TYPE_LABELS,
+  type BookingTypeName,
   type BookingResponse,
   type BookingCreatePayload,
   type BookingDetailResponse,
@@ -87,12 +89,23 @@ import {
 } from '../api/paymentAdminApi';
 import { fetchAuditLogs, AuditApiError, type AuditLogEntry } from '../api/auditApi';
 import {
+  getBookingRules,
   getCalendarDays,
   setDayLock,
   toDateKey,
   CalendarApiError,
+  type BookingRules,
   type CalendarDay,
 } from '../api/calendarApi';
+import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
+import { VenueAddressFields } from '../components/forms/VenueAddressFields';
+import { isCompletePhPhone, toE164 } from '../lib/phone';
+import {
+  composeVenueAddress,
+  emptyVenueAddress,
+  isVenueAddressComplete,
+  type VenueAddress,
+} from '../lib/venue';
 import {
   getMonthlySales,
   getMonthlySalesSummary,
@@ -114,6 +127,12 @@ import {
   type Testimonial,
   type TestimonialStatus,
 } from '../api/testimonialsApi';
+import {
+  getAnnouncements,
+  postAnnouncement,
+  AnnouncementApiError,
+  type Announcement,
+} from '../api/announcementsApi';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -271,6 +290,19 @@ const fmtDate = (iso: string) => {
   }
 };
 
+/**
+ * "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, which isn't a date, so it's
+ * parsed positionally. Null/absent renders as an em dash.
+ */
+const fmtTime = (hms: string | null | undefined) => {
+  if (!hms) return '—';
+  const [h, m] = hms.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hms;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+};
+
 const fmtDateTime = (iso: string) => {
   try {
     return new Date(iso).toLocaleString('en-PH', {
@@ -321,12 +353,14 @@ export function FieldLabel({ text }: { text: string }) {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'placeholder';
+type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'announcements' | 'placeholder';
 
 /** The sidebar's "Booking Histories" link routes here rather than switching tabs in place. */
 const HISTORIES_PATH = '/admin/booking-histories';
 
-const PLACEHOLDER_ITEMS = ['Announcements', 'Chat Support'];
+/* "Announcements" used to live here — it's a real tab now, backed by
+   /api/Announcements. */
+const PLACEHOLDER_ITEMS = ['Chat Support'];
 
 /* ─────────────────────────────────────────────────────────────────────────
    New Booking (item 4) — admin walk-in: find or create a customer, then create
@@ -348,21 +382,49 @@ function NewBookingModal({ onClose, onCreated, notify }: {
   const [wEmail, setWEmail] = useState('');
   const [wPhone, setWPhone] = useState('');
 
-  const [bookingType, setBookingType] = useState<'FullService' | 'FoodDelivery'>('FullService');
+  const [bookingType, setBookingType] = useState<BookingTypeName>('FullService');
   const [eventType, setEventType] = useState('Wedding');
   const [guests, setGuests] = useState('100');
   const [eventDate, setEventDate] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [venue, setVenue] = useState('');
+  const [venue, setVenue] = useState<VenueAddress>(emptyVenueAddress);
   const [contact, setContact] = useState('');
 
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  const isFull = bookingType === 'FullService';
+  /**
+   * Which types need the event fields (end date/time, event type, guest count).
+   *
+   * Deliberately "not a delivery" rather than "is FullService": RentalService is
+   * event-dated too, and the backend's BookingCreateDto.Validate() requires those
+   * fields for anything that isn't FoodDelivery. Testing for FullService here hid
+   * the inputs for a rental and then posted nulls the server rejects.
+   */
+  const isFull = bookingType !== 'FoodDelivery';
   const toHms = (t: string) => (t.length === 5 ? `${t}:00` : t);
+
+  /* Walk-ins go through the same Bookingservice.CreateAsync as the customer wizard, so
+     the same lead-time rule applies. Fetched rather than hardcoded — it's an
+     owner-editable setting. A failed fetch leaves the picker unconstrained and the
+     server as the only gate, which is how it behaved before. */
+  const [leadRules, setLeadRules] = useState<BookingRules | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getBookingRules()
+      .then((r) => { if (!cancelled) setLeadRules(r); })
+      .catch(() => { if (!cancelled) setLeadRules(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // RentalService follows the full-service lead time; only FoodDelivery is shorter.
+  const earliestDate = isFull
+    ? leadRules?.earliestFullServiceDate
+    : leadRules?.earliestDeliveryDate;
+  const leadDays = isFull ? leadRules?.minLeadDaysFullService : leadRules?.minLeadDaysDelivery;
+  const dateTooSoon = Boolean(eventDate) && Boolean(earliestDate) && eventDate < earliestDate!;
 
   const runSearch = async () => {
     const session = readSession();
@@ -384,7 +446,11 @@ function NewBookingModal({ onClose, onCreated, notify }: {
     const session = readSession();
     if (!session) { setError('You are signed out. Sign in as Owner/Assistant.'); return; }
 
-    if (!eventDate || !startTime || !venue.trim()) { setError('Fill in date, time, and venue/address.'); return; }
+    if (!eventDate || !startTime || !isVenueAddressComplete(venue)) { setError('Fill in date, time, and the venue street and city.'); return; }
+    if (dateTooSoon) {
+      setError(`This booking type needs ${leadDays} day(s) of notice — the earliest date is ${fmtDate(earliestDate!)}.`);
+      return;
+    }
     if (isFull) {
       if (!endDate || !endTime) { setError('Full-service events need an end date and time.'); return; }
       if (new Date(`${endDate}T${toHms(endTime)}`) <= new Date(`${eventDate}T${toHms(startTime)}`)) {
@@ -400,8 +466,9 @@ function NewBookingModal({ onClose, onCreated, notify }: {
         if (!selected) { setError('Select a customer, or switch to New walk-in.'); setCreating(false); return; }
         customerId = selected.id;
       } else {
-        if (!wName.trim() || !wEmail.trim() || !wPhone.trim()) { setError('Fill in the walk-in name, email, and phone.'); setCreating(false); return; }
-        const made = await createWalkInCustomer(session.token, { fullName: wName.trim(), email: wEmail.trim(), phoneNumber: wPhone.trim() });
+        if (!wName.trim() || !wEmail.trim() || !isCompletePhPhone(wPhone)) { setError('Fill in the walk-in name, email, and a complete phone number.'); setCreating(false); return; }
+        // WalkInCustomerDto enforces E.164, so the display mask is stripped here.
+        const made = await createWalkInCustomer(session.token, { fullName: wName.trim(), email: wEmail.trim(), phoneNumber: toE164(wPhone) });
         customerId = made.id;
       }
 
@@ -413,7 +480,7 @@ function NewBookingModal({ onClose, onCreated, notify }: {
         endDate: isFull ? endDate : null,
         endTime: isFull ? toHms(endTime) : null,
         eventType: isFull ? eventType : null,
-        venueAddress: venue.trim(),
+        venueAddress: composeVenueAddress(venue),
         guestCount: isFull ? Number(guests) : null,
         contactNumber: contact.trim() || null,
       };
@@ -466,32 +533,48 @@ function NewBookingModal({ onClose, onCreated, notify }: {
           <div className="form-grid" style={{ marginBottom: '1rem' }}>
             <div className="form-row"><label>Full name</label><input className="adm-input" value={wName} onChange={(e) => setWName(e.target.value)} /></div>
             <div className="form-row"><label>Email</label><input className="adm-input" type="email" value={wEmail} onChange={(e) => setWEmail(e.target.value)} /></div>
-            <div className="form-row"><label>Phone</label><input className="adm-input" value={wPhone} onChange={(e) => setWPhone(e.target.value)} /></div>
+            <div className="form-row"><label>Phone</label><PhoneNumberInput className="adm-input" value={wPhone} onChange={setWPhone} /></div>
           </div>
         )}
 
         <div className="form-grid">
           <div className="form-row"><label>Booking type</label>
-            <select className="adm-input" value={bookingType} onChange={(e) => setBookingType(e.target.value as 'FullService' | 'FoodDelivery')}>
+            <select className="adm-input" value={bookingType} onChange={(e) => setBookingType(e.target.value as BookingTypeName)}>
               <option value="FullService">Full-service event</option>
               <option value="FoodDelivery">Food delivery</option>
+              <option value="RentalService">Rental items only</option>
             </select>
           </div>
           {isFull && (
             <div className="form-row"><label>Event type</label>
               <select className="adm-input" value={eventType} onChange={(e) => setEventType(e.target.value)}>
-                <option>Wedding</option><option>Corporate</option><option>Birthday</option><option>Others</option>
+                <option>Wedding</option><option>Corporate</option><option>Birthday</option><option>Debut</option><option>Others</option>
               </select>
             </div>
           )}
           {isFull && <div className="form-row"><label>Guests</label><input className="adm-input" type="number" min={1} value={guests} onChange={(e) => setGuests(e.target.value)} /></div>}
-          <div className="form-row"><label>{isFull ? 'Event date' : 'Delivery date'}</label><input className="adm-input" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} /></div>
+          <div className="form-row">
+            <label>{isFull ? 'Event date' : 'Delivery date'}</label>
+            <input className="adm-input" type="date" min={earliestDate} value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+            {earliestDate && (
+              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', fontWeight: 300, color: dateTooSoon ? 'var(--danger)' : 'var(--text-dim)', textTransform: 'none', letterSpacing: 'normal' }}>
+                Earliest: {fmtDate(earliestDate)} ({leadDays} days' notice)
+              </span>
+            )}
+          </div>
           <div className="form-row"><label>{isFull ? 'Start time' : 'Delivery time'}</label><input className="adm-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
           {isFull && <div className="form-row"><label>End date</label><input className="adm-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>}
           {isFull && <div className="form-row"><label>End time</label><input className="adm-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div>}
-          <div className="form-row"><label>{isFull ? 'Venue address' : 'Delivery address'}</label><input className="adm-input" value={venue} onChange={(e) => setVenue(e.target.value)} /></div>
-          <div className="form-row"><label>Contact number (optional)</label><input className="adm-input" value={contact} onChange={(e) => setContact(e.target.value)} /></div>
+          <div className="form-row"><label>Contact number (optional)</label><PhoneNumberInput className="adm-input" value={contact} onChange={setContact} /></div>
         </div>
+
+        <VenueAddressFields
+          value={venue}
+          onChange={setVenue}
+          fieldClassName="form-row"
+          inputClassName="adm-input"
+          labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
+        />
 
         {error && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginTop: '0.6rem', fontFamily: 'var(--font-body)' }}>{error}</div>}
 
@@ -815,11 +898,73 @@ export function AdminDashboardPage() {
     }
   };
 
+  /* announcements — admin broadcasts, delivered through the customer notification feed */
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [annLoading, setAnnLoading] = useState(false);
+  const [annError, setAnnError] = useState<string | null>(null);
+  const [annTitle, setAnnTitle] = useState('');
+  const [annBody, setAnnBody] = useState('');
+  const [annPosting, setAnnPosting] = useState(false);
+
+  const loadAnnouncements = async () => {
+    const session = readSession();
+    if (!session?.token) {
+      setAnnError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+    setAnnLoading(true);
+    setAnnError(null);
+    try {
+      setAnnouncements(await getAnnouncements(session.token));
+    } catch (err) {
+      setAnnError(
+        err instanceof AnnouncementApiError ? err.message : 'Could not load announcements. Please try again.',
+      );
+    } finally {
+      setAnnLoading(false);
+    }
+  };
+
+  const submitAnnouncement = async () => {
+    const session = readSession();
+    if (!session?.token) { notify('error', 'You are signed out. Sign in as Owner/Assistant.'); return; }
+    if (!annTitle.trim() || !annBody.trim()) {
+      notify('error', 'An announcement needs both a title and a message.');
+      return;
+    }
+
+    setAnnPosting(true);
+    try {
+      const posted = await postAnnouncement(session.token, {
+        title: annTitle.trim(),
+        body: annBody.trim(),
+      });
+      setAnnouncements((prev) => [posted, ...prev]);
+      setAnnTitle('');
+      setAnnBody('');
+      // NotifiedCount is the real fan-out result, so say what actually happened
+      // rather than assuming everyone was reached.
+      notify(
+        posted.notifiedCount > 0 ? 'success' : 'info',
+        posted.notifiedCount > 0
+          ? `Announcement posted — ${posted.notifiedCount} customer${posted.notifiedCount === 1 ? '' : 's'} notified.`
+          : 'Announcement posted, but no customers were notified. Check that active customers exist.',
+      );
+    } catch (err) {
+      notify('error', err instanceof AnnouncementApiError ? err.message : 'Could not post the announcement.');
+    } finally {
+      setAnnPosting(false);
+    }
+  };
+
   /* calendar — real per-day lock state from /api/CalendarDays (no invented thresholds) */
   const [calendarDays, setCalendarDays] = useState<Map<string, CalendarDay>>(new Map());
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [lockBusyDate, setLockBusyDate] = useState<string | null>(null);
   const [lockTargetDate, setLockTargetDate] = useState<string | null>(null);
+  /* double-clicking a calendar cell opens the day's booking schedule. Reads the
+     already-loaded `reservations` array — no extra endpoint. */
+  const [dayDetailDate, setDayDetailDate] = useState<string | null>(null);
 
   /* sales report — real money from /api/Reports/monthly-sales, plus the AI read */
   const [salesReport, setSalesReport] = useState<MonthlySalesReport | null>(null);
@@ -975,8 +1120,10 @@ export function AdminDashboardPage() {
   const [menuError, setMenuError] = useState<string | null>(null);
   const [menuAuthError, setMenuAuthError] = useState(false);
   const [menuCategory, setMenuCategory] = useState<'all' | string>('all');
+  const [menuSearch, setMenuSearch] = useState('');
 
   const [rentalItems, setRentalItems] = useState<AdminRentalItem[]>([]);
+  const [rentalSearch, setRentalSearch] = useState('');
   const [rentalsLoading, setRentalsLoading] = useState(false);
   const [rentalsError, setRentalsError] = useState<string | null>(null);
   const [rentalFormOpen, setRentalFormOpen] = useState(false);
@@ -1004,6 +1151,7 @@ export function AdminDashboardPage() {
 
   /* service items state — live data from /api/Serviceitems */
   const [serviceItems, setServiceItems] = useState<AdminServiceItem[]>([]);
+  const [serviceSearch, setServiceSearch] = useState('');
   const [servicesLoading, setServicesLoading] = useState(false);
   const [servicesError, setServicesError] = useState<string | null>(null);
   const [serviceFormOpen, setServiceFormOpen] = useState(false);
@@ -1111,6 +1259,7 @@ export function AdminDashboardPage() {
 
   /* bookings tab state */
   const [resFilter, setResFilter] = useState<'all' | ResStatus>('all');
+  const [resTypeFilter, setResTypeFilter] = useState<'all' | BookingTypeName>('all');
   const [resSearch, setResSearch] = useState('');
   const [cancelResId, setCancelResId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -1147,6 +1296,7 @@ export function AdminDashboardPage() {
 
   /* payments tab state */
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentStatusKey>('all');
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<'all' | BookingTypeName>('all');
   const [expandedPayment, setExpandedPayment] = useState<string | null>(null);
 
   /* packages tab state */
@@ -1161,6 +1311,36 @@ export function AdminDashboardPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
+
+  /* admin detail view — read-only full picture of a Confirmed booking. Additive to
+     the notes and contract features, which keep working unchanged. */
+  const [detailBooking, setDetailBooking] = useState<BookingDetailResponse | null>(null);
+  const [detailInvoice, setDetailInvoice] = useState<InvoiceResponseDto | null>(null);
+  const [detailBusyId, setDetailBusyId] = useState<string | null>(null);
+
+  const openBookingDetail = async (b: BookingResponse) => {
+    const session = readSession();
+    if (!session?.token) {
+      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
+      return;
+    }
+    setDetailBusyId(b.id);
+    try {
+      const detail = await getBookingDetail(session.token, b.id);
+      let invoice: InvoiceResponseDto | null = null;
+      try {
+        invoice = await getInvoiceByBooking(session.token, b.id);
+      } catch {
+        // Not invoiced yet — the detail view just omits the money section.
+      }
+      setDetailBooking(detail);
+      setDetailInvoice(invoice);
+    } catch (err) {
+      notify('error', err instanceof BookingApiError ? err.message : 'Could not load the booking details.');
+    } finally {
+      setDetailBusyId(null);
+    }
+  };
 
   /* contract generator state (item 2) — browser print, no server-side PDF */
   const [contractBooking, setContractBooking] = useState<BookingDetailResponse | null>(null);
@@ -1203,6 +1383,8 @@ export function AdminDashboardPage() {
     const q = resSearch.trim().toLowerCase();
     return reservations
       .filter((r) => resFilter === 'all' || r.status === resFilter)
+      // Status and type are independent axes — both must match.
+      .filter((r) => resTypeFilter === 'all' || r.bookingType === resTypeFilter)
       .filter(
         (r) =>
           q === '' ||
@@ -1211,9 +1393,11 @@ export function AdminDashboardPage() {
           (r.eventType && r.eventType.toLowerCase().includes(q)),
       )
       .sort((a, b) => +new Date(a.eventDate) - +new Date(b.eventDate));
-  }, [reservations, resFilter, resSearch]);
+  }, [reservations, resFilter, resTypeFilter, resSearch]);
 
-  const filteredPayments = payments.filter((p) => paymentFilter === 'all' || p.status === paymentFilter);
+  const filteredPayments = payments
+    .filter((p) => paymentFilter === 'all' || p.status === paymentFilter)
+    .filter((p) => paymentTypeFilter === 'all' || p.bookingType === paymentTypeFilter);
 
   const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
 
@@ -1941,11 +2125,15 @@ export function AdminDashboardPage() {
     if (tab === 'overview' || tab === 'payments') void loadPayments();
     if (tab === 'overview') void loadSalesReport();
     if (tab === 'audit') void loadAuditLogs(1);
-    if (tab === 'bookings' || tab === 'histories') void loadBookings();
+    // Overview needs them too: the calendar cells, the day-detail modal and the
+    // pending queue all read `reservations`, which used to stay empty until the
+    // admin had visited the Bookings tab at least once.
+    if (tab === 'overview' || tab === 'bookings' || tab === 'histories') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
     if (tab === 'rentals') void loadRentalCatalog();
     if (tab === 'services') void loadServiceCatalog();
     if (tab === 'testimonials') void loadTestimonials();
+    if (tab === 'announcements') void loadAnnouncements();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -1995,9 +2183,40 @@ export function AdminDashboardPage() {
     () => [...new Set(menuItems.map((m) => m.itemCategory))].sort(),
     [menuItems],
   );
-  const visibleMenuItems = menuItems.filter(
-    (m) => menuCategory === 'all' || m.itemCategory === menuCategory,
-  );
+
+  /* Catalog search — same shape as the Bookings tab's `resSearch`: the tabs
+     already load their full catalogs, so this filters in memory and never adds
+     a request. An empty query matches everything. */
+  const matchesQuery = (q: string, ...fields: (string | null | undefined)[]) =>
+    q === '' || fields.some((f) => (f ?? '').toLowerCase().includes(q));
+
+  const visibleMenuItems = useMemo(() => {
+    const q = menuSearch.trim().toLowerCase();
+    return menuItems
+      .filter((m) => menuCategory === 'all' || m.itemCategory === menuCategory)
+      .filter((m) => matchesQuery(q, m.itemName, m.itemCategory, m.courseCategory, m.description, ...m.dietaryTags));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuItems, menuCategory, menuSearch]);
+
+  /* Trays match on their own name or on any dish they contain, so searching a
+     dish surfaces the trays it belongs to. */
+  const visibleMenuTrays = useMemo(() => {
+    const q = menuSearch.trim().toLowerCase();
+    return menuTrays.filter((t) => matchesQuery(q, t.trayName, ...t.dishes.map((d) => d.itemName)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuTrays, menuSearch]);
+
+  const visibleRentalItems = useMemo(() => {
+    const q = rentalSearch.trim().toLowerCase();
+    return rentalItems.filter((r) => matchesQuery(q, r.itemName, r.category));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rentalItems, rentalSearch]);
+
+  const visibleServiceItems = useMemo(() => {
+    const q = serviceSearch.trim().toLowerCase();
+    return serviceItems.filter((s) => matchesQuery(q, s.serviceName));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceItems, serviceSearch]);
 
   /* calendar cells */
   const calYear = calMonth.getFullYear();
@@ -2346,6 +2565,165 @@ export function AdminDashboardPage() {
 
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
 
+      {/* ══════════ BOOKING DETAIL VIEW (phase 4) ══════════
+          Read-only. Everything the admin needs at a glance without leaving the
+          Bookings tab; editing still happens through the existing actions. */}
+      {detailBooking && (() => {
+        const b = detailBooking.booking;
+        const isDelivery = b.bookingType === 'FoodDelivery';
+        const lineTotal =
+          detailBooking.rentals.reduce((s, r) => s + r.subtotal, 0) +
+          detailBooking.services.reduce((s, sv) => s + sv.totalCost, 0) +
+          detailBooking.menuItems.reduce((s, m) => s + m.lineTotal, 0) +
+          detailBooking.menuTrays.reduce((s, t) => s + t.lineTotal, 0);
+        const hasLines =
+          detailBooking.rentals.length + detailBooking.services.length +
+          detailBooking.menuItems.length + detailBooking.menuTrays.length > 0;
+
+        const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
+          <div>
+            <FieldLabel text={label} />
+            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>
+              {value}
+            </div>
+          </div>
+        );
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Booking details"
+            style={{
+              position: 'fixed', inset: 0, zIndex: 120,
+              background: 'rgba(20, 14, 8, 0.55)', backdropFilter: 'blur(6px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+            }}
+            onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}
+          >
+            <div
+              className="adm-card"
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 'min(720px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.8rem', padding: '1.2rem 1.5rem', borderBottom: '1px solid var(--border)' }}>
+                <div>
+                  <FieldLabel text={`Reference ${b.id.slice(0, 8).toUpperCase()}`} />
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0.15rem 0 0' }}>
+                    {b.bookingName}
+                  </h3>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? '#999'} />
+                  <button type="button" className="adm-iconbtn" aria-label="Close" onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}>✕</button>
+                </div>
+              </div>
+
+              <div style={{ overflowY: 'auto', padding: '1.4rem 1.5rem 1.8rem', display: 'flex', flexDirection: 'column', gap: '1.4rem' }}>
+                <div>
+                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Event</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.9rem' }}>
+                    <Row label="Booking type" value={BOOKING_TYPE_LABELS[b.bookingType as BookingTypeName] ?? b.bookingType} />
+                    <Row label="Event type" value={b.eventType ?? '—'} />
+                    <Row label={isDelivery ? 'Delivery date' : 'Start date'} value={fmtDate(b.eventDate)} />
+                    <Row label={isDelivery ? 'Delivery time' : 'Start time'} value={fmtTime(b.startTime)} />
+                    {!isDelivery && <Row label="End date" value={b.endDate ? fmtDate(b.endDate) : '—'} />}
+                    {!isDelivery && <Row label="End time" value={fmtTime(b.endTime)} />}
+                    <Row label="Guests" value={b.guestCount ?? '—'} />
+                    <Row label="Deposit" value={b.depositStatus} />
+                  </div>
+                  <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.9rem' }}>
+                    <Row label={isDelivery ? 'Delivery address' : 'Venue'} value={b.venueAddress} />
+                    <Row label="Contact number" value={b.contactNumber || '—'} />
+                  </div>
+                </div>
+
+                {b.cancellationRequested && (
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.6rem 0.85rem', borderLeft: '2px solid var(--accent)', margin: 0 }}>
+                    ⚠ <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Cancellation requested:</strong> {b.cancellationRequestReason || 'No reason given.'}
+                  </p>
+                )}
+
+                {b.adminNote && (
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.6rem 0.85rem', borderLeft: '2px solid var(--border-accent)', margin: 0, whiteSpace: 'pre-wrap' }}>
+                    <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Staff note:</strong> {b.adminNote}
+                  </p>
+                )}
+
+                <div>
+                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Items</h4>
+                  {!hasLines && !detailBooking.package ? (
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                      Nothing has been added to this booking yet.
+                    </p>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300 }}>
+                      <tbody>
+                        {detailBooking.package && (
+                          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.45rem 0' }}>
+                              <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package — {detailBooking.package.packageName}</strong>
+                            </td>
+                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(detailBooking.package.basePrice)}</td>
+                          </tr>
+                        )}
+                        {detailBooking.menuItems.map((m) => (
+                          <tr key={m.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.45rem 0' }}>{m.itemName} × {m.quantity}</td>
+                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(m.lineTotal)}</td>
+                          </tr>
+                        ))}
+                        {detailBooking.menuTrays.map((t) => (
+                          <tr key={t.trayId} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.45rem 0' }}>{t.trayName} × {t.quantity}</td>
+                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(t.lineTotal)}</td>
+                          </tr>
+                        ))}
+                        {detailBooking.rentals.map((r) => (
+                          <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.45rem 0' }}>
+                              Rental — {r.itemName} × {r.quantity}
+                              <span style={{ color: 'var(--text-dim)' }}> · {r.deliveryStatus}</span>
+                            </td>
+                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
+                          </tr>
+                        ))}
+                        {detailBooking.services.map((sv) => (
+                          <tr key={sv.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.45rem 0' }}>Service — {sv.serviceName} × {sv.quantity}</td>
+                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(sv.totalCost)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                <div>
+                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Money</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.9rem' }}>
+                    <Row label="Line items" value={fmt(lineTotal)} />
+                    <Row label="Booking total" value={fmt(b.totalAmount)} />
+                    {detailInvoice ? (
+                      <>
+                        <Row label="Tax" value={fmt(detailInvoice.taxAmount)} />
+                        <Row label="Grand total" value={<span style={{ color: 'var(--primary)' }}>{fmt(detailInvoice.grandTotal)}</span>} />
+                        <Row label="Paid" value={fmt(detailInvoice.paidTotal)} />
+                        <Row label="Balance" value={fmt(detailInvoice.grandTotal - detailInvoice.paidTotal)} />
+                        <Row label="Invoice status" value={detailInvoice.status} />
+                        <Row label="Due date" value={fmtDate(detailInvoice.dueDate)} />
+                      </>
+                    ) : (
+                      <Row label="Invoice" value={<span style={{ color: 'var(--text-dim)', fontWeight: 300 }}>Not generated yet</span>} />
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ══════════ CONTRACT (item 2) — printable service agreement ══════════ */}
       {contractBooking && (() => {
         const b = contractBooking.booking;
@@ -2577,6 +2955,14 @@ export function AdminDashboardPage() {
               <span className="adm-nav-icon">🧾</span>
               Audit Log
             </button>
+            <button
+              type="button"
+              className={`adm-nav-item${tab === 'announcements' ? ' active' : ''}`}
+              onClick={() => openTab('announcements')}
+            >
+              <span className="adm-nav-icon">📣</span>
+              Announcements
+            </button>
             {PLACEHOLDER_ITEMS.map((name) => (
               <button
                 key={name}
@@ -2608,7 +2994,7 @@ export function AdminDashboardPage() {
               </svg>
             </button>
             <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : NAV.find((n) => n.id === tab)?.label}
+              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
 
@@ -2840,9 +3226,15 @@ export function AdminDashboardPage() {
                             className="adm-cal-cell"
                             role="button"
                             tabIndex={0}
-                            title={`${fmtDate(dateStr)} — ${capacityLabel}${manual ? ' · manually locked' : locked ? ' · full' : ''}. Click to ${locked && manual ? 'unlock' : 'lock'}.`}
+                            title={`${fmtDate(dateStr)} — ${capacityLabel}${manual ? ' · manually locked' : locked ? ' · full' : ''}. Click to ${locked && manual ? 'unlock' : 'lock'}, double-click for the day's schedule.`}
                             onClick={() => setLockTargetDate(dateStr)}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLockTargetDate(dateStr); } }}
+                            onDoubleClick={() => setDayDetailDate(dateStr)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLockTargetDate(dateStr); }
+                              // Keyboard equivalent of the double-click, so the schedule
+                              // isn't mouse-only.
+                              if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setDayDetailDate(dateStr); }
+                            }}
                             style={{
                               cursor: 'pointer',
                               background: manual
@@ -2908,6 +3300,87 @@ export function AdminDashboardPage() {
                     })()}
                   </div>
                 </div>
+
+                {/* day schedule — double-click a calendar cell. Built entirely from the
+                    `reservations` array the dashboard already loads, so opening it
+                    costs no request. */}
+                {dayDetailDate && (() => {
+                  const dayBookings = reservations
+                    .filter((r) => r.eventDate === dayDetailDate)
+                    .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''));
+                  const cal = calendarDays.get(dayDetailDate);
+                  return (
+                    <div className="adm-modal-overlay" onClick={() => setDayDetailDate(null)}>
+                      <div
+                        className="adm-modal-panel"
+                        onClick={(e) => e.stopPropagation()}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={`Bookings on ${fmtDate(dayDetailDate)}`}
+                        style={{ maxWidth: 620 }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
+                          <div>
+                            <h3 style={{ marginBottom: '0.2rem' }}>{fmtDate(dayDetailDate)}</h3>
+                            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                              {dayBookings.length === 0
+                                ? 'Nothing booked for this date.'
+                                : `${dayBookings.length} booking${dayBookings.length === 1 ? '' : 's'}`}
+                              {cal && ` · ${cal.confirmedCount} of ${cal.maxCapacity} confirmed`}
+                              {cal?.isManuallyLocked && ' · manually locked'}
+                            </p>
+                          </div>
+                          <button type="button" className="adm-iconbtn" aria-label="Close" onClick={() => setDayDetailDate(null)}>✕</button>
+                        </div>
+
+                        {dayBookings.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
+                            This date has no reservations yet.
+                          </p>
+                        ) : (
+                          dayBookings.map((r) => {
+                            const st = RES_STATUS[r.status as ResStatus];
+                            // Multi-day events carry their own end date; same-day ones
+                            // only need the time.
+                            const spansDays = !!r.endDate && r.endDate !== r.eventDate;
+                            return (
+                              <div key={r.id} className="adm-row" style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', padding: '0.8rem 0', flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1, minWidth: 200 }}>
+                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                    {r.bookingName}
+                                  </div>
+                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                    🕑 {fmtTime(r.startTime)} – {fmtTime(r.endTime)}
+                                    {spansDays && ` (ends ${fmtDate(r.endDate as string)})`}
+                                  </div>
+                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.15rem' }}>
+                                    {r.eventType || r.bookingType} · {r.guestCount ?? 'N/A'} guests · {r.venueAddress || 'no venue set'}
+                                  </div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <StatusBadge label={st?.label ?? r.status} color={st?.color ?? '#999'} />
+                                  <button
+                                    type="button"
+                                    className="adm-btn outline"
+                                    onClick={() => {
+                                      // Same hand-off the notification feed uses: search the
+                                      // Bookings tab for this booking by name.
+                                      setDayDetailDate(null);
+                                      setResSearch(r.bookingName);
+                                      openTab('bookings');
+                                    }}
+                                  >
+                                    Open
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* pending queue */}
                 <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
@@ -2984,6 +3457,20 @@ export function AdminDashboardPage() {
                   })}
                 </div>
 
+                {/* Booking type — a second, independent axis from status. Filters the
+                    already-fetched rows client-side; no extra request. */}
+                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                  {(['all', 'FullService', 'FoodDelivery', 'RentalService'] as const).map((k) => {
+                    const count = k === 'all' ? reservations.length : reservations.filter((r) => r.bookingType === k).length;
+                    return (
+                      <button key={k} type="button" className={`adm-pill${resTypeFilter === k ? ' active' : ''}`} onClick={() => setResTypeFilter(k)}>
+                        {k === 'all' ? 'All Types' : BOOKING_TYPE_LABELS[k]}
+                        <span className="count">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {filteredRes.length === 0 ? (
                   <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                     No bookings match the current view.
@@ -3000,7 +3487,13 @@ export function AdminDashboardPage() {
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.3rem 1.4rem', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                               <span>Event: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.eventType || r.bookingType}</strong></span>
-                              <span>Date: <strong style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmtDate(r.eventDate)} · {r.startTime?.substring(0, 5)}</strong></span>
+                              <span>Starts: <strong style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmtDate(r.eventDate)} · {fmtTime(r.startTime)}</strong></span>
+                              {/* A FoodDelivery order has no end date/time by design. */}
+                              {r.bookingType !== 'FoodDelivery' && (
+                                <span>Ends: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  {r.endDate ? fmtDate(r.endDate) : '—'} · {fmtTime(r.endTime)}
+                                </strong></span>
+                              )}
                               <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.guestCount || 'N/A'}</strong></span>
                               <span>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Not provided</strong></span>
                               <span>Phone: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.contactNumber || 'N/A'}</strong></span>
@@ -3043,6 +3536,16 @@ export function AdminDashboardPage() {
                               onClick={() => void generateInvoiceFor(r)}
                             >
                               {invoiceBusyId === r.id ? 'Generating…' : 'Generate Invoice'}
+                            </button>
+                          )}
+                          {r.status === 'Confirmed' && (
+                            <button
+                              type="button"
+                              className="adm-btn outline"
+                              disabled={detailBusyId === r.id}
+                              onClick={() => void openBookingDetail(r)}
+                            >
+                              {detailBusyId === r.id ? 'Loading…' : '🔍 View Details'}
                             </button>
                           )}
                           {r.status === 'Confirmed' && (
@@ -3146,6 +3649,19 @@ export function AdminDashboardPage() {
                     return (
                       <button key={k} type="button" className={`adm-pill${paymentFilter === k ? ' active' : ''}`} onClick={() => setPaymentFilter(k)}>
                         {k === 'all' ? 'All Payments' : PAYMENT_STATUS[k].label}
+                        <span className="count">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Booking type of the payment's booking — carried on the list DTO. */}
+                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                  {(['all', 'FullService', 'FoodDelivery', 'RentalService'] as const).map((k) => {
+                    const count = k === 'all' ? payments.length : payments.filter((p) => p.bookingType === k).length;
+                    return (
+                      <button key={k} type="button" className={`adm-pill${paymentTypeFilter === k ? ' active' : ''}`} onClick={() => setPaymentTypeFilter(k)}>
+                        {k === 'all' ? 'All Types' : BOOKING_TYPE_LABELS[k]}
                         <span className="count">{count}</span>
                       </button>
                     );
@@ -3320,14 +3836,22 @@ export function AdminDashboardPage() {
                                       </button>
                                     </>
                                   )}
+                                  {/* Refunding requires an open request from the customer —
+                                      the server enforces it, so the button is disabled
+                                      rather than shown and then rejected. */}
                                   {(p.status === 'Success' || p.status === 'PartiallyRefunded') && p.amountPaid - p.refundedAmount > 0 && (
                                     <button
                                       type="button"
                                       className="adm-btn outline"
-                                      disabled={paymentActionBusy === p.id}
+                                      disabled={paymentActionBusy === p.id || !p.refundRequested}
+                                      title={p.refundRequested ? undefined : 'The customer has not requested a refund on this payment.'}
                                       onClick={() => void runPaymentAction(p.id, 'refund')}
                                     >
-                                      {paymentActionBusy === p.id ? 'Working…' : `Refund ${fmt(p.amountPaid - p.refundedAmount)}`}
+                                      {paymentActionBusy === p.id
+                                        ? 'Working…'
+                                        : p.refundRequested
+                                          ? `Refund ${fmt(p.amountPaid - p.refundedAmount)}`
+                                          : 'Refund — no request on file'}
                                     </button>
                                   )}
                                 </div>
@@ -3683,6 +4207,15 @@ export function AdminDashboardPage() {
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                      className="adm-input"
+                      type="search"
+                      placeholder="Search dishes and trays…"
+                      value={menuSearch}
+                      onChange={(e) => setMenuSearch(e.target.value)}
+                      style={{ flex: '0 1 260px' }}
+                      aria-label="Search menus and dishes"
+                    />
                     <button type="button" className="adm-btn primary" onClick={() => openMenuForm('item', 'create')}>
                       + Add Dish
                     </button>
@@ -3769,7 +4302,7 @@ export function AdminDashboardPage() {
                         </p>
                       ) : visibleMenuItems.length === 0 ? (
                         <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
-                          No dishes in this category.
+                          {menuSearch.trim() ? `No dishes match “${menuSearch.trim()}”.` : 'No dishes in this category.'}
                         </p>
                       ) : (
                         visibleMenuItems.map((m) => (
@@ -3842,16 +4375,20 @@ export function AdminDashboardPage() {
                       <div style={{ marginBottom: '1rem' }}>
                         <FieldLabel text="Menu Trays" />
                         <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-                          Party Trays ({menuTrays.length})
+                          Party Trays ({visibleMenuTrays.length})
                         </h3>
                       </div>
                       {menuTrays.length === 0 ? (
                         <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
                           No trays configured yet.
                         </p>
+                      ) : visibleMenuTrays.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          No trays match “{menuSearch.trim()}”.
+                        </p>
                       ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
-                          {menuTrays.map((t) => (
+                          {visibleMenuTrays.map((t) => (
                             <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '1.1rem 1.2rem', background: 'var(--bg-subtle)', opacity: t.isActive ? 1 : 0.55 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.5rem' }}>
                                 <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.trayName}</span>
@@ -3926,7 +4463,12 @@ export function AdminDashboardPage() {
                         </div>
                       )}
 
-                      <div className="adm-modal-panel form-grid full">
+                      {/* Just the field grid — this used to also carry
+                          `adm-modal-panel`, nesting a second bordered, padded,
+                          `max-height: 92vh; overflow-y: auto` panel inside the
+                          modal. That nested scroll container is what produced the
+                          double scrollbar and the doubled padding. */}
+                      <div className="form-grid full">
                         {menuFormMode === 'item' && menuFormItem && (
                           <>
                             <div className="form-row">
@@ -4148,6 +4690,15 @@ export function AdminDashboardPage() {
                         </p>
                       </div>
                       <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <input
+                          className="adm-input"
+                          type="search"
+                          placeholder="Search name or category…"
+                          value={rentalSearch}
+                          onChange={(e) => setRentalSearch(e.target.value)}
+                          style={{ flex: '0 1 260px' }}
+                          aria-label="Search rental items"
+                        />
                         <button type="button" className="adm-btn primary" onClick={() => openRentalForm('create')}>
                           + Add Rental Item
                         </button>
@@ -4198,16 +4749,20 @@ export function AdminDashboardPage() {
                           <div>
                             <FieldLabel text="Rental Inventory" />
                             <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-                              Items ({rentalItems.length})
+                              Items ({visibleRentalItems.length})
                             </h3>
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-dim)' }}>
-                            {rentalItems.filter((item) => item.isActive).length} active
+                            {visibleRentalItems.filter((item) => item.isActive).length} active
                           </div>
                         </div>
                         {rentalItems.length === 0 ? (
                           <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
                             No rental inventory items are configured yet.
+                          </p>
+                        ) : visibleRentalItems.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                            No rental items match “{rentalSearch.trim()}”.
                           </p>
                         ) : (
                           <div style={{ overflowX: 'auto' }}>
@@ -4226,7 +4781,7 @@ export function AdminDashboardPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {rentalItems.map((item) => (
+                                {visibleRentalItems.map((item) => (
                                   <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
                                     <td style={{ padding: '0.75rem 0.7rem', verticalAlign: 'middle' }}>
                                       <div style={{ width: 48, height: 48, borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -4295,7 +4850,9 @@ export function AdminDashboardPage() {
                             </div>
                           )}
 
-                          <div className="adm-modal-panel form-grid full">
+                          {/* Field grid only — see the menu form modal above for
+                              why `adm-modal-panel` doesn't belong here. */}
+                          <div className="form-grid full">
                             <div className="form-row">
                               <label htmlFor="rental-item-name">Item name</label>
                               <input
@@ -4422,6 +4979,15 @@ export function AdminDashboardPage() {
                         </p>
                       </div>
                       <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <input
+                          className="adm-input"
+                          type="search"
+                          placeholder="Search service name…"
+                          value={serviceSearch}
+                          onChange={(e) => setServiceSearch(e.target.value)}
+                          style={{ flex: '0 1 260px' }}
+                          aria-label="Search service items"
+                        />
                         <button type="button" className="adm-btn primary" onClick={() => openServiceForm('create')}>
                           + Add Service Item
                         </button>
@@ -4472,16 +5038,20 @@ export function AdminDashboardPage() {
                           <div>
                             <FieldLabel text="Service Offerings" />
                             <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-                              Services ({serviceItems.length})
+                              Services ({visibleServiceItems.length})
                             </h3>
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 400, color: 'var(--text-dim)' }}>
-                            {serviceItems.filter((item) => item.isActive).length} active
+                            {visibleServiceItems.filter((item) => item.isActive).length} active
                           </div>
                         </div>
                         {serviceItems.length === 0 ? (
                           <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
                             No service items configured yet.
+                          </p>
+                        ) : visibleServiceItems.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                            No services match “{serviceSearch.trim()}”.
                           </p>
                         ) : (
                           <div style={{ overflowX: 'auto' }}>
@@ -4495,7 +5065,7 @@ export function AdminDashboardPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {serviceItems.map((item) => (
+                                {visibleServiceItems.map((item) => (
                                   <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
                                     <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
                                       <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.98rem', fontWeight: 500, color: 'var(--text-primary)' }}>{item.serviceName}</div>
@@ -4553,7 +5123,9 @@ export function AdminDashboardPage() {
                             </div>
                           )}
 
-                          <div className="adm-modal-panel form-grid full">
+                          {/* Field grid only — see the menu form modal above for
+                              why `adm-modal-panel` doesn't belong here. */}
+                          <div className="form-grid full">
                             <div className="form-row">
                               <label htmlFor="service-item-name">Service Name</label>
                               <input
@@ -4598,6 +5170,133 @@ export function AdminDashboardPage() {
                             </button>
                           </div>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ══════════ ANNOUNCEMENTS ══════════ */}
+                {tab === 'announcements' && (
+                  <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                    <div>
+                      <h2 className="adm-title">Announcements</h2>
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                        Posting one notifies every active customer through their notification bell.
+                      </p>
+                    </div>
+
+                    {/* compose */}
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                      <FieldLabel text="New Announcement" />
+                      <div className="form-grid full" style={{ marginTop: '0.7rem' }}>
+                        <div className="form-row">
+                          <label htmlFor="ann-title">Title</label>
+                          <input
+                            id="ann-title"
+                            className="adm-input"
+                            maxLength={150}
+                            placeholder="Holiday hours for December"
+                            value={annTitle}
+                            onChange={(e) => setAnnTitle(e.target.value)}
+                          />
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="ann-body">Message</label>
+                          <textarea
+                            id="ann-body"
+                            className="adm-input"
+                            rows={5}
+                            maxLength={2000}
+                            placeholder="What do you want every customer to know?"
+                            value={annBody}
+                            onChange={(e) => setAnnBody(e.target.value)}
+                            style={{ resize: 'vertical', fontFamily: 'var(--font-body)' }}
+                          />
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', textAlign: 'right' }}>
+                            {annBody.length} / 2000
+                          </div>
+                        </div>
+                      </div>
+                      {/* No edit or unsend: a notification a customer has already read
+                          can't be recalled, so say so before they post. */}
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginRight: 'auto' }}>
+                          Announcements can't be edited or unsent once posted.
+                        </span>
+                        <button
+                          type="button"
+                          className="adm-btn primary"
+                          disabled={annPosting || !annTitle.trim() || !annBody.trim()}
+                          onClick={() => void submitAnnouncement()}
+                        >
+                          {annPosting ? 'Posting…' : 'Post & Notify Customers'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {annError && !annLoading && (
+                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+                          Couldn't load announcements
+                        </h3>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                          {annError}
+                        </p>
+                        <button type="button" className="adm-btn outline" onClick={() => void loadAnnouncements()}>Try Again</button>
+                      </div>
+                    )}
+
+                    {annLoading && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                        <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
+                        {[0, 1, 2].map((i) => (
+                          <div key={i} style={{ padding: '0.75rem 0', borderBottom: i < 2 ? '1px solid var(--border)' : 'none' }}>
+                            <div className="adm-skel" style={{ height: '0.9rem', width: '35%', marginBottom: '0.45rem' }} />
+                            <div className="adm-skel" style={{ height: '0.6rem', width: '75%' }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* history */}
+                    {!annLoading && !annError && (
+                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                        <div style={{ marginBottom: '1rem' }}>
+                          <FieldLabel text="History" />
+                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                            Posted ({announcements.length})
+                          </h3>
+                        </div>
+                        {announcements.length === 0 ? (
+                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                            Nothing posted yet. Your first announcement will appear here.
+                          </p>
+                        ) : (
+                          announcements.map((a) => (
+                            <div key={a.id} className="adm-row" style={{ padding: '0.9rem 0' }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1, minWidth: 220 }}>
+                                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.02rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                    {a.title}
+                                  </div>
+                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                    {a.body}
+                                  </div>
+                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.45rem' }}>
+                                    {a.createdByName} · {fmtDateTime(a.createdAt)}
+                                  </div>
+                                </div>
+                                {/* 0 reached means the fan-out failed, not that it was
+                                    skipped — surface it rather than hiding a zero. */}
+                                <StatusBadge
+                                  label={a.notifiedCount > 0 ? `${a.notifiedCount} notified` : 'none notified'}
+                                  color={a.notifiedCount > 0 ? 'var(--primary)' : 'var(--danger)'}
+                                />
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
                   </div>

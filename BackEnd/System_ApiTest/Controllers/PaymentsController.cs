@@ -282,6 +282,7 @@ namespace System_ApiTest.Controllers
                     x.p.PaymentDateTime, x.p.Method.ToString(), x.p.Status.ToString(),
                     x.p.TransactionReference, x.p.GatewayProvider, x.p.RefundRequested,
                     x.b.Id, x.b.BookingName,
+                    x.b.BookingType.ToString(),
                     x.b.EventType == null ? null : x.b.EventType.ToString(),
                     x.b.EventDate,
                     x.c.Id, x.c.FullName, x.c.Email))

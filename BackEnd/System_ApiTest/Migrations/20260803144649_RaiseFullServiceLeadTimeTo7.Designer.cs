@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System_ApiTest.Data;
 
@@ -11,9 +12,11 @@ using System_ApiTest.Data;
 namespace System_ApiTest.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260803144649_RaiseFullServiceLeadTimeTo7")]
+    partial class RaiseFullServiceLeadTimeTo7
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1208,12 +1211,6 @@ namespace System_ApiTest.Migrations
                     b.Property<int>("MinLeadDaysFullService")
                         .HasColumnType("int");
 
-                    b.Property<TimeOnly>("OperatingHoursEnd")
-                        .HasColumnType("time");
-
-                    b.Property<TimeOnly>("OperatingHoursStart")
-                        .HasColumnType("time");
-
                     b.Property<decimal>("ReservationFee")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -1239,8 +1236,6 @@ namespace System_ApiTest.Migrations
                             t.HasCheckConstraint("CK_SystemSettings_DepositPctRange", "[DepositPercentage] >= 0 AND [DepositPercentage] <= 1");
 
                             t.HasCheckConstraint("CK_SystemSettings_LeadDaysNonNeg", "[MinLeadDaysFullService] >= 0 AND [MinLeadDaysDelivery] >= 0");
-
-                            t.HasCheckConstraint("CK_SystemSettings_OperatingHoursOrder", "[OperatingHoursEnd] > [OperatingHoursStart]");
 
                             t.HasCheckConstraint("CK_SystemSettings_ReservationFeeNonNeg", "[ReservationFee] >= 0");
 

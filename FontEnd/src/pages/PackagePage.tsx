@@ -7,10 +7,12 @@ import {
   useTransform,
   type MotionValue,
 } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
+import { fetchMenuTrays } from '../api/menuAdminApi';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -80,49 +82,21 @@ const toCard = (p: AdminPackage, index: number, isTopPriced: boolean): Pkg => {
 /* The static PACKAGES array that used to live here is gone — cards now come from
    fetchPackages() in the component below. */
 
+/**
+ * Party trays are fetched live rather than hardcoded, because "Select Party Tray"
+ * hands the tray's id to MenuPage to drop into its cart — and MenuPage's cart is
+ * keyed by the real MenuTray GUID. The old static ids (1, 2, 3) would have matched
+ * nothing there, so the button could never actually add anything.
+ */
 type PartyTray = {
-  id: number;
+  id: string;
   name: string;
   price: number;
   dishes: string[];
 };
 
-const PARTY_TRAYS: PartyTray[] = [
-  {
-    id: 1,
-    name: 'Family Feast Set',
-    price: 3299,
-    dishes: [
-      'Beef Caldereta',
-      'Garlic Buttered Shrimp',
-      'Fresh Lumpia (20 pcs)',
-      'Steamed Rice (10 servings)',
-      'Leche Flan (2 llaneras)',
-    ],
-  },
-  {
-    id: 2,
-    name: 'Fiesta Tray Set',
-    price: 2499,
-    dishes: [
-      'Pancit Bihon (good for 10)',
-      'Lumpiang Shanghai (50 pcs)',
-      'Chicken Adobo',
-      'Puto (20 pcs)',
-    ],
-  },
-  {
-    id: 3,
-    name: 'Handaan Tray Set',
-    price: 3999,
-    dishes: [
-      'Lechon Belly (3 kg)',
-      'Pancit Canton',
-      'Buttered Vegetables',
-      'Buko Pandan Salad',
-    ],
-  },
-];
+/* The static PARTY_TRAYS array that used to live here is gone — trays are fetched
+   in the component below so their ids are real MenuTray GUIDs. */
 
 /* ─────────────────────────────────────────────────────────────────────────
    Center-focus slider — Framer Motion
@@ -348,7 +322,11 @@ function PackageCard({
   );
 }
 
-function TrayCard({ tray, tabbable }: { tray: PartyTray; tabbable: boolean }) {
+function TrayCard({ tray, tabbable, onSelect }: {
+  tray: PartyTray;
+  tabbable: boolean;
+  onSelect: (tray: PartyTray) => void;
+}) {
   return (
     <div className="pkg-card">
       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.7rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
@@ -376,7 +354,7 @@ function TrayCard({ tray, tabbable }: { tray: PartyTray; tabbable: boolean }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-        <button className="btn-ghost" tabIndex={tabbable ? 0 : -1}>
+        <button className="btn-ghost" tabIndex={tabbable ? 0 : -1} onClick={() => onSelect(tray)}>
           Select Party Tray →
         </button>
       </div>
@@ -389,7 +367,40 @@ function TrayCard({ tray, tabbable }: { tray: PartyTray; tabbable: boolean }) {
 ───────────────────────────────────────────────────────────────────────── */
 
 export function PackagePage() {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState<Pkg | null>(null);
+
+  /* live party trays — ids must be real so MenuPage can add them to its cart */
+  const [trays, setTrays] = useState<PartyTray[]>([]);
+
+  useEffect(() => {
+    const token = readSession()?.token ?? '';   // catalog GETs are anonymous
+    let cancelled = false;
+    fetchMenuTrays(token)
+      .then((rows) => {
+        if (cancelled) return;
+        setTrays(
+          rows
+            .filter((t) => t.isActive)
+            .map((t) => ({
+              id: t.id,
+              name: t.trayName,
+              price: t.pricePerTray,
+              dishes: t.dishes.map((d) => d.itemName),
+            })),
+        );
+      })
+      .catch(() => { /* the section simply stays empty */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Hand the tray off to MenuPage, which owns the cart (local state, not a context),
+   * so it can add the item itself and land the customer on the trays view.
+   */
+  const selectTray = (tray: PartyTray) => {
+    navigate('/menus', { state: { addTrayId: tray.id, scrollTo: 'trays' } });
+  };
 
   /* live catalog */
   const [packages, setPackages] = useState<Pkg[]>([]);
@@ -786,14 +797,22 @@ export function PackagePage() {
           </div>
 
           {/* ── trays slider: full-bleed, drifts right → left ── */}
-          <CenterFocusSlider
-            items={PARTY_TRAYS}
-            getKey={(t) => t.id}
-            direction={-1}
-            speed={70}
-            label="Party tray sets"
-            renderItem={(tray, tabbable) => <TrayCard tray={tray} tabbable={tabbable} />}
-          />
+          {trays.length === 0 ? (
+            <p style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.9rem', color: 'var(--text-muted)', padding: '3rem 1rem' }}>
+              Loading our party trays…
+            </p>
+          ) : (
+            <CenterFocusSlider
+              items={trays}
+              getKey={(t) => t.id}
+              direction={-1}
+              speed={70}
+              label="Party tray sets"
+              renderItem={(tray, tabbable) => (
+                <TrayCard tray={tray} tabbable={tabbable} onSelect={selectTray} />
+              )}
+            />
+          )}
         </section>
 
         {/* ═══════════════════════ HELP BAND ═══════════════════════ */}
@@ -819,8 +838,18 @@ export function PackagePage() {
               guest count, venue type, and budget all considered.
             </p>
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <a href="/#availability" className="btn-primary">Get a Recommendation</a>
-              <a href="/#menus" className="btn-outline">Browse the Menu</a>
+              {/* BookingPage already reads presetFlow==='plan' and opens Plan-by-Budget
+                  straight away, so this needs nothing on the other side. */}
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => navigate('/book', { state: { presetFlow: 'plan' } })}
+              >
+                Get a Recommendation
+              </button>
+              <button type="button" className="btn-outline" onClick={() => navigate('/menus')}>
+                Browse the Menu
+              </button>
             </div>
           </div>
         </section>
@@ -849,18 +878,19 @@ export function PackagePage() {
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.75, fontWeight: 300, marginBottom: '1.5rem' }}>
               No payment required to reserve. We'll confirm your booking within 24 hours.
             </p>
-            <a
-              href="/#availability"
+            <button
+              type="button"
+              onClick={() => navigate('/book')}
               style={{
-                background: '#fff', color: 'var(--primary)',
+                background: '#fff', color: 'var(--primary)', border: 'none', cursor: 'pointer',
                 padding: '1.1rem 2.75rem', fontFamily: 'var(--font-body)', fontSize: '0.72rem',
                 fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase',
-                textDecoration: 'none', borderRadius: 'var(--r-full)',
+                borderRadius: 'var(--r-full)',
                 transition: 'transform 0.2s, box-shadow 0.2s', display: 'inline-block',
               }}
             >
               Book Your Event
-            </a>
+            </button>
           </div>
         </section>
 

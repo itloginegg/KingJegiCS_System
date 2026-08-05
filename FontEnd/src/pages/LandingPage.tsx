@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getCalendarDays } from '../api/calendarApi';
+import { getCalendarDays, getDayTimeSlots, type DayTimeSlots } from '../api/calendarApi';
 import { getApprovedTestimonials, type PublicTestimonial } from '../api/testimonialsApi';
+import { fetchMenuItems, type AdminMenuItem } from '../api/menuAdminApi';
+import { pickFeatureOfTheDay } from '../lib/featureOfTheDay';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
 
@@ -243,6 +245,20 @@ function getDaysInMonth(year: number, month: number) {
 function getFirstDayOfMonth(year: number, month: number) {
   return new Date(year, month, 1).getDay();
 }
+/** "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, so it's parsed positionally. */
+function fmtClock(hms: string) {
+  const [h, m] = hms.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return hms;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${hour12} ${period}` : `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/** "8 AM–2 PM" — an en dash, no spaces, so a list of windows stays readable. */
+function fmtWindow(start: string, end: string) {
+  return `${fmtClock(start)}–${fmtClock(end)}`;
+}
+
 function toISO(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
@@ -651,6 +667,27 @@ export function LandingPage() {
   const firstWeekday = getFirstDayOfMonth(calYear, calMonth);
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
 
+  /* Today's Feature — a real dish off /api/Menuitems rather than hardcoded copy.
+     `todayISO` is the local calendar day, so the pick holds until midnight. */
+  const [feature, setFeature] = useState<AdminMenuItem | null>(null);
+  const [featureLoading, setFeatureLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    // The catalog GET is anonymous, so no token here.
+    fetchMenuItems('')
+      .then((items) => {
+        if (!cancelled) setFeature(pickFeatureOfTheDay(items, todayISO));
+      })
+      .catch(() => {
+        if (!cancelled) setFeature(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFeatureLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [todayISO]);
+
   /* Real availability for the month on screen. Dates the backend has no row for have
      never been booked, so a miss simply means "open". A failed fetch leaves the map
      empty and the calendar shows everything as available — this section is a teaser,
@@ -674,6 +711,31 @@ export function LandingPage() {
   /* Reserve-this-Date flow: pick an open day on the calendar, then choose which
      booking path to start. The chosen date rides to /book in router state so the
      wizard can pre-fill it and skip its own Step-0 picker. */
+  /* Open time windows for whichever date is hovered.
+     Cached per date and fetched on a short delay: sweeping the mouse across a month
+     would otherwise fire ~30 requests, and a date's slots don't change mid-hover. */
+  const [slotsByDate, setSlotsByDate] = useState<Record<string, DayTimeSlots | 'error'>>({});
+  const [hoveredISO, setHoveredISO] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hoveredISO || slotsByDate[hoveredISO]) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      getDayTimeSlots(hoveredISO)
+        .then((slots) => {
+          if (!cancelled) setSlotsByDate((prev) => ({ ...prev, [hoveredISO]: slots }));
+        })
+        .catch(() => {
+          // Cached as 'error' so a dead endpoint isn't retried on every re-hover; the
+          // line falls back to the old availability wording.
+          if (!cancelled) setSlotsByDate((prev) => ({ ...prev, [hoveredISO]: 'error' }));
+        });
+    }, 250);
+
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [hoveredISO, slotsByDate]);
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [reserveOpen, setReserveOpen] = useState(false);
   const navigate = useNavigate();
@@ -1629,25 +1691,39 @@ export function LandingPage() {
                   style={{
                     fontFamily: 'var(--font-display)', fontSize: '2rem',
                     fontWeight: 500, color: '#fff', marginBottom: '0.4rem',
+                    minHeight: '2.4rem',
                   }}
                 >
-                  Lechon de Leche
+                  {featureLoading ? '…' : feature ? feature.itemName : 'Our Menu'}
                 </h3>
                 <p
                   style={{
                     fontFamily: 'var(--font-body)', fontSize: '0.8rem',
                     color: 'rgba(255,255,255,0.65)', fontWeight: 300, lineHeight: 1.6,
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden', minHeight: '2.6rem',
                   }}
                 >
-                  Heritage-breed · Slow-roasted 6 hrs
+                  {featureLoading
+                    ? 'Picking today’s dish…'
+                    : feature
+                      ? feature.description
+                      : 'Freshly prepared Filipino classics, made to order.'}
                 </p>
                 <div style={{ marginTop: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: '#fff' }}>
-                    ₱350
-                    <span style={{ fontSize: '0.9rem', fontWeight: 300, color: 'rgba(255,255,255,0.6)' }}>/head</span>
-                  </span>
+                  {/* No price unless we have a real one — the card used to advertise a
+                      hardcoded ₱350 that matched nothing in the catalog. */}
+                  {feature?.pricePerTray != null && (
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: '#fff' }}>
+                      ₱{feature.pricePerTray.toLocaleString('en-PH')}
+                      <span style={{ fontSize: '0.9rem', fontWeight: 300, color: 'rgba(255,255,255,0.6)' }}>/tray</span>
+                    </span>
+                  )}
                   <Link
                     to="/menus"
+                    // Hands the dish to MenuPage's existing location.state effect, which
+                    // selects it and scrolls it into view.
+                    state={feature ? { highlightItemId: feature.id, scrollTo: 'items' } : undefined}
                     style={{
                       background: 'rgba(255,255,255,0.15)',
                       color: '#fff', padding: '0.5rem 1.25rem',
@@ -2190,8 +2266,8 @@ export function LandingPage() {
                           isPast ? 'cal-past' : '',
                           isSelected ? 'cal-selected' : '',
                         ].join(' ')}
-                        onMouseEnter={() => setHovered(day)}
-                        onMouseLeave={() => setHovered(null)}
+                        onMouseEnter={() => { setHovered(day); setHoveredISO(iso); }}
+                        onMouseLeave={() => { setHovered(null); setHoveredISO(null); }}
                         onClick={() => selectable && setSelectedDate(isSelected ? null : iso)}
                         onKeyDown={(e) => {
                           if (!selectable) return;
@@ -2208,16 +2284,47 @@ export function LandingPage() {
                   })}
                 </div>
  
-                {hovered && (
-                  <p style={{ textAlign: 'center', marginTop: '1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    {MONTH_NAMES[calMonth]} {hovered}, {calYear}
-                    {bookedDates.has(toISO(calYear, calMonth, hovered))
-                      ? ' — Already reserved'
-                      : toISO(calYear, calMonth, hovered) < todayISO
-                        ? ' — Past date'
-                        : ' — Available to book'}
-                  </p>
-                )}
+                {hovered && (() => {
+                  const iso = toISO(calYear, calMonth, hovered);
+                  const slots = slotsByDate[iso];
+                  const loaded = slots && slots !== 'error' ? slots : null;
+
+                  /* What the line says, in priority order:
+                       past / reserved   → unchanged, no point listing times
+                       real slot data    → the actual open windows
+                       still loading or
+                       endpoint failed   → the original wording, so a dead endpoint
+                                           degrades to what the calendar always said */
+                  let detail: string;
+                  if (iso < todayISO) {
+                    detail = '— Past date';
+                  } else if (bookedDates.has(iso)) {
+                    detail = '— Already reserved';
+                  } else if (loaded?.dayLocked) {
+                    detail = '— Closed for bookings';
+                  } else if (loaded && loaded.free.length === 0) {
+                    detail = '— No open time slots';
+                  } else if (loaded && loaded.busy.length === 0) {
+                    // Nothing booked at all: quote the whole operating day rather than
+                    // making it sound like a leftover gap.
+                    detail = `— Open all day (${fmtWindow(loaded.opensAt, loaded.closesAt)})`;
+                  } else if (loaded) {
+                    detail = `— Open ${loaded.free.map((w) => fmtWindow(w.start, w.end)).join(', ')}`;
+                  } else {
+                    detail = '— Available to book';
+                  }
+
+                  return (
+                    <p style={{ textAlign: 'center', marginTop: '1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      {MONTH_NAMES[calMonth]} {hovered}, {calYear} {detail}
+                      {loaded && loaded.busy.length > 0 && loaded.free.length > 0 && (
+                        <span style={{ display: 'block', fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+                          Allows for a {loaded.bufferHours}-hour setup gap around the {loaded.busy.length === 1 ? 'booked event' : 'booked events'}.
+                        </span>
+                      )}
+                    </p>
+                  );
+                })()}
               </div>
             </div>
           </div>

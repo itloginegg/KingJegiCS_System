@@ -37,7 +37,8 @@ namespace System_ApiTest.Services
             NotificationKind.PaymentConfirmed,
             NotificationKind.RefundApproved,
             NotificationKind.RefundDenied,
-            NotificationKind.SupportMessageFromStaff
+            NotificationKind.SupportMessageFromStaff,
+            NotificationKind.AnnouncementPosted
         };
 
         /// <summary>Kinds addressed to the Owner/Assistant shared inbox.</summary>
@@ -159,9 +160,14 @@ namespace System_ApiTest.Services
             var amounts = await ResolvePaymentAmountsAsync(
                 rows.Where(r => PaymentKeyedKinds.Contains(r.Kind)).Select(r => r.Period), ct);
 
+            // Announcements are the one kind whose text is authored rather than derived,
+            // so it's read from the Announcement row the Period points at.
+            var announcements = await ResolveAnnouncementsAsync(
+                rows.Where(r => r.Kind == NotificationKind.AnnouncementPosted).Select(r => r.Period), ct);
+
             var items = rows.Select(r =>
             {
-                var (title, body) = Describe(r.Kind, r.Period, r.BookingName, r.EventDate, itemNames, amounts);
+                var (title, body) = Describe(r.Kind, r.Period, r.BookingName, r.EventDate, itemNames, amounts, announcements);
                 return new NotificationResponseDto(
                     r.Id, r.Kind.ToString(), title, body, r.BookingId, r.BookingName, r.SentAt, r.ReadAt,
                     ParseLeadingId(r.Period));
@@ -220,6 +226,23 @@ namespace System_ApiTest.Services
                 .Distinct()
                 .ToList();
 
+        /// <summary>
+        /// Titles and bodies for announcement rows, read live from the Announcement
+        /// table rather than copied into each ledger row — one broadcast writes a row per
+        /// customer, and duplicating 2 KB of text across all of them (and staling it if
+        /// the wording is ever corrected) would be the wrong trade.
+        /// </summary>
+        private async Task<Dictionary<Guid, (string Title, string Body)>> ResolveAnnouncementsAsync(
+            IEnumerable<string> periods, CancellationToken ct)
+        {
+            var ids = ParseLeadingIds(periods);
+            if (ids.Count == 0) return new Dictionary<Guid, (string, string)>();
+
+            return await _db.Announcements.AsNoTracking()
+                .Where(a => ids.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => (a.Title, a.Body), ct);
+        }
+
         private async Task<Dictionary<Guid, string>> ResolveRentalNamesAsync(
             IEnumerable<string> periods, CancellationToken ct)
         {
@@ -240,7 +263,8 @@ namespace System_ApiTest.Services
         private static (string Title, string Body) Describe(
             NotificationKind kind, string period, string? bookingName, DateOnly? eventDate,
             IReadOnlyDictionary<Guid, string> rentalNames,
-            IReadOnlyDictionary<Guid, (decimal Amount, decimal Refunded)> amounts)
+            IReadOnlyDictionary<Guid, (decimal Amount, decimal Refunded)> amounts,
+            IReadOnlyDictionary<Guid, (string Title, string Body)> announcements)
         {
             var name = string.IsNullOrWhiteSpace(bookingName) ? "your booking" : $"\"{bookingName}\"";
             var when = eventDate is DateOnly d ? d.ToString("MMMM d, yyyy") : "the scheduled date";
@@ -303,6 +327,11 @@ namespace System_ApiTest.Services
                     "Reply from King Jegi",
                     "Our team replied in support chat. Open the chat bubble to read it."),
 
+                // The only kind whose copy is authored by an admin rather than derived
+                // from the event. Falls back if the announcement row has since gone.
+                NotificationKind.AnnouncementPosted =>
+                    Announcement(period, announcements),
+
                 // ---- Polling worker's kinds ----
                 NotificationKind.BookingConfirmed => (
                     "Booking confirmed",
@@ -336,6 +365,15 @@ namespace System_ApiTest.Services
 
                 _ => (kind.ToString(), "See the Bookings tab for details.")
             };
+        }
+
+        private static (string Title, string Body) Announcement(
+            string period, IReadOnlyDictionary<Guid, (string Title, string Body)> announcements)
+        {
+            var head = period.Split(':')[0];
+            if (Guid.TryParse(head, out var id) && announcements.TryGetValue(id, out var a))
+                return (a.Title, a.Body);
+            return ("Announcement", "King Jegi posted an announcement.");
         }
 
         /// <summary>The gross amount of the payment a Period points at, if it resolved.</summary>

@@ -90,6 +90,62 @@ namespace System_ApiTest.Services
         }
 
         /// <summary>
+        /// Writes one notification per recipient in a single round trip, then nudges
+        /// clients ONCE.
+        ///
+        /// A fan-out (today: an announcement to every customer) can't go through
+        /// <see cref="WriteAsync"/> in a loop — that would be one SaveChanges and one
+        /// SignalR broadcast per customer, so every connected client would refetch the
+        /// feed N times for a single event.
+        ///
+        /// Callers must give each row a Period that's unique within the batch: the
+        /// unique index is (BookingId, Kind, Period), and it does NOT include CustomerId,
+        /// so N rows sharing a Period would collide on the second one. Announcements key
+        /// theirs as "{announcementId:N}:{customerId:N}".
+        ///
+        /// Rule 1 still holds — a failure here is logged and swallowed, and the caller
+        /// proceeds. Returns how many rows were actually written, so a caller that cares
+        /// (the announcement's NotifiedCount) can record the truth rather than assume.
+        /// </summary>
+        public async Task<int> WriteManyAsync(
+            NotificationKind kind,
+            IEnumerable<(Guid CustomerId, string Period)> recipients,
+            CancellationToken ct = default)
+        {
+            var rows = recipients
+                .Select(r => new Sentnotification
+                {
+                    Kind = kind,
+                    CustomerId = r.CustomerId,
+                    Period = r.Period
+                })
+                .ToList();
+
+            if (rows.Count == 0) return 0;
+
+            _db.SentNotifications.AddRange(rows);
+
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // All-or-nothing: one SaveChanges means a single bad row rejects the
+                // batch. Detach every one of them so the caller's next SaveChanges
+                // (recording NotifiedCount) isn't poisoned by the rejected entities.
+                foreach (var row in rows) _db.Entry(row).State = EntityState.Detached;
+                _logger.LogWarning(ex,
+                    "Failed to record {Count} {Kind} notifications; the triggering action still succeeded.",
+                    rows.Count, kind);
+                return 0;
+            }
+
+            await BroadcastAsync(ct);
+            return rows.Count;
+        }
+
+        /// <summary>
         /// A Period value for events that can legitimately recur for the same booking —
         /// repeated refund requests on one payment, every chat message, each added line.
         /// The id anchors it to the thing that happened; the timestamp keeps a second

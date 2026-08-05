@@ -33,10 +33,34 @@ namespace System_ApiTest.Models
         /// </summary>
         public decimal EventBufferHours { get; set; } = 3m;
 
-        /// <summary>Minimum days of notice to book a full-service event. Default 3.</summary>
-        public int MinLeadDaysFullService { get; set; } = 3;
+        /// <summary>
+        /// Minimum days of notice to book a full-service event. Default 7.
+        ///
+        /// A FLOOR, not a window — a customer may still book as far ahead as they like,
+        /// which is what makes advance wedding and corporate bookings possible. There is
+        /// deliberately no maximum-lead-days counterpart.
+        ///
+        /// Note this also governs RentalService bookings: Bookingservice picks the
+        /// delivery lead time only for FoodDelivery and this one for everything else.
+        /// </summary>
+        public int MinLeadDaysFullService { get; set; } = 7;
 
         /// <summary>Minimum days of notice for a food-delivery order. Default 1.</summary>
         public int MinLeadDaysDelivery { get; set; } = 1;
+
+        /// <summary>
+        /// Earliest time of day an event may run. Default 08:00.
+        ///
+        /// Exists so "what times are open on this date?" has an answer: the free slots a
+        /// customer sees are this window minus every confirmed event's buffer-expanded
+        /// span. Without a day boundary there is nothing to subtract from.
+        ///
+        /// NOT a booking gate — CreateAsync does not reject an out-of-hours window. This
+        /// only bounds what the public availability view advertises.
+        /// </summary>
+        public TimeOnly OperatingHoursStart { get; set; } = new(8, 0);
+
+        /// <summary>Latest time of day an event may run. Default 22:00. Must be after the start (DB check).</summary>
+        public TimeOnly OperatingHoursEnd { get; set; } = new(22, 0);
     }
 }

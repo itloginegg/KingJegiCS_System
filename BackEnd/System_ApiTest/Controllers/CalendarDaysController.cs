@@ -23,14 +23,16 @@ namespace System_ApiTest.Controllers
     {
         private readonly AppDbContext _db;
         private readonly Auditlogservice _audit;
+        private readonly Bookingservice _bookings;
 
         /// <summary>Widest window a single read may span, so a stray query can't scan years.</summary>
         private const int MaxRangeDays = 400;
 
-        public CalendarDaysController(AppDbContext db, Auditlogservice audit)
+        public CalendarDaysController(AppDbContext db, Auditlogservice audit, Bookingservice bookings)
         {
             _db = db;
             _audit = audit;
+            _bookings = bookings;
         }
 
         /// <summary>
@@ -57,6 +59,53 @@ namespace System_ApiTest.Controllers
                 .ToListAsync();
 
             return Ok(rows);
+        }
+
+        /// <summary>
+        /// The configured lead-time rules, so the booking form can enforce them before
+        /// submitting instead of surfacing a server rejection after the fact.
+        ///
+        /// Anonymous for the same reason the range read is: guests fill in the booking
+        /// wizard before signing in, and the payload is two integers and two dates —
+        /// no booking, customer, or amount.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("booking-rules")]
+        public async Task<IActionResult> BookingRules()
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+
+            // Same fallbacks as Bookingservice, so a database with no settings row
+            // behaves identically on both sides of the call.
+            var fullService = settings?.MinLeadDaysFullService ?? 7;
+            var delivery = settings?.MinLeadDaysDelivery ?? 1;
+
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            return Ok(new BookingRulesDto(
+                fullService, delivery,
+                today.AddDays(fullService), today.AddDays(delivery)));
+        }
+
+        /// <summary>
+        /// The open and occupied time windows on one date.
+        ///
+        /// The gaps are computed server-side rather than left to the client: they follow
+        /// from EventBufferHours and the same overlap rule CheckTimeSlotConflictAsync
+        /// enforces, and a second implementation in the frontend would drift from it the
+        /// first time the buffer changed.
+        ///
+        /// Anonymous, like the range read — the payload is times, never a booking.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("time-slots")]
+        public async Task<IActionResult> TimeSlots([FromQuery] DateOnly date, CancellationToken ct = default)
+        {
+            var slots = await _bookings.GetDayTimeSlotsAsync(date, ct);
+
+            return Ok(new DayTimeSlotsDto(
+                slots.Date, slots.OpensAt, slots.ClosesAt, slots.BufferHours, slots.DayLocked,
+                slots.Busy.Select(w => new TimeWindowDto(w.Start, w.End)).ToList(),
+                slots.Free.Select(w => new TimeWindowDto(w.Start, w.End)).ToList()));
         }
 
         /// <summary>

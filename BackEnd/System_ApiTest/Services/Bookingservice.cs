@@ -25,6 +25,27 @@ namespace System_ApiTest.Services
         int? RemainingEventSlots,
         string Summary);
 
+    /// <summary>One [Start, End) span within a single calendar day.</summary>
+    public record TimeWindow(TimeOnly Start, TimeOnly End);
+
+    /// <summary>
+    /// What times are still open on one date, for the public calendar.
+    ///
+    /// <paramref name="Busy"/> is what confirmed events actually occupy, clipped to the
+    /// day. <paramref name="Free"/> is what a NEW event could take: the operating-hours
+    /// window minus each busy span expanded by the buffer on both sides. The two are
+    /// therefore NOT complements of each other — the difference between them is exactly
+    /// the setup/teardown gap.
+    /// </summary>
+    public record DayTimeSlots(
+        DateOnly Date,
+        TimeOnly OpensAt,
+        TimeOnly ClosesAt,
+        decimal BufferHours,
+        bool DayLocked,
+        IReadOnlyList<TimeWindow> Busy,
+        IReadOnlyList<TimeWindow> Free);
+
     public class Bookingservice
     {
         private readonly AppDbContext _db;
@@ -82,7 +103,7 @@ namespace System_ApiTest.Services
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
             var leadDays = bookingType == BookingType.FoodDelivery
                 ? settings?.MinLeadDaysDelivery ?? 1
-                : settings?.MinLeadDaysFullService ?? 3;
+                : settings?.MinLeadDaysFullService ?? 7;
             var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
             if (eventDate < earliest)
                 throw new BookingRuleException(
@@ -260,6 +281,20 @@ namespace System_ApiTest.Services
             if (booking.Status != BookingStatus.Pending)
                 throw new BookingRuleException($"Only a submitted (Pending) booking can be confirmed; this one is {booking.Status}.");
 
+            // No money, no confirmation. DepositStatus is already re-derived from verified
+            // payments every time one posts (RecomputeDepositStatusAsync), so Unpaid is the
+            // system's own answer to "has the reservation fee cleared" — nothing to compute
+            // here. Applies to every booking type: the REQUIRED amount differs by type
+            // (5% of the total for rentals, the flat fee otherwise), but "nothing paid"
+            // never justifies committing the date.
+            //
+            // Only on the manual admin path. The auto-confirm path is already gated by its
+            // caller (Paymentservice.MarkSuccessAsync confirms only once payments reach the
+            // fee), and putting this in the shared ConfirmCoreAsync would risk breaking it.
+            if (booking.DepositStatus == DepositStatus.Unpaid)
+                throw new BookingRuleException(
+                    "The reservation fee has not been paid yet — this booking cannot be confirmed.");
+
             await using var tx = await _db.Database.BeginTransactionAsync();
             await WriteHistorySnapshotAsync(bookingId, adminId, "Confirmed");
             await ConfirmCoreAsync(booking);
@@ -277,7 +312,9 @@ namespace System_ApiTest.Services
         public async Task<bool> TryAutoConfirmOnReservationAsync(Guid bookingId)
         {
             var booking = await LoadForConfirmAsync(bookingId);
-            if (booking.BookingType != BookingType.FullService) return false;
+            // Rentals auto-confirm on their deposit the same way events do; only
+            // deliveries (no reservation fee concept) are excluded.
+            if (booking.BookingType == BookingType.FoodDelivery) return false;
             if (booking.Status != BookingStatus.Pending) return false;
 
             await WriteHistorySnapshotAsync(bookingId, null, "Auto-confirmed on reservation payment");
@@ -310,6 +347,24 @@ namespace System_ApiTest.Services
                 await LockCalendarDayAsync(booking.EventDate);
                 if (await DateHasConfirmedEventAsync(booking.EventDate))
                     throw new BookingRuleException("This date now has a booked event and isn't available for delivery.");
+            }
+            else if (booking.BookingType == BookingType.RentalService)
+            {
+                // Equipment, not a venue slot: a rental does NOT consume calendar
+                // capacity, so it also never increments ConfirmedCount. That symmetry
+                // matters — CancelBookingAsync only decrements for FullService, so
+                // incrementing here would leak a slot on every cancelled rental until
+                // the day locked itself permanently.
+                //
+                // A MANUAL lock still applies (the admin has closed that date outright),
+                // but being at event capacity does not — three booked events don't stop
+                // us lending out chairs.
+                await LockCalendarDayAsync(booking.EventDate);
+                if (booking.CalendarDay.IsManuallyLocked)
+                    throw new BookingRuleException("This calendar day is closed; the booking cannot be confirmed.");
+
+                // Stock IS the real constraint for a rental booking.
+                await EnsureRentalStockAvailableAsync(booking.Id);
             }
             else
             {
@@ -414,8 +469,10 @@ namespace System_ApiTest.Services
                         "This delivery date now has a booked event and isn't available. " +
                         "Please move the delivery to another date before paying.");
             }
-            else
+            else if (booking.BookingType != BookingType.RentalService)
             {
+                // Rentals don't occupy a time window, so there is no slot for them to
+                // lose — their availability is stock, re-checked at confirm.
                 await CheckTimeSlotConflictAsync(booking);
             }
         }
@@ -431,7 +488,7 @@ namespace System_ApiTest.Services
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
             var leadDays = bookingType == BookingType.FoodDelivery
                 ? settings?.MinLeadDaysDelivery ?? 1
-                : settings?.MinLeadDaysFullService ?? 3;
+                : settings?.MinLeadDaysFullService ?? 7;
             var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
             var leadOk = date >= earliest;
 
@@ -447,6 +504,21 @@ namespace System_ApiTest.Services
             }
 
             var day = await _db.CalendarDays.AsNoTracking().FirstOrDefaultAsync(d => d.Date == date);
+
+            if (bookingType == BookingType.RentalService)
+            {
+                // Rentals don't take an event slot, so capacity is irrelevant to them —
+                // only an outright manual closure of the day applies. Availability then
+                // comes down to stock, which is checked per item at confirm.
+                var closed = day?.IsManuallyLocked ?? false;
+                var rentalOk = leadOk && !closed;
+                var rentalSummary = !leadOk
+                    ? $"Too soon — the earliest rental date is {earliest:yyyy-MM-dd}."
+                    : closed ? "Unavailable — this date is closed."
+                    : "Available for rentals (subject to item stock).";
+                return new DateAvailabilityResult(rentalOk, leadOk, earliest, false, closed, null, rentalSummary);
+            }
+
             var maxCap = day?.MaxCapacity ?? settings?.DefaultMaxCapacity ?? 3;
             var used = day?.ConfirmedCount ?? 0;
             var locked = day?.IsLocked ?? false;
@@ -458,6 +530,129 @@ namespace System_ApiTest.Services
                 : remaining == 0 ? "Fully booked — no event slots remain on this date."
                 : $"Available — {remaining} of {maxCap} event slot(s) open (subject to the time-slot check at confirmation).";
             return new DateAvailabilityResult(available, leadOk, earliest, false, locked, remaining, eventSummary);
+        }
+
+        /// <summary>
+        /// The open time windows on one date — what the public calendar advertises when
+        /// a customer hovers a partially-booked day.
+        ///
+        /// Derived from the SAME rule CheckTimeSlotConflictAsync enforces, rather than a
+        /// second approximation of it. That test says a proposed window [ns, ne] clashes
+        /// with a confirmed [exStart, exEnd] iff
+        ///
+        ///     exEnd + buffer > ns   AND   ne + buffer > exStart
+        ///
+        /// Negate it and a new event is safe iff it sits entirely at or after
+        /// exEnd + buffer, or entirely at or before exStart - buffer. So the region a new
+        /// event may not touch is exactly [exStart - buffer, exEnd + buffer], and the free
+        /// slots are the operating-hours window minus the union of those expanded spans.
+        ///
+        /// Multi-day events are handled by widening the candidate scan and clipping to
+        /// this date, so an overnight event correctly blocks the morning after.
+        ///
+        /// Only CONFIRMED FullService bookings count, matching the conflict test — an
+        /// unpaid booking doesn't own its slot and must not make a date look busier than
+        /// it is.
+        /// </summary>
+        public async Task<DayTimeSlots> GetDayTimeSlotsAsync(DateOnly date, CancellationToken ct = default)
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+            var buffer = TimeSpan.FromHours((double)(settings?.EventBufferHours ?? 3m));
+            var opensAt = settings?.OperatingHoursStart ?? new TimeOnly(8, 0);
+            var closesAt = settings?.OperatingHoursEnd ?? new TimeOnly(22, 0);
+
+            var dayOpen = date.ToDateTime(opensAt);
+            var dayClose = date.ToDateTime(closesAt);
+
+            var day = await _db.CalendarDays.AsNoTracking().FirstOrDefaultAsync(d => d.Date == date, ct);
+            var locked = day?.IsLocked ?? false;
+
+            // Same ±2-day widening CheckTimeSlotConflictAsync uses, so an event that
+            // starts the day before and runs into this one is still a candidate.
+            var lowDate = date.AddDays(-2);
+            var highDate = date.AddDays(2);
+
+            var candidates = await _db.Bookings.AsNoTracking()
+                .Where(b => b.BookingType == BookingType.FullService
+                            && b.Status == BookingStatus.Confirmed
+                            && b.EventDate >= lowDate && b.EventDate <= highDate)
+                .Select(b => new { b.EventDate, b.StartTime, b.EndDate, b.EndTime })
+                .ToListAsync(ct);
+
+            var busy = new List<TimeWindow>();
+            var blocked = new List<(DateTime Start, DateTime End)>();
+
+            foreach (var c in candidates)
+            {
+                var exStart = c.EventDate.ToDateTime(c.StartTime);
+                var exEnd = (c.EndDate ?? c.EventDate).ToDateTime(c.EndTime ?? c.StartTime);
+
+                // What the event itself occupies, clipped to this day's window.
+                if (exEnd > dayOpen && exStart < dayClose)
+                {
+                    busy.Add(new TimeWindow(
+                        TimeOnly.FromDateTime(exStart < dayOpen ? dayOpen : exStart),
+                        TimeOnly.FromDateTime(exEnd > dayClose ? dayClose : exEnd)));
+                }
+
+                // What a new event may not touch, clipped the same way.
+                var blockStart = exStart - buffer;
+                var blockEnd = exEnd + buffer;
+                if (blockEnd > dayOpen && blockStart < dayClose)
+                {
+                    blocked.Add((
+                        blockStart < dayOpen ? dayOpen : blockStart,
+                        blockEnd > dayClose ? dayClose : blockEnd));
+                }
+            }
+
+            busy.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            // A locked day has no open slots at all, regardless of what's booked.
+            var free = locked
+                ? new List<TimeWindow>()
+                : SubtractBlocked(dayOpen, dayClose, blocked);
+
+            return new DayTimeSlots(
+                date, opensAt, closesAt, settings?.EventBufferHours ?? 3m, locked, busy, free);
+        }
+
+        /// <summary>
+        /// [dayOpen, dayClose] minus the union of <paramref name="blocked"/> — the pure
+        /// interval arithmetic behind <see cref="GetDayTimeSlotsAsync"/>.
+        ///
+        /// Split out from the query so the part with all the edge cases (overlapping
+        /// spans, a span that swallows another, spans running past close, a day fully
+        /// covered) can be exercised on its own. Callers pass spans already clipped to
+        /// the day.
+        ///
+        /// Zero-length gaps are dropped: a window you cannot fit anything into is not
+        /// availability.
+        /// </summary>
+        public static List<TimeWindow> SubtractBlocked(
+            DateTime dayOpen, DateTime dayClose, List<(DateTime Start, DateTime End)> blocked)
+        {
+            var free = new List<TimeWindow>();
+
+            // Sorting by start is what lets a single left-to-right sweep merge overlaps:
+            // once ordered, anything beginning before the running cursor is already
+            // covered, so only the cursor needs advancing.
+            blocked.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            var cursor = dayOpen;
+            foreach (var (start, end) in blocked)
+            {
+                if (start > cursor)
+                    free.Add(new TimeWindow(TimeOnly.FromDateTime(cursor), TimeOnly.FromDateTime(start)));
+                // Max, not assignment: a span nested inside an earlier one must not pull
+                // the cursor backwards and re-open time that's already blocked.
+                if (end > cursor) cursor = end;
+            }
+
+            if (cursor < dayClose)
+                free.Add(new TimeWindow(TimeOnly.FromDateTime(cursor), TimeOnly.FromDateTime(dayClose)));
+
+            return free;
         }
 
         /// <summary>The overlap test itself (buffer-expanded, overnight-aware). Callers decide about locking.</summary>
@@ -535,6 +730,11 @@ namespace System_ApiTest.Services
                         "Please choose another date.");
                 return;
             }
+
+            // Rentals compete for stock, not for the day: no window to clash over, and
+            // a fully-booked event calendar doesn't stop us lending equipment.
+            if (bookingType == BookingType.RentalService)
+                return;
 
             await CheckTimeSlotConflictAsync(excludeBookingId, eventDate, startTime, endDate, endTime);
         }
@@ -624,6 +824,41 @@ namespace System_ApiTest.Services
         }
 
         /// <summary>
+        /// Hard-deletes an abandoned Draft booking and its line items.
+        ///
+        /// Deliberately Draft-only. A Draft is the one state with no dependents worth
+        /// keeping: CreateAsync writes no history snapshot (those start at Submit), and
+        /// an invoice isn't generated until Submit either — so there is nothing to
+        /// orphan. From Pending onward a booking has history, an invoice, and possibly
+        /// payments, and must be CANCELLED rather than erased so the trail survives.
+        ///
+        /// Line items are removed explicitly rather than relying on cascade, so the
+        /// intent is visible here and doesn't depend on a mapping elsewhere.
+        /// </summary>
+        public async Task DeleteDraftAsync(Guid bookingId)
+        {
+            var booking = await _db.Bookings.FindAsync(bookingId)
+                ?? throw new BookingRuleException("Booking not found.");
+
+            if (booking.Status != BookingStatus.Draft)
+                throw new BookingRuleException(
+                    $"Only a Draft booking can be deleted; this one is {booking.Status}. Cancel it instead.");
+
+            await using var tx = await _db.Database.BeginTransactionAsync();
+
+            _db.BookingPackageSelections.RemoveRange(
+                _db.BookingPackageSelections.Where(x => x.BookingId == bookingId));
+            _db.BookingMenuItems.RemoveRange(_db.BookingMenuItems.Where(x => x.BookingId == bookingId));
+            _db.BookingMenuTrays.RemoveRange(_db.BookingMenuTrays.Where(x => x.BookingId == bookingId));
+            _db.Rentals.RemoveRange(_db.Rentals.Where(x => x.BookingId == bookingId));
+            _db.Services.RemoveRange(_db.Services.Where(x => x.BookingId == bookingId));
+
+            _db.Bookings.Remove(booking);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+
+        /// <summary>
         /// Sets (or clears) the internal staff note on a booking.
         ///
         /// Deliberately its own narrow method rather than a field on UpdateAsync: that
@@ -663,6 +898,21 @@ namespace System_ApiTest.Services
                 throw new BookingRuleException("Booking is already completed.");
             if (booking.Status != BookingStatus.Confirmed)
                 throw new BookingRuleException($"Only a Confirmed booking can be completed; this one is {booking.Status}.");
+
+            // "Completed" means the event has actually finished, so it can't be claimed
+            // before the booking's end instant. Same expression CheckTimeSlotConflictAsync
+            // uses, which degrades correctly for bookings with no explicit end (deliveries,
+            // rentals): it falls back to the event date and start time.
+            //
+            // DateTime.Now, not UtcNow — every other date decision in this file is made in
+            // local (PH) time, and EventDate/StartTime are stored and compared that way.
+            // Mixing in UTC here would let an event be completed up to 8 hours early.
+            var endsAt = (booking.EndDate ?? booking.EventDate)
+                .ToDateTime(booking.EndTime ?? booking.StartTime);
+            if (DateTime.Now < endsAt)
+                throw new BookingRuleException(
+                    $"This booking's scheduled end time hasn't passed yet ({endsAt:MMMM d, yyyy 'at' h:mm tt}) — " +
+                    "it can't be marked Completed.");
 
             await using var tx = await _db.Database.BeginTransactionAsync();
             await WriteHistorySnapshotAsync(bookingId, adminId, "Completed");
@@ -854,7 +1104,7 @@ namespace System_ApiTest.Services
             {
                 var leadDays = booking.BookingType == BookingType.FoodDelivery
                     ? settings?.MinLeadDaysDelivery ?? 1
-                    : settings?.MinLeadDaysFullService ?? 3;
+                    : settings?.MinLeadDaysFullService ?? 7;
                 var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
                 if (eventDate < earliest)
                     throw new BookingRuleException(
@@ -1033,7 +1283,7 @@ namespace System_ApiTest.Services
                 .FirstOrDefaultAsync()
                 ?? throw new BookingRuleException("Booking not found.");
 
-            if (booking.BookingType != BookingType.FullService)
+            if (booking.BookingType == BookingType.FoodDelivery)
                 throw new BookingRuleException("Quantity is required for a food delivery order.");
             if (booking.GuestCount is null or <= 0)
                 throw new BookingRuleException("Quantity could not be derived: the booking has no guest count.");

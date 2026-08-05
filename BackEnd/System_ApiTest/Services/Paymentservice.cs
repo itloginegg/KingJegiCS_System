@@ -189,7 +189,19 @@ namespace System_ApiTest.Services
             // confirmation rolls back — the deposit isn't accepted for an unavailable slot.
             var settings = await _settings.GetAsync();
             var paidNow = alreadyPaid + payment.AmountPaid;
-            if (paidNow >= settings.ReservationFee)
+
+            // The threshold is per booking type — 5% of the total for a rental, the flat
+            // fee otherwise — and capped at the grand total, so paying a small order in
+            // full always secures it (a flat fee larger than the order previously meant
+            // auto-confirm could never fire for it).
+            var bookingType = await _db.Bookings
+                .Where(b => b.Id == payment.Invoice.BookingId)
+                .Select(b => b.BookingType)
+                .FirstAsync();
+            var reservationFee = BookingMath.ReservationFeeFor(
+                bookingType, payment.Invoice.GrandTotal, settings.ReservationFee);
+
+            if (paidNow >= reservationFee)
                 await _bookings.TryAutoConfirmOnReservationAsync(payment.Invoice.BookingId);
 
             await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
@@ -220,6 +232,12 @@ namespace System_ApiTest.Services
 
             if (payment.Status is not (PaymentStatus.Success or PaymentStatus.PartiallyRefunded))
                 throw new BookingRuleException("Only a successful payment can be refunded.");
+
+            // A refund must answer a request the customer actually filed. Without this,
+            // an admin could move money back with nothing on record asking for it, and
+            // the customer's first notice would be the refund itself.
+            if (!payment.RefundRequested)
+                throw new BookingRuleException("Customer has not requested a refund on this payment.");
 
             var remaining = payment.AmountPaid - payment.RefundedAmount;
             var toRefund = amount ?? remaining;
@@ -403,7 +421,11 @@ namespace System_ApiTest.Services
                 ?? throw new BookingRuleException("Invoice not found.");
             var settings = await _settings.GetAsync();
             var paid = await _invoices.GetPaidTotalAsync(invoiceId);
-            var fee = Math.Min(settings.ReservationFee, invoice.GrandTotal);
+            var bookingType = await _db.Bookings
+                .Where(b => b.Id == invoice.BookingId)
+                .Select(b => b.BookingType)
+                .FirstAsync();
+            var fee = BookingMath.ReservationFeeFor(bookingType, invoice.GrandTotal, settings.ReservationFee);
 
             await _bookings.RecomputeDepositStatusAsync(invoice.BookingId, paid, fee, invoice.GrandTotal);
         }

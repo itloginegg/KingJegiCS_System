@@ -46,6 +46,8 @@ export interface AdminPaymentRecord {
   refundRequested: boolean;
   bookingId: string;
   bookingName: string;
+  /** 'FullService' | 'FoodDelivery' | 'RentalService' — drives the Payments type filter. */
+  bookingType: string;
   eventType: string | null;
   eventDate: string;
   customerId: string;

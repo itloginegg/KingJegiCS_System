@@ -8,6 +8,9 @@ import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
 import { fetchRentalItems, type AdminRentalItem } from '../api/rentalAdminApi';
+import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
+import { VenueAddressFields } from '../components/forms/VenueAddressFields';
+import { composeVenueAddress, emptyVenueAddress, type VenueAddress } from '../lib/venue';
 import { fetchServiceItems, type AdminServiceItem } from '../api/serviceAdminApi';
 import {
   createBooking,
@@ -20,13 +23,15 @@ import {
   submitBooking,
   getPackageTemplate,
   setBookingPackage,
+  deleteDraftBooking,
+  deleteDraftBookingOnUnload,
   BookingApiError,
   type BookingCreatePayload,
   type BookingUpdatePayload,
   type BookingResponse,
   type PackageTemplateResponse,
 } from '../api/bookingApi';
-import { getCalendarDays, type CalendarDay } from '../api/calendarApi';
+import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules } from '../api/calendarApi';
 
 /* ── constants ────────────────────────────────────────────────────────── */
 
@@ -39,7 +44,11 @@ const EVENT_TYPES: EventTypeOption[] = [
   { value: 'Birthday', label: 'Birthday', icon: '🎂' },
   { value: 'Corporate', label: 'Corporate', icon: '🏢' },
   { value: 'Debut', label: 'Debut', icon: '👑' },
-  { value: 'Other', label: 'Other', icon: '🎉' },
+  // 'Others', not 'Other' — these values are sent raw and must match the backend
+  // EventType enum exactly. A mismatch doesn't fail this one field: it makes the
+  // whole request body fail to deserialize, which surfaces as the opaque
+  // "The dto field is required."
+  { value: 'Others', label: 'Other', icon: '🎉' },
 ];
 
 const formatTime12h = (time24: string) => {
@@ -50,6 +59,20 @@ const formatTime12h = (time24: string) => {
   const ampm = hour >= 12 ? 'PM' : 'AM';
   hour = hour % 12 || 12;
   return `${hour.toString().padStart(2, '0')}:${m} ${ampm}`;
+};
+
+/**
+ * "2026-08-10" → "August 10, 2026" for the lead-time messages.
+ *
+ * Parsed positionally rather than through `new Date(iso)`, which would read the string
+ * as UTC midnight and render the previous day for anyone west of Greenwich.
+ */
+const fmtLeadDate = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString('en-PH', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
 };
 
 type ServiceFlow = 'event' | 'rentals';
@@ -85,9 +108,7 @@ export function BookingPage() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [streetAddress, setStreetAddress] = useState('');
-  const [city, setCity] = useState('');
-  const [zipCode, setZipCode] = useState('');
+  const [venue, setVenue] = useState<VenueAddress>(emptyVenueAddress);
 
   // Step 2 — Event
   const [eventType, setEventType] = useState('');
@@ -103,6 +124,9 @@ export function BookingPage() {
      customer finds out before building a whole booking on an unavailable date. */
   const [dateStatus, setDateStatus] = useState<CalendarDay | null>(null);
   const [dateChecking, setDateChecking] = useState(false);
+  /* Configured lead times. Null until fetched (or if the fetch fails), in which case
+     the date field falls back to "not in the past" and the server stays the gate. */
+  const [bookingRules, setBookingRules] = useState<BookingRules | null>(null);
 
   // Delivery (rentals/menu flows)
 
@@ -143,6 +167,87 @@ export function BookingPage() {
   // Step 4
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  /* ── Abandonment guard ──────────────────────────────────────────────────
+     A Draft exists from the moment Step 2 creates it. Until the booking is
+     submitted, leaving discards it — so warn first, then delete on the way out.
+
+     Two separate mechanisms, because the browser only lets us do so much:
+       • In-app navigation (nav links, footer, anything routed) — intercepted in
+         the capture phase so we can show our OWN modal with real wording.
+       • Tab close / refresh / typed URL — beforeunload only. Every current
+         browser ignores custom text here and shows its own generic message;
+         that's a platform limit, not something to work around.
+  ─────────────────────────────────────────────────────────────────────────── */
+  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
+
+  /** True while there's an unsubmitted Draft that leaving would throw away. */
+  const hasUnsavedDraft = Boolean(bookingId) && !submitted;
+
+  const discardDraft = useCallback(async () => {
+    const session = readSession();
+    if (!session?.token || !bookingId) return;
+    try {
+      await deleteDraftBooking(session.token, bookingId);
+    } catch {
+      // Best-effort: the DraftCleanupWorker sweeps anything left behind.
+    }
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (!hasUnsavedDraft) return;
+
+    // Tab close / refresh. preventDefault is what triggers the prompt; the browser
+    // supplies its own wording regardless of what we set here.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    // Fires when the page is genuinely going away (unlike beforeunload, which also
+    // fires when the user then cancels), so this is the safe place to delete.
+    const onPageHide = () => {
+      const session = readSession();
+      if (session?.token && bookingId) deleteDraftBookingOnUnload(session.token, bookingId);
+    };
+
+    // In-app navigation. Capture phase so we run before React Router's own handler,
+    // and only for links that actually leave this page.
+    const onDocumentClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+
+      const anchor = (e.target as HTMLElement | null)?.closest?.('a');
+      const href = anchor?.getAttribute('href');
+      if (!anchor || !href || href.startsWith('#')) return;
+      if (anchor.target && anchor.target !== '_self') return;
+
+      // Same-page links (and the wizard's own controls) aren't leaving.
+      const destination = new URL(anchor.href, window.location.origin);
+      if (destination.origin !== window.location.origin) return;
+      if (destination.pathname === window.location.pathname) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingLeaveHref(destination.pathname + destination.search);
+    };
+
+    window.addEventListener('beforeunload', onBeforeUnload);
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('click', onDocumentClick, true);
+
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('click', onDocumentClick, true);
+    };
+  }, [hasUnsavedDraft, bookingId]);
+
+  const confirmLeave = async () => {
+    const href = pendingLeaveHref;
+    setPendingLeaveHref(null);
+    await discardDraft();
+    if (href) navigate(href);
+  };
 
   // Terms
   const [showTerms, setShowTerms] = useState(false);
@@ -215,6 +320,18 @@ export function BookingPage() {
     }
   }, [bookingId]);
 
+  /* Lead-time rules, fetched once. Deliberately not hardcoded: MinLeadDaysFullService
+     is owner-editable, and a copy here would disagree with the API the moment it
+     changed. Anonymous, so this works for guests browsing before they sign in. */
+  useEffect(() => {
+    let cancelled = false;
+    getBookingRules()
+      .then((rules) => { if (!cancelled) setBookingRules(rules); })
+      // Advisory only — the server still enforces the real rule on submit.
+      .catch(() => { if (!cancelled) setBookingRules(null); });
+    return () => { cancelled = true; };
+  }, []);
+
   /* Look up the chosen date's real calendar state. The endpoint is anonymous, so
      this works for guests browsing before they sign in. A date the backend has no
      row for has never been booked — that's an open date, not an error. */
@@ -243,9 +360,21 @@ export function BookingPage() {
   /* ── derived ── */
   const contactComplete = fullName.trim() && email.trim() && phone.trim();
 
+  /* Earliest legal event date. Both wizard flows create FullService/RentalService
+     bookings, and Bookingservice applies the full-service lead time to everything that
+     isn't a FoodDelivery — so one value covers both. Falls back to "not in the past"
+     when the rules fetch failed, leaving the server as the only gate rather than
+     inventing a limit the API might not agree with. */
+  const today = new Date().toISOString().split('T')[0];
+  const earliestBookingDate = bookingRules?.earliestFullServiceDate ?? today;
+  const dateTooSoon = Boolean(eventDate) && eventDate < earliestBookingDate;
+
   // Both remaining flows ('event' and 'rentals') create a FullService booking, so both
   // must supply the fields CreateAsync requires: event type, guests, dates, and times.
-  const eventComplete = eventType && guests >= 1 && eventDate && startTime && endDate && endTime;
+  // The lead-time check joins them: a too-soon date is rejected by the API, so blocking
+  // Next here gets the customer a friendlier message before they've filled in the rest.
+  const eventComplete =
+    eventType && guests >= 1 && eventDate && startTime && endDate && endTime && !dateTooSoon;
 
   const stepLabels = useMemo(() => {
     if (serviceFlow === 'event') return ['Contact', 'Event Details', 'Package & Add‑ons', 'Review'];
@@ -349,13 +478,15 @@ export function BookingPage() {
     setCreatingBooking(true);
     setApiError(null);
 
-    const venueAddress = [streetAddress, city, zipCode].filter(Boolean).join(', ');
+    const venueAddress = composeVenueAddress(venue);
 
     const payload: BookingCreatePayload = {
       customerId: user.id,
-      // 'rentals' is FullService too — a rental line can't sit on a FoodDelivery booking
-      // (EnsureNotDeliveryAsync). Both flows now send the full event fields.
-      bookingType: 'FullService',
+      // The rentals flow is now its own booking type rather than a FullService booking
+      // with nothing catered. It still sends the full event fields (the backend applies
+      // full-service rules to it), but the backend can now tell the two apart — which is
+      // what lets a rental skip the event-slot capacity it never actually uses.
+      bookingType: serviceFlow === 'rentals' ? 'RentalService' : 'FullService',
       eventDate,
       startTime: startTime + ':00',
       endDate: endDate || null,
@@ -468,8 +599,6 @@ export function BookingPage() {
   /* ── navigation helpers ── */
   const pickService = (flow: ServiceFlow) => { setServiceFlow(flow); setStep(1); };
 
-  const today = new Date().toISOString().split('T')[0];
-
   /* ── can proceed checks ── */
   const allSlotsComplete = packageTemplate
     ? packageTemplate.slots.every(s => (slotSelections[s.slotId]?.length ?? 0) === s.chooseCount)
@@ -539,6 +668,15 @@ export function BookingPage() {
         .bk-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.8rem}
         .bk-btn{font-family:var(--font-body);font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;padding:.85rem 1.4rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:.45rem;transition:all .25s}
         .bk-btn:disabled{opacity:.4;cursor:not-allowed}
+        .bk-btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+        .bk-btn.danger:hover:not(:disabled){filter:brightness(.92);transform:translateY(-2px)}
+
+        /* leave-confirmation modal — same overlay/modal shape as the dashboards */
+        .bk-overlay{position:fixed;inset:0;z-index:150;background:rgba(20,14,8,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:1.5rem}
+        .bk-modal{width:min(440px,100%);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:1.9rem 1.8rem 1.6rem}
+        .bk-modal-title{font-family:var(--font-display);font-size:1.35rem;font-weight:500;color:var(--text-primary);margin:0 0 .6rem}
+        .bk-modal-body{font-family:var(--font-body);font-size:.84rem;font-weight:300;color:var(--text-muted);line-height:1.7;margin:0 0 1.5rem}
+        .bk-modal-actions{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:flex-end}
         .bk-btn.primary{background:var(--primary);color:var(--primary-text);border-color:var(--primary)}
         .bk-btn.primary:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-2px);box-shadow:var(--shadow-green)}
         .bk-btn.outline{background:transparent;color:var(--primary);border-color:var(--border-accent)}
@@ -752,22 +890,7 @@ export function BookingPage() {
                 </div>
                 <div className="bk-field">
                   <label className="bk-label">Phone Number</label>
-                  <input 
-                    className="bk-input" 
-                    type="tel" 
-                    placeholder="+63 000-000-0000" 
-                    value={phone} 
-                    onChange={e => {
-                      let val = e.target.value.replace(/\D/g, '');
-                      if (val.startsWith('63')) val = val.substring(2);
-                      else if (val.startsWith('0')) val = val.substring(1);
-                      
-                      if (val.length === 0) setPhone('');
-                      else if (val.length <= 3) setPhone(`+63 ${val}`);
-                      else if (val.length <= 6) setPhone(`+63 ${val.substring(0,3)}-${val.substring(3)}`);
-                      else setPhone(`+63 ${val.substring(0,3)}-${val.substring(3,6)}-${val.substring(6,10)}`);
-                    }} 
-                  />
+                  <PhoneNumberInput className="bk-input" value={phone} onChange={setPhone} />
                 </div>
               </div>
 
@@ -775,27 +898,14 @@ export function BookingPage() {
                 <label className="bk-label" style={{ marginBottom: '.6rem', display: 'block' }}>
                   Venue Address
                 </label>
-                <div className="bk-grid-3">
-                  <div className="bk-field">
-                    <label className="bk-label">Street</label>
-                    <input className="bk-input" placeholder="123 Main St." value={streetAddress} onChange={e => setStreetAddress(e.target.value)} />
-                  </div>
-                  <div className="bk-field">
-                    <label className="bk-label">City</label>
-                    <select className="bk-input" value={city} onChange={e => setCity(e.target.value)}>
-                      <option value="" disabled>Select a city</option>
-                      <option value="Calamba">Calamba</option>
-                      <option value="Cabuyao">Cabuyao</option>
-                      <option value="Santa Rosa">Santa Rosa</option>
-                      <option value="Los Banos">Los Baños</option>
-                    </select>
-                    <div style={{ fontSize: '.65rem', color: 'var(--text-muted)', marginTop: '.25rem' }}>Currently catering to the Laguna area only</div>
-                  </div>
-                  <div className="bk-field">
-                    <label className="bk-label">Zip Code</label>
-                    <input className="bk-input" placeholder="1100" value={zipCode} onChange={e => setZipCode(e.target.value)} />
-                  </div>
-                </div>
+                <VenueAddressFields
+                  value={venue}
+                  onChange={setVenue}
+                  fieldClassName="bk-field"
+                  labelClassName="bk-label"
+                  inputClassName="bk-input"
+                  style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1.1rem' }}
+                />
               </div>
 
               <div className="bk-nav">
@@ -836,20 +946,31 @@ export function BookingPage() {
                 </div>
                 <div className="bk-field">
                   <label className="bk-label">Event Date</label>
-                  <input className="bk-input" type="date" min={today} value={eventDate} onChange={e => setEventDate(e.target.value)} />
-                  {dateChecking && (
+                  <input className="bk-input" type="date" min={earliestBookingDate} value={eventDate} onChange={e => setEventDate(e.target.value)} />
+                  {/* The lead-time message wins over availability: a too-soon date will
+                      be rejected regardless of how many slots that day has open. */}
+                  {dateTooSoon ? (
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--danger)', marginTop: '0.3rem', display: 'block' }}>
+                      We need at least {bookingRules?.minLeadDaysFullService ?? 7} days' notice — the earliest date we can take is {fmtLeadDate(earliestBookingDate)}.
+                    </span>
+                  ) : !eventDate && bookingRules && (
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', display: 'block' }}>
+                      Earliest available: {fmtLeadDate(earliestBookingDate)} ({bookingRules.minLeadDaysFullService} days' notice).
+                    </span>
+                  )}
+                  {!dateTooSoon && dateChecking && (
                     <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem', display: 'block' }}>
                       Checking availability…
                     </span>
                   )}
-                  {!dateChecking && dateStatus?.isLocked && (
+                  {!dateTooSoon && !dateChecking && dateStatus?.isLocked && (
                     <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--danger)', marginTop: '0.3rem', display: 'block' }}>
                       {dateStatus.isManuallyLocked
                         ? 'This date is closed for bookings. Please choose another.'
                         : `This date is fully booked (${dateStatus.confirmedCount} of ${dateStatus.maxCapacity} events). Please choose another.`}
                     </span>
                   )}
-                  {!dateChecking && dateStatus && !dateStatus.isLocked && dateStatus.confirmedCount > 0 && (
+                  {!dateTooSoon && !dateChecking && dateStatus && !dateStatus.isLocked && dateStatus.confirmedCount > 0 && (
                     <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', display: 'block' }}>
                       {dateStatus.maxCapacity - dateStatus.confirmedCount} of {dateStatus.maxCapacity} slots still open on this date.
                     </span>
@@ -1177,8 +1298,8 @@ export function BookingPage() {
                 <div className="bk-review-row"><span className="bk-review-label">Name</span><span className="bk-review-value">{fullName}</span></div>
                 <div className="bk-review-row"><span className="bk-review-label">Email</span><span className="bk-review-value">{email}</span></div>
                 <div className="bk-review-row"><span className="bk-review-label">Phone</span><span className="bk-review-value">{phone}</span></div>
-                {(streetAddress || city || zipCode) && (
-                  <div className="bk-review-row"><span className="bk-review-label">Address</span><span className="bk-review-value">{[streetAddress, city, zipCode].filter(Boolean).join(', ')}</span></div>
+                {composeVenueAddress(venue) && (
+                  <div className="bk-review-row"><span className="bk-review-label">Address</span><span className="bk-review-value">{composeVenueAddress(venue)}</span></div>
                 )}
               </div>
 
@@ -1280,6 +1401,29 @@ export function BookingPage() {
             </ol>
             <div style={{ marginTop: '1.5rem', textAlign: 'right' }}>
               <button className="bk-btn primary" onClick={() => { setTermsAgreed(true); setShowTerms(false); }}>I Agree</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════ LEAVE CONFIRMATION ═══════════
+          Only reachable via the in-app intercept, which is why it can carry the real
+          wording — a tab-close warning can't (the browser overrides it). */}
+      {pendingLeaveHref && (
+        <div className="bk-overlay" role="dialog" aria-modal="true" aria-label="Leave booking?" onClick={() => setPendingLeaveHref(null)}>
+          <div className="bk-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 className="bk-modal-title">Leave this page?</h3>
+            <p className="bk-modal-body">
+              If you leave this page, all your entered information will be lost and this
+              booking will be discarded.
+            </p>
+            <div className="bk-modal-actions">
+              <button type="button" className="bk-btn outline" onClick={() => setPendingLeaveHref(null)}>
+                Stay on this page
+              </button>
+              <button type="button" className="bk-btn danger" onClick={() => void confirmLeave()}>
+                Leave and discard
+              </button>
             </div>
           </div>
         </div>

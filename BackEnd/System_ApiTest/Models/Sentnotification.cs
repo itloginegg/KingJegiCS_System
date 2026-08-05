@@ -54,6 +54,8 @@ namespace System_ApiTest.Models
         RefundDenied,
         /// <summary>Staff replied in the support chat.</summary>
         SupportMessageFromStaff,
+        /// <summary>An admin posted an announcement. Period is "{announcementId:N}:{customerId:N}".</summary>
+        AnnouncementPosted,
 
         // ---- Proactive-assistant seeds (Slice D). Deduped independently of the flat
         // emails above so enabling ProactiveAssistant later still seeds once. Kind is a

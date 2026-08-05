@@ -90,6 +90,8 @@ namespace System_ApiTest.DTOs
         bool RefundRequested,
         Guid BookingId,
         string BookingName,
+        /* FullService / FoodDelivery / RentalService — lets the admin list filter by type. */
+        string BookingType,
         string? EventType,
         DateOnly EventDate,
         Guid CustomerId,

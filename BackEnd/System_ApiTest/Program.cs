@@ -76,9 +76,12 @@ builder.Services.AddScoped<Suggestionservice>();
 builder.Services.AddScoped<Testimonialservice>();
 builder.Services.AddScoped<Notificationfeedservice>();
 builder.Services.AddScoped<Notificationwriteservice>();
+builder.Services.AddScoped<Announcementservice>();
 builder.Services.AddScoped<Reportservice>();
 builder.Services.AddMemoryCache();   // backs Reportservice's AI sales-summary cache
 builder.Services.AddHostedService<DenylistCleanupWorker>();
+builder.Services.Configure<DraftCleanupOptions>(builder.Configuration.GetSection(DraftCleanupOptions.SectionName));
+builder.Services.AddHostedService<DraftCleanupWorker>();
 builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
 builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.SectionName));

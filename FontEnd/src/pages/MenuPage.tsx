@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { useAuth } from '../hooks/useAuth';
@@ -66,6 +66,7 @@ function QtyStepper({ value, onDelta, label }: { value: number; onDelta: (delta:
 
 export function MenuPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
 
   const [category, setCategory] = useState<'all' | string>('all');
@@ -118,6 +119,36 @@ export function MenuPage() {
   };
 
   useEffect(() => { void loadCatalog(); }, []);
+
+  /**
+   * Arriving from PackagePage's "Select Party Tray": add that tray to the cart and
+   * show the trays view.
+   *
+   * Waits on `products`, since the tray can only be added once the catalog has
+   * loaded — hence the dependency rather than a bare mount effect. The router state
+   * is cleared immediately afterwards so a refresh or a Back-then-Forward doesn't
+   * silently add the same tray again.
+   */
+  useEffect(() => {
+    const incoming = location.state as { addTrayId?: string; scrollTo?: string } | null;
+    if (!incoming?.addTrayId || products.length === 0) return;
+
+    const tray = products.find((p) => p.type === 'MenuTray' && p.id === incoming.addTrayId);
+    if (tray) {
+      addToCart(tray);
+      setCategory('trays');
+    }
+
+    if (incoming.scrollTo === 'trays') {
+      // After paint, so the filtered grid exists before we scroll to it.
+      window.requestAnimationFrame(() => {
+        document.querySelector('.mnu-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+
+    navigate(location.pathname, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, location.state]);
 
   const qtyOf = (key: string) => quantities[key] ?? 1;
   const bumpQty = (key: string, delta: number) =>
@@ -373,7 +404,7 @@ export function MenuPage() {
                         <p className="mnu-dish-desc">{product.description}</p>
                         <div className="mnu-card-foot">
                           <p className="mnu-price">
-                            {fmtPHP(product.price)} <small>/ {product.type === 'MenuTray' ? 'tray' : 'serving'}</small>
+                            {fmtPHP(product.price)} <small>/ {product.type === 'MenuTray' ? 'tray' : 'tray-serving'}</small>
                           </p>
                           <QtyStepper value={qtyOf(key)} onDelta={(d) => bumpQty(key, d)} label={product.name} />
                           <button type="button" className={`mnu-add${flashKey === key ? ' flash' : ''}`} onClick={(e) => { e.stopPropagation(); addToCart(product); }}>
@@ -427,7 +458,7 @@ export function MenuPage() {
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '0.8rem 0' }}>
               <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 500 }}>Price</span>
               <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 600, color: 'var(--primary)', marginLeft: 'auto', lineHeight: 1 }}>{fmtPHP(selected.price)}</span>
-              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', color: 'var(--text-dim)' }}>/ {selected.type === 'MenuTray' ? 'tray' : 'serving'}</span>
+              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', color: 'var(--text-dim)' }}>/ {selected.type === 'MenuTray' ? 'tray' : 'tray-serving'}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <QtyStepper value={qtyOf(cartKey(selected))} onDelta={(d) => bumpQty(cartKey(selected), d)} label={selected.name} />

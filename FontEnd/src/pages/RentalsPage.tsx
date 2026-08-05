@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { readSession } from '../lib/tokenStorage';
 import { fetchRentalItems, getFullImageUrl, type AdminRentalItem } from '../api/rentalAdminApi';
+import { createBooking, addRental, submitBooking, BookingApiError } from '../api/bookingApi';
+import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
+import { VenueAddressFields } from '../components/forms/VenueAddressFields';
+import {
+  composeVenueAddress,
+  emptyVenueAddress,
+  isVenueAddressComplete,
+  type VenueAddress,
+} from '../lib/venue';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -65,6 +75,7 @@ export function RentalsPage() {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [plan, setPlan] = useState<Record<string, number>>({});
   const [flashId, setFlashId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   /* live catalog */
   const [rentals, setRentals] = useState<RentalItem[]>([]);
@@ -133,6 +144,89 @@ export function RentalsPage() {
     setFlashId(item.id);
     window.setTimeout(() => setFlashId((prev) => (prev === item.id ? null : prev)), 1500);
   };
+
+  /* ── checkout ───────────────────────────────────────────────────────────
+     Checks out into a RentalService booking — the type built for exactly this:
+     5% reservation fee rather than the flat one, no event-slot consumption, and
+     stock re-validated at confirm. The backend treats it as event-shaped, so it
+     requires the same event fields FullService does; that's why this form asks
+     for more than MenuPage's delivery checkout.
+  ───────────────────────────────────────────────────────────────────────── */
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+
+  const [eventType, setEventType] = useState('Wedding');
+  const [guests, setGuests] = useState('50');
+  const [eventDate, setEventDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [address, setAddress] = useState<VenueAddress>(emptyVenueAddress);
+  const [contact, setContact] = useState('');
+
+  const planLines = useMemo(
+    () =>
+      Object.entries(plan)
+        .map(([id, qty]) => ({ item: rentals.find((r) => r.id === id), qty }))
+        .filter((l): l is { item: RentalItem; qty: number } => Boolean(l.item)),
+    [plan, rentals],
+  );
+
+  const placeRentalOrder = async () => {
+    const session = readSession();
+    if (!session) { navigate('/login'); return; }   // creating a booking requires login
+    if (planLines.length === 0) { setCheckoutError('Your rental list is empty.'); return; }
+    if (!eventDate || !startTime || !endDate || !endTime) {
+      setCheckoutError('Please give the delivery date/time and the pickup date/time.');
+      return;
+    }
+    if (new Date(`${endDate}T${endTime}`) <= new Date(`${eventDate}T${startTime}`)) {
+      setCheckoutError('Pickup must be after delivery.');
+      return;
+    }
+    if (!isVenueAddressComplete(address)) { setCheckoutError('Please provide a delivery street and city.'); return; }
+
+    setPlacing(true);
+    setCheckoutError('');
+    try {
+      const booking = await createBooking(session.token, {
+        customerId: session.user.id,
+        bookingType: 'RentalService',
+        eventDate,
+        startTime: `${startTime}:00`,
+        endDate,
+        endTime: `${endTime}:00`,
+        eventType,
+        venueAddress: composeVenueAddress(address),
+        guestCount: Number(guests) || 1,
+        menuPackageId: null,
+        contactNumber: contact.trim() || null,
+      });
+
+      for (const line of planLines) {
+        await addRental(session.token, booking.id, line.item.id, line.qty);
+      }
+
+      await submitBooking(session.token, booking.id);
+      setPlan({});
+      setCheckoutOpen(false);
+      navigate('/dashboard');
+    } catch (err) {
+      setCheckoutError(
+        err instanceof BookingApiError ? err.message : 'Could not place your rental booking. Please try again.',
+      );
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  /* Escape closes the checkout */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setCheckoutOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
 
@@ -408,6 +502,84 @@ export function RentalsPage() {
           transition: background 0.2s;
         }
         .rnt-estimate-cta:hover { background: var(--primary-hover); }
+        .rnt-estimate-cta { border: none; cursor: pointer; }
+        .rnt-estimate-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* ── checkout modal ── */
+        .rnt-overlay {
+          position: fixed; inset: 0; z-index: 160;
+          background: rgba(20, 14, 8, 0.55);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          display: flex; align-items: center; justify-content: center; padding: 1.5rem;
+        }
+        .rnt-modal {
+          width: min(620px, 100%); max-height: 90vh; display: flex; flex-direction: column;
+          background: var(--surface); border: 1px solid var(--border);
+          border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+        }
+        .rnt-modal-head {
+          display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8rem;
+          padding: 1.2rem 1.5rem; border-bottom: 1px solid var(--border);
+        }
+        .rnt-modal-eyebrow {
+          font-family: var(--font-body); font-size: 0.56rem; font-weight: 500;
+          letter-spacing: 0.24em; text-transform: uppercase; color: var(--text-dim);
+        }
+        .rnt-modal-title {
+          font-family: var(--font-display); font-size: 1.3rem; font-weight: 500;
+          color: var(--text-primary); margin: 0.2rem 0 0;
+        }
+        .rnt-modal-close {
+          background: transparent; border: none; cursor: pointer;
+          color: var(--text-dim); font-size: 0.85rem; line-height: 1;
+        }
+        .rnt-modal-body { overflow-y: auto; padding: 1.2rem 1.5rem; display: flex; flex-direction: column; gap: 1.2rem; }
+        .rnt-modal-foot {
+          display: flex; gap: 0.6rem; justify-content: flex-end; flex-wrap: wrap;
+          padding: 1rem 1.5rem; border-top: 1px solid var(--border);
+        }
+        .rnt-lines { display: flex; flex-direction: column; gap: 0.35rem; }
+        .rnt-line {
+          display: flex; justify-content: space-between; gap: 0.8rem;
+          font-family: var(--font-body); font-size: 0.76rem; font-weight: 300; color: var(--text-muted);
+        }
+        .rnt-line.total {
+          border-top: 1px solid var(--border); margin-top: 0.4rem; padding-top: 0.5rem;
+          font-weight: 600; color: var(--text-primary);
+        }
+        .rnt-note {
+          font-family: var(--font-body); font-size: 0.68rem; font-weight: 300;
+          color: var(--text-dim); line-height: 1.6; margin: 0.4rem 0 0;
+        }
+        .rnt-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+        .rnt-form label {
+          display: flex; flex-direction: column; gap: 0.25rem;
+          font-family: var(--font-body); font-size: 0.62rem; font-weight: 500;
+          letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim);
+        }
+        .rnt-form label.full { grid-column: 1 / -1; }
+        /* VenueAddressFields renders label + control as siblings rather than
+           nesting the control inside the label, so the stacking and full-width
+           sizing that .rnt-form label gave for free is restated here. */
+        .rnt-addr-field { display: flex; flex-direction: column; gap: 0.25rem; }
+        .rnt-addr-field label {
+          font-family: var(--font-body); font-size: 0.62rem; font-weight: 500;
+          letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim);
+        }
+        .rnt-addr-field input, .rnt-addr-field select { width: 100%; box-sizing: border-box; }
+        .rnt-form input, .rnt-form select {
+          background: var(--bg-subtle); border: 1px solid var(--border);
+          border-radius: var(--r-md); padding: 0.55rem 0.7rem;
+          font-family: var(--font-body); font-size: 0.8rem; font-weight: 400;
+          letter-spacing: normal; text-transform: none; color: var(--text-primary); outline: none;
+        }
+        .rnt-form input:focus, .rnt-form select:focus {
+          border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted);
+        }
+        .rnt-error {
+          font-family: var(--font-body); font-size: 0.76rem; color: var(--danger); margin: 0;
+        }
+        @media (max-width: 560px) { .rnt-form { grid-template-columns: 1fr; } }
 
         /* ── shared buttons ── */
         .btn-primary {
@@ -725,9 +897,74 @@ export function RentalsPage() {
           <button type="button" className="rnt-estimate-clear" onClick={() => setPlan({})}>
             Clear
           </button>
-          <a href="/#availability" className="rnt-estimate-cta">
-            Request Quote →
-          </a>
+          <button type="button" className="rnt-estimate-cta" onClick={() => setCheckoutOpen(true)}>
+            Book Rentals →
+          </button>
+        </div>
+      )}
+
+      {/* ═══════════════════════ CHECKOUT ═══════════════════════ */}
+      {checkoutOpen && (
+        <div className="rnt-overlay" role="dialog" aria-modal="true" aria-label="Book your rentals" onClick={() => setCheckoutOpen(false)}>
+          <div className="rnt-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="rnt-modal-head">
+              <div>
+                <p className="rnt-modal-eyebrow">Rental Booking</p>
+                <h3 className="rnt-modal-title">Delivery &amp; pickup</h3>
+              </div>
+              <button type="button" className="rnt-modal-close" onClick={() => setCheckoutOpen(false)} aria-label="Close">✕</button>
+            </div>
+
+            <div className="rnt-modal-body">
+              <div className="rnt-lines">
+                {planLines.map((line) => (
+                  <div key={line.item.id} className="rnt-line">
+                    <span>{line.item.name} × {line.qty}</span>
+                    <span>{fmtPHP(line.item.pricePerDay * line.qty * days)}</span>
+                  </div>
+                ))}
+                <div className="rnt-line total">
+                  <span>Estimated total · {days} {days === 1 ? 'day' : 'days'}</span>
+                  <span>{fmtPHP(planPerDay * days)}</span>
+                </div>
+                <p className="rnt-note">
+                  Final pricing is confirmed by our team. A reservation fee of 5% of the
+                  total secures your booking.
+                </p>
+              </div>
+
+              <div className="rnt-form">
+                <label>Delivery date<input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} /></label>
+                <label>Delivery time<input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></label>
+                <label>Pickup date<input type="date" value={endDate} min={eventDate || undefined} onChange={(e) => setEndDate(e.target.value)} /></label>
+                <label>Pickup time<input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label>
+                <label>Event type
+                  <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
+                    <option>Wedding</option><option>Corporate</option><option>Birthday</option>
+                    <option>Debut</option><option>Others</option>
+                  </select>
+                </label>
+                <label>Expected guests<input type="number" min={1} value={guests} onChange={(e) => setGuests(e.target.value)} /></label>
+                <VenueAddressFields
+                  value={address}
+                  onChange={setAddress}
+                  fieldClassName="rnt-addr-field"
+                  style={{ gridColumn: '1 / -1', gap: '0.8rem' }}
+                  labels={{ street: 'Delivery street' }}
+                />
+                <label className="full">Contact number<PhoneNumberInput value={contact} onChange={setContact} /></label>
+              </div>
+
+              {checkoutError && <p className="rnt-error">{checkoutError}</p>}
+            </div>
+
+            <div className="rnt-modal-foot">
+              <button type="button" className="btn-outline" onClick={() => setCheckoutOpen(false)}>Back</button>
+              <button type="button" className="rnt-estimate-cta" disabled={placing} onClick={() => void placeRentalOrder()}>
+                {placing ? 'Booking…' : 'Confirm Rental Booking'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
