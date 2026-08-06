@@ -132,6 +132,7 @@ namespace System_ApiTest.Data
                 e.Property(x => x.EventType).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.DepositStatus).HasConversion<string>().HasMaxLength(20);
+                e.Property(x => x.Source).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.TotalAmount).HasPrecision(18, 2);
 
                 e.ToTable(t =>
@@ -356,6 +357,9 @@ namespace System_ApiTest.Data
                     // or negative, so every date would advertise as fully booked.
                     t.HasCheckConstraint("CK_SystemSettings_OperatingHoursOrder",
                         "[OperatingHoursEnd] > [OperatingHoursStart]");
+                    // 0 is meaningful ("free the day after pickup"); negative is not.
+                    t.HasCheckConstraint("CK_SystemSettings_TurnaroundNonNeg",
+                        "[RentalTurnaroundDays] >= 0");
                 });
             });
 

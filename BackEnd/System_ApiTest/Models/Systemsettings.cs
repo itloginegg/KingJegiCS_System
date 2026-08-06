@@ -62,5 +62,16 @@ namespace System_ApiTest.Models
 
         /// <summary>Latest time of day an event may run. Default 22:00. Must be after the start (DB check).</summary>
         public TimeOnly OperatingHoursEnd { get; set; } = new(22, 0);
+
+        /// <summary>
+        /// Days that must sit between one booking's pickup date and the next booking's
+        /// delivery date for the SAME rental items — collection, cleaning, redelivery.
+        /// Default 1. Zero is legal and means "free the day after pickup".
+        ///
+        /// Only affects which OTHER bookings count against an item's stock at confirm
+        /// time (Bookingservice.EnsureRentalStockAvailableAsync). Nothing is stored per
+        /// item; availability stays computed on demand.
+        /// </summary>
+        public int RentalTurnaroundDays { get; set; } = 1;
     }
 }

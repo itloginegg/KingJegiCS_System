@@ -57,6 +57,28 @@ namespace System_ApiTest.Models
     }
 
     /// <summary>
+    /// Who created the booking — the customer themselves, or staff on their behalf.
+    ///
+    /// Recorded because the two need different confirmation rules: a customer's online
+    /// deposit auto-confirms the date the moment it verifies, but a walk-in's cash is
+    /// marked Success by the very admin taking it, so auto-confirming there would let
+    /// one person both take the money and commit the slot with no second look.
+    ///
+    /// "WalkIn" means "created through an admin account", which is what the New Booking
+    /// modal does — the customer may well have phoned rather than walked in. The
+    /// distinction that matters is staff-originated vs self-service.
+    ///
+    /// Stored as a string (see AppDbContext), like every other enum here.
+    /// </summary>
+    public enum BookingSource
+    {
+        /// <summary>Created by the customer through the public booking flow.</summary>
+        Customer,
+        /// <summary>Created by an Owner/Assistant on a customer's behalf.</summary>
+        WalkIn
+    }
+
+    /// <summary>
     /// Deposit state. NEVER set this by hand — it is derived from Payment records
     /// (see BookingService.RecomputeDepositStatus). Defaults to Unpaid.
     /// </summary>
@@ -138,6 +160,14 @@ namespace System_ApiTest.Models
         // ---- Status fields ----
 
         public BookingStatus Status { get; set; } = BookingStatus.Draft;
+
+        /// <summary>
+        /// How this booking came to exist. Set once at creation and never edited —
+        /// UpdateAsync deliberately doesn't touch it, since re-dating a walk-in doesn't
+        /// make it a self-service booking. Defaults to Customer so existing rows (and
+        /// any path that doesn't say otherwise) keep the pre-existing behaviour.
+        /// </summary>
+        public BookingSource Source { get; set; } = BookingSource.Customer;
 
         public DepositStatus DepositStatus { get; set; } = DepositStatus.Unpaid;
 

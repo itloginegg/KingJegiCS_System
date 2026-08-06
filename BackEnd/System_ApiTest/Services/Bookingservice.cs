@@ -94,7 +94,10 @@ namespace System_ApiTest.Services
             Guid customerId, BookingType bookingType,
             DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
             EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId,
-            string? contactNumber = null)
+            string? contactNumber = null,
+            // Defaulted so the customer-facing callers (and Suggestionservice's
+            // materialize) keep working unchanged; only the admin path passes WalkIn.
+            BookingSource source = BookingSource.Customer)
         {
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
@@ -186,6 +189,7 @@ namespace System_ApiTest.Services
                 GuestCount = guestCount,
                 MenuPackageId = menuPackageId,
                 BookingName = BuildBookingName(customer.FullName, bookingType, type),
+                Source = source,
                 // Status = Draft, DepositStatus = Unpaid, TotalAmount = 0 by default.
             };
 
@@ -312,6 +316,22 @@ namespace System_ApiTest.Services
         public async Task<bool> TryAutoConfirmOnReservationAsync(Guid bookingId)
         {
             var booking = await LoadForConfirmAsync(bookingId);
+
+            // Walk-ins never auto-confirm — separation of duties.
+            //
+            // Auto-confirm is safe for a customer booking because the money arrives
+            // through the gateway and nobody at King Jegi decides it was received. A
+            // walk-in's cash is different: the same admin takes the payment AND marks it
+            // Success, so letting that mark also commit the calendar slot would put the
+            // whole "money in, date secured" chain in one person's hands with no second
+            // look.
+            //
+            // This does NOT block confirmation, only automatic confirmation: the deposit
+            // is still recomputed by the caller (SyncInvoiceAndDepositAsync), so the
+            // booking lands on Reserved/Partial/Paid and the admin's manual Confirm
+            // button — which refuses while DepositStatus is Unpaid — goes through.
+            if (booking.Source == BookingSource.WalkIn) return false;
+
             // Rentals auto-confirm on their deposit the same way events do; only
             // deliveries (no reservation fee concept) are excluded.
             if (booking.BookingType == BookingType.FoodDelivery) return false;
@@ -402,6 +422,22 @@ namespace System_ApiTest.Services
                 .Select(r => new { r.RentalItemId, r.Quantity })
                 .ToListAsync();
 
+            // This booking's rental window. A booking with no end date occupies its
+            // single day. The turnaround buffer is applied to THIS window rather than to
+            // each candidate, so the arithmetic happens once, in C# — the query then
+            // compares plain columns and needs no date maths in SQL.
+            var window = await _db.Bookings.AsNoTracking()
+                .Where(b => b.Id == bookingId)
+                .Select(b => new { Start = b.EventDate, End = b.EndDate ?? b.EventDate })
+                .FirstOrDefaultAsync()
+                ?? throw new BookingRuleException("Booking not found.");
+
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var turnaround = Math.Max(0, settings?.RentalTurnaroundDays ?? 1);
+
+            var windowStart = window.Start.AddDays(-turnaround);
+            var windowEnd = window.End.AddDays(turnaround);
+
             foreach (var line in lines)
             {
                 var item = (await _db.RentalItems
@@ -410,17 +446,26 @@ namespace System_ApiTest.Services
                     .FirstOrDefault()
                     ?? throw new BookingRuleException("A rental item on this booking no longer exists.");
 
+                // What's genuinely unavailable to THIS booking's dates.
+                //
+                // This query used to carry its own copy of the rule with no date
+                // condition at all, so confirming a wedding that used 10 chairs made
+                // those chairs unavailable on every other date, forever, until someone
+                // marked them Returned — a booking months away blocked one tomorrow.
+                //
+                // It now shares Rentalservice.CommittedStock with the catalog and the
+                // low-stock worker, so "what counts as unavailable" is defined once.
+                // See that method for why both the window and the physically-out clauses
+                // are needed.
                 var outgoing = await _db.Rentals
-                    .Where(r => r.RentalItemId == line.RentalItemId
-                                && r.BookingId != bookingId
-                                && (r.Booking.Status == BookingStatus.Confirmed ||
-                                    r.Booking.Status == BookingStatus.Completed)
-                                && r.DeliveryStatus != DeliveryStatus.Returned)
+                    .Where(Rentalservice.CommittedStock(
+                        line.RentalItemId, bookingId, windowStart, windowEnd))
                     .SumAsync(r => (int?)r.Quantity) ?? 0;
 
                 if (outgoing + line.Quantity > item.TotalQuantity)
                     throw new BookingRuleException(
-                        $"Not enough stock for '{item.ItemName}' to confirm: " +
+                        $"Not enough stock for '{item.ItemName}' on {window.Start:yyyy-MM-dd}" +
+                        $"{(window.End == window.Start ? "" : $"–{window.End:yyyy-MM-dd}")}: " +
                         $"{item.TotalQuantity - outgoing} available, {line.Quantity} needed.");
             }
         }

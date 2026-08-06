@@ -134,7 +134,11 @@ namespace System_ApiTest.Services
                 var rentalItems = await _db.RentalItems.Where(r => r.IsActive).ToListAsync();
                 foreach (var item in rentalItems)
                 {
-                    var avail = await _rentals.GetAvailabilityAsync(item.Id);
+                    // Scoped to the requested event date: the planner suggests items the
+                    // customer can actually book THEN, not items that merely happen to be
+                    // in the warehouse today. Without the date this proposed rentals that
+                    // were already committed to that date and failed at confirm.
+                    var avail = await _rentals.GetAvailabilityAsync(item.Id, req.EventDate);
                     if (avail.Available > 0)
                         rentals.Add(new RentalStock(item, avail.Available));
                 }

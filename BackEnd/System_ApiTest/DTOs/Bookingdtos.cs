@@ -154,6 +154,8 @@ namespace System_ApiTest.DTOs
         int? GuestCount,
         string Status,
         string DepositStatus,
+        /// <summary>"Customer" or "WalkIn" — who created it. Read-only; never accepted on input.</summary>
+        string Source,
         decimal TotalAmount,
         Guid? MenuPackageId,
         bool CancellationRequested,

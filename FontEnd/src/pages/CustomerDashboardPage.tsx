@@ -59,14 +59,6 @@ const normalizeType = (ty: string | null) => {
   if (l.includes('corp')) return 'corporate';
   return 'wedding';
 };
-const normalizeStatus = (st: string | null) => {
-  if (!st) return 'pending';
-  const l = st.toLowerCase();
-  if (l.includes('cancel')) return 'cancelled';
-  if (l.includes('secur')) return 'secured';
-  if (l.includes('fee')) return 'pending_fee';
-  return 'pending';
-};
 
 
 const EVENT_META: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -89,12 +81,77 @@ const bookingMeta = (booking: { bookingType: string; eventType: string | null })
     ? EVENT_META.delivery
     : EVENT_META[normalizeType(booking.eventType)] ?? EVENT_META.wedding;
 
-const BOOKING_STATUS: Record<string, { label: string; color: string }> = {
-  pending: { label: 'Pending Approval', color: 'var(--accent)' },
-  pending_fee: { label: 'Awaiting Fee', color: 'var(--accent)' },
-  secured: { label: 'Secured', color: 'var(--primary)' },
+/**
+ * The statuses a customer actually sees, keyed so the filter dropdown can match on
+ * something stable rather than on display text.
+ *
+ * Derived from `booking.status` + `booking.depositStatus` — never from the invoice.
+ * The invoice was the wrong source twice over: its status is a different enum
+ * (Draft/Sent/Reserved/PartiallyPaid/Overdue/Paid), so comparisons against deposit
+ * words like "Unpaid" and "Partial" could never match, and a Confirmed booking with a
+ * PartiallyPaid invoice fell through to the generic fallback and displayed
+ * "Pending Approval". DepositStatus is always present and is computed by the server
+ * from real payments, so it needs no admin action to be correct.
+ */
+export type BookingStatusKey =
+  | 'draft'
+  | 'awaiting_fee'
+  | 'awaiting_confirmation'
+  | 'confirmed_balance'
+  | 'confirmed_paid'
+  | 'completed'
+  | 'cancelled';
+
+export interface DerivedBookingStatus {
+  key: BookingStatusKey;
+  label: string;
+  color: string;
+}
+
+export const DERIVED_STATUS: Record<BookingStatusKey, { label: string; color: string }> = {
+  draft: { label: 'Draft — Not Submitted', color: 'var(--text-dim)' },
+  awaiting_fee: { label: 'Awaiting Reservation Fee', color: 'var(--accent)' },
+  // Money is on file but the date is NOT secured yet — a walk-in deliberately doesn't
+  // auto-confirm, so calling this "Confirmed" would promise a slot nobody has held.
+  awaiting_confirmation: { label: 'Payment Received — Awaiting Confirmation', color: 'var(--accent)' },
+  confirmed_balance: { label: 'Confirmed · Awaiting Balance', color: 'var(--primary)' },
+  confirmed_paid: { label: 'Confirmed · Fully Paid', color: 'var(--primary)' },
+  completed: { label: 'Completed', color: 'var(--success)' },
   cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
+
+/** Every label the filter can offer, in the order a booking travels through them. */
+export const BOOKING_STATUS_ORDER: BookingStatusKey[] = [
+  'draft', 'awaiting_fee', 'awaiting_confirmation',
+  'confirmed_balance', 'confirmed_paid', 'completed', 'cancelled',
+];
+
+/**
+ * Pure and invoice-free, so the same answer is available anywhere a booking is —
+ * the card, the detail modal, and (next) the status filter.
+ */
+export function derivedStatusOf(booking: BookingResponseDto): DerivedBookingStatus {
+  const status = (booking.status ?? '').toLowerCase();
+  const deposit = (booking.depositStatus ?? '').toLowerCase();
+
+  // Lifecycle first: Cancelled and Completed are admin-asserted facts about the event
+  // and must never be overridden by how much has been paid.
+  const key: BookingStatusKey =
+    status.includes('cancel') ? 'cancelled'
+      : status === 'completed' ? 'completed'
+      : status === 'draft' ? 'draft'
+      : status === 'confirmed'
+        // Confirmed with nothing on file shouldn't happen (ConfirmBookingAsync refuses
+        // while Unpaid) but can arise after a full refund — read it as "balance owed"
+        // rather than inventing a state.
+        ? (deposit === 'paid' ? 'confirmed_paid' : 'confirmed_balance')
+        // Pending, and anything unrecognised: the question is simply whether the
+        // reservation fee has landed.
+        : deposit === 'unpaid' ? 'awaiting_fee'
+          : 'awaiting_confirmation';
+
+  return { key, ...DERIVED_STATUS[key] };
+}
 
 const fmt = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n);
 
@@ -260,7 +317,9 @@ function BookingDetailModal({ booking, onClose, statusBadge, notify, onSubmitted
   }, [booking.id]);
 
   const meta = bookingMeta(booking);
-  const st = statusBadge || BOOKING_STATUS[normalizeStatus(booking.status)] || BOOKING_STATUS.pending;
+  // Same derivation as the caller's, so the modal can never disagree with the card
+  // that opened it.
+  const st = statusBadge || derivedStatusOf(booking);
   return (
     <div className="cds-overlay" onClick={onClose}>
       <div className="cds-modal" style={{ maxWidth: 640, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={`${meta.label} details`}>
@@ -1034,7 +1093,9 @@ export function CustomerDashboardPage() {
   }, [bookings, location.state, notify]);
 
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
+  /* Narrowed from `string` to the derived keys: the old value space held things like
+     'secured' that matched no booking, and TypeScript couldn't say so. */
+  const [statusFilter, setStatusFilter] = useState<'all' | BookingStatusKey>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
 
   /* Escape closes whichever layer is open */
@@ -1055,25 +1116,10 @@ export function CustomerDashboardPage() {
 
   /* derived */
   const invoiceOf = (b: BookingResponseDto) => invoices.find((i) => i.bookingId === b.id);
-  const deriveBookingStatus = (b: BookingResponseDto) => {
-    if (b.status.toLowerCase().includes('cancel')) return { label: 'Cancelled', color: 'var(--danger)' };
-
-    // "Completed" is a LIFECYCLE fact — the event actually happened and an admin said
-    // so — and it lives on Booking.Status. It is not the same as being fully paid.
-    // This used to read the invoice's 'Paid' state and call that Completed, which told
-    // customers their event was over the moment they settled the balance, sometimes
-    // months early. Booking status is checked first so payment state can never
-    // override it.
-    if (b.status.toLowerCase() === 'completed') return { label: 'Completed', color: 'var(--success)' };
-
-    const order = invoiceOf(b);
-    if (!order) return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
-    if (order.status === 'Unpaid') return { label: 'Pending', color: 'var(--accent)' };
-    // Fully paid but not yet held: still Confirmed, with the payment state said plainly.
-    if (order.status === 'Paid') return { label: 'Confirmed · Fully Paid', color: 'var(--primary)' };
-    if (order.status === 'Partial' || order.status === 'Reserved') return { label: 'Confirmed', color: 'var(--primary)' };
-    return BOOKING_STATUS[normalizeStatus(b.status) as keyof typeof BOOKING_STATUS] || BOOKING_STATUS.pending;
-  };
+  /* Thin alias over the module-level derivation — kept so the call sites below read
+     the same as before. `invoiceOf` stays, but only for showing amounts paid; it no
+     longer decides which label appears. */
+  const deriveBookingStatus = (b: BookingResponseDto): DerivedBookingStatus => derivedStatusOf(b);
 
   const activeBookings = bookings.filter((b) => !b.status.toLowerCase().includes('cancel'));
   const confirmedCount = bookings.filter((b) => b.status.toLowerCase() === 'confirmed').length;
@@ -1114,10 +1160,25 @@ export function CustomerDashboardPage() {
   const paidPct = totalValue > 0 ? Math.round((totalPaid / totalValue) * 100) : 0;
 
 
+  /* How many bookings sit under each derived status, for the filter's option labels.
+     Counted over the unfiltered list so the numbers don't shift as you filter. */
+  const statusCounts = useMemo(() => {
+    const counts = {} as Record<BookingStatusKey, number>;
+    for (const b of bookings) {
+      const { key } = derivedStatusOf(b);
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+  }, [bookings]);
+
   const filteredBookings = useMemo(() => {
     const q = query.trim().toLowerCase();
     return bookings
-      .filter((b) => statusFilter === 'all' || b.status === statusFilter)
+      // Matches on the DERIVED key, not the raw backend status. The old predicate
+      // compared b.status ("Pending", "Confirmed") against filter values like
+      // 'secured' and 'pending_fee' — a comparison that could never be true for any
+      // option, so every choice but "All statuses" returned an empty list.
+      .filter((b) => statusFilter === 'all' || derivedStatusOf(b).key === statusFilter)
       .filter((b) => {
         const meta = bookingMeta(b);
         return (
@@ -1921,12 +1982,17 @@ export function CustomerDashboardPage() {
                     aria-label="Search bookings"
                   />
                   <div style={{ flex: 1 }} />
+                  {/* Options come from the same key list the labels do, so the dropdown
+                      can't drift out of step with what a booking can actually be.
+                      Counts are shown because an option that yields nothing is exactly
+                      the confusion this replaced. */}
                   <select className="cds-input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} aria-label="Filter by status">
-                    <option value="all">All statuses</option>
-                    <option value="secured">Secured</option>
-                    <option value="pending">Pending approval</option>
-                    <option value="pending_fee">Awaiting fee</option>
-                    <option value="cancelled">Cancelled</option>
+                    <option value="all">All statuses ({bookings.length})</option>
+                    {BOOKING_STATUS_ORDER.map((key) => (
+                      <option key={key} value={key}>
+                        {DERIVED_STATUS[key].label} ({statusCounts[key] ?? 0})
+                      </option>
+                    ))}
                   </select>
                   <select className="cds-input" value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} aria-label="Sort bookings">
                     <option value="newest">Newest first</option>

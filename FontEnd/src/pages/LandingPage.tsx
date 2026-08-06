@@ -245,8 +245,22 @@ function getDaysInMonth(year: number, month: number) {
 function getFirstDayOfMonth(year: number, month: number) {
   return new Date(year, month, 1).getDay();
 }
-/** "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, so it's parsed positionally. */
+/**
+ * A TimeOnly from the API → a compact clock label: "8 AM", "2:30 PM".
+ *
+ * Accepts both shapes because the API sends the first one: the project's
+ * TimeOnlyJsonConverter writes 12-hour "h:mm tt", while raw TimeOnly elsewhere (and
+ * anything hand-built) is "HH:mm:ss". Whole hours drop their ":00" so a list of
+ * windows stays short.
+ */
 function fmtClock(hms: string) {
+  const twelveHour = hms.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])$/);
+  if (twelveHour) {
+    const [, hour, minute, period] = twelveHour;
+    const suffix = period.toUpperCase();
+    return minute === '00' ? `${Number(hour)} ${suffix}` : `${Number(hour)}:${minute} ${suffix}`;
+  }
+
   const [h, m] = hms.split(':').map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return hms;
   const period = h >= 12 ? 'PM' : 'AM';

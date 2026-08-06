@@ -61,6 +61,41 @@ namespace System_ApiTest.DTOs
         public string Reason { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// Body for logging cash. No Method field — the endpoint exists precisely because
+    /// the method is Cash, and that's what makes same-call verification correct.
+    /// </summary>
+    public class RecordCashPaymentDto
+    {
+        [Required] public Guid InvoiceId { get; set; }
+
+        [Range(0.01, double.MaxValue, ErrorMessage = "Amount paid must be greater than zero.")]
+        public decimal AmountPaid { get; set; }
+
+        /// <summary>Optional; omit for "now". Provide it only to back-record cash taken earlier.</summary>
+        public DateTime? PaymentDateTime { get; set; }
+
+        /// <summary>Optional receipt or reference number. Must be unique if given.</summary>
+        [MaxLength(200)]
+        public string? TransactionReference { get; set; }
+    }
+
+    /// <summary>
+    /// What logging cash changed, in one response.
+    ///
+    /// Carries the booking's refreshed status and deposit alongside the payment so the
+    /// admin UI can re-enable the Confirm button without a follow-up GET — DepositStatus
+    /// moving off Unpaid is the whole point of the call, and it's what that button's
+    /// server-side guard reads.
+    /// </summary>
+    public record CashPaymentResultDto(
+        PaymentResponseDto Payment,
+        Guid BookingId,
+        string BookingStatus,
+        string DepositStatus,
+        decimal InvoiceGrandTotal,
+        decimal InvoicePaidTotal);
+
     public record PaymentResponseDto(
         Guid Id,
         Guid InvoiceId,

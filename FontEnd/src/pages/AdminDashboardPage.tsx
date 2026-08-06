@@ -52,6 +52,7 @@ import {
   getInvoiceByBooking,
   BookingApiError,
   BOOKING_TYPE_LABELS,
+  type CashPaymentResult,
   type BookingTypeName,
   type BookingResponse,
   type BookingCreatePayload,
@@ -133,6 +134,8 @@ import {
   AnnouncementApiError,
   type Announcement,
 } from '../api/announcementsApi';
+import { CashPaymentModal } from '../components/admin/CashPaymentModal';
+import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +146,9 @@ import { ToastViewport, useToasts } from '../components/ui/Toasts';
 const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
 type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
+
+/** Sort order for the Bookings tab list. */
+type ResSort = 'date_asc' | 'date_desc';
 
 
 
@@ -1087,27 +1093,95 @@ export function AdminDashboardPage() {
     }
   };
 
-  /* one-click invoice for a Confirmed booking: issued today, due on the event date */
-  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
+  /* ── Invoice viewer ──
+     This used to be a "Generate Invoice" button on Confirmed bookings, which could
+     never succeed: Bookingservice.SubmitAsync already issues the invoice the moment a
+     Draft becomes Pending, and Invoiceservice.GenerateAsync refuses a second one for
+     the same booking. So every Confirmed booking already had an invoice, and the
+     button threw "This booking already has an invoice." every single time.
 
-  const generateInvoiceFor = async (b: BookingResponse) => {
+     Viewing is what was actually needed, and it belongs on Pending — that's where the
+     invoice first exists and where the customer is waiting to be billed. */
+  /* Log Cash Payment — opened from the Bookings tab (next to Confirm) and from the
+     Payments tab. Holds only the booking; the modal resolves the invoice itself. */
+  const [cashTarget, setCashTarget] = useState<{ bookingId: string; bookingName: string } | null>(null);
+
+  /**
+   * Folds the cash result into local state so the Confirm button next to the button
+   * that opened the modal becomes usable immediately.
+   *
+   * Patching rather than refetching is the point: the admin's cursor is already on
+   * Confirm, and a full reload would move the list out from under them. `loadPayments`
+   * still runs so the Payments tab shows the new row, but the booking's own
+   * depositStatus is applied straight from the response.
+   */
+  const applyCashResult = (result: CashPaymentResult) => {
+    setReservations((prev) => prev.map((b) =>
+      b.id === result.bookingId
+        ? { ...b, depositStatus: result.depositStatus, status: result.bookingStatus }
+        : b));
+
+    // Keep an open detail/invoice modal in step with the same booking.
+    setDetailBooking((prev) =>
+      prev && prev.booking.id === result.bookingId
+        ? { ...prev, booking: { ...prev.booking, depositStatus: result.depositStatus, status: result.bookingStatus } }
+        : prev);
+    setInvoiceView((prev) =>
+      prev && prev.booking.id === result.bookingId
+        ? { ...prev, booking: { ...prev.booking, depositStatus: result.depositStatus, status: result.bookingStatus } }
+        : prev);
+
+    void loadPayments();
+  };
+
+  const [invoiceBusyId, setInvoiceBusyId] = useState<string | null>(null);
+  const [invoiceView, setInvoiceView] = useState<
+    { booking: BookingResponse; invoice: InvoiceResponseDto | null; detail: BookingDetailResponse | null } | null
+  >(null);
+
+  const openInvoiceFor = async (b: BookingResponse) => {
     const session = readSession();
-    if (!session) {
+    if (!session?.token) {
       notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
       return;
     }
     setInvoiceBusyId(b.id);
     try {
+      // Both are optional to the view: a missing invoice is the edge case the modal
+      // handles, and a failed detail fetch only costs the line breakdown, not the
+      // captured totals that actually matter.
+      let invoice: InvoiceResponseDto | null = null;
+      try { invoice = await getInvoiceByBooking(session.token, b.id); } catch { /* none yet */ }
+
+      let detail: BookingDetailResponse | null = null;
+      try { detail = await getBookingDetail(session.token, b.id); } catch { /* lines omitted */ }
+
+      setInvoiceView({ booking: b, invoice, detail });
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+
+  /**
+   * The fallback path, for a booking that reached Pending without an invoice.
+   *
+   * Expected to be dead code in practice — Submit is the only route to Pending and it
+   * always generates one. If this starts firing, something upstream skipped invoice
+   * generation and that's the bug worth chasing, not this button.
+   */
+  const generateMissingInvoice = async (b: BookingResponse) => {
+    const session = readSession();
+    if (!session?.token) return;
+    setInvoiceBusyId(b.id);
+    try {
       const d = new Date();
       const p2 = (n: number) => String(n).padStart(2, '0');
       const issueDate = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-      await generateInvoice(session.token, b.id, issueDate, b.eventDate);
-      notify('success', `Invoice generated for ${b.bookingName || 'this booking'} — due ${b.eventDate}.`);
+      const invoice = await generateInvoice(session.token, b.id, issueDate, b.eventDate);
+      setInvoiceView((prev) => (prev ? { ...prev, invoice } : prev));
+      notify('success', `Invoice issued — due ${fmtDate(b.eventDate)}.`);
     } catch (err) {
-      notify(
-        'error',
-        err instanceof BookingApiError ? err.message : 'Could not generate the invoice. Please try again.',
-      );
+      notify('error', err instanceof BookingApiError ? err.message : 'Could not issue the invoice.');
     } finally {
       setInvoiceBusyId(null);
     }
@@ -1261,6 +1335,9 @@ export function AdminDashboardPage() {
   const [resFilter, setResFilter] = useState<'all' | ResStatus>('all');
   const [resTypeFilter, setResTypeFilter] = useState<'all' | BookingTypeName>('all');
   const [resSearch, setResSearch] = useState('');
+  /* The list has always been sorted by event date ascending; this just makes that a
+     choice. Soonest-first stays the default — it's the order staff work in. */
+  const [resSort, setResSort] = useState<ResSort>('date_asc');
   const [cancelResId, setCancelResId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
@@ -1317,6 +1394,24 @@ export function AdminDashboardPage() {
   const [detailBooking, setDetailBooking] = useState<BookingDetailResponse | null>(null);
   const [detailInvoice, setDetailInvoice] = useState<InvoiceResponseDto | null>(null);
   const [detailBusyId, setDetailBusyId] = useState<string | null>(null);
+
+  /**
+   * Re-reads the open detail modal from the server.
+   *
+   * Used after every items edit: the total is recomputed server-side
+   * (Bookingservice.RecomputeTotalAsync), so refetching is the only way to show a
+   * figure that matches what Submit will freeze.
+   */
+  const refreshBookingDetail = async (bookingId: string) => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      setDetailBooking(await getBookingDetail(session.token, bookingId));
+    } catch {
+      // Leave the modal on its last good state; the caller already surfaced the error
+      // that mattered (the failed edit), and blanking the panel would lose context.
+    }
+  };
 
   const openBookingDetail = async (b: BookingResponse) => {
     const session = readSession();
@@ -1392,8 +1487,14 @@ export function AdminDashboardPage() {
           (r.contactNumber && r.contactNumber.toLowerCase().includes(q)) ||
           (r.eventType && r.eventType.toLowerCase().includes(q)),
       )
-      .sort((a, b) => +new Date(a.eventDate) - +new Date(b.eventDate));
-  }, [reservations, resFilter, resTypeFilter, resSearch]);
+      // eventDate is an ISO "YYYY-MM-DD" from the DateOnly converter, which sorts
+      // correctly as a plain string — no Date parsing, so a malformed value can't
+      // produce a NaN comparison and scramble the order.
+      .sort((a, b) => {
+        const d = a.eventDate.localeCompare(b.eventDate);
+        return resSort === 'date_asc' ? d : -d;
+      });
+  }, [reservations, resFilter, resTypeFilter, resSearch, resSort]);
 
   const filteredPayments = payments
     .filter((p) => paymentFilter === 'all' || p.status === paymentFilter)
@@ -2561,9 +2662,249 @@ export function AdminDashboardPage() {
           }
           .adm-contract-noprint { display: none !important; }
         }
+
+        /* ── printable invoice ──
+           The letterhead is paper-only: on screen the modal sits inside the dashboard,
+           but a printed page arrives with no context and has to identify itself. */
+        .adm-invoice-printonly { display: none; }
+        .adm-invoice-letterhead {
+          display: flex; justify-content: space-between; align-items: flex-start;
+          gap: 1.5rem; padding: 0 0 0.9rem; margin-bottom: 1.2rem;
+          border-bottom: 2px solid #000;
+        }
+        .adm-invoice-brand { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+        .adm-invoice-word {
+          font-family: var(--font-display); font-size: 1.5rem; font-weight: 600;
+          letter-spacing: 0.12em;
+        }
+        .adm-invoice-sub { font-family: var(--font-body); font-size: 0.72rem; font-weight: 300; }
+
+        @media print {
+          #adm-invoice, #adm-invoice * { visibility: visible; }
+
+          /* !important throughout: the panel carries maxHeight/overflowY as INLINE
+             styles, which outrank an id selector. Without it the invoice keeps its
+             90vh box and its inner scroller, so anything past the first page is
+             silently cut off instead of paginating. */
+          #adm-invoice {
+            position: fixed !important; inset: 0 !important;
+            width: auto !important; max-height: none !important; overflow: visible !important;
+            display: block !important;
+            border: none !important; box-shadow: none !important; border-radius: 0 !important;
+            background: #fff !important; color: #000 !important;
+            padding: 0 !important;
+          }
+          #adm-invoice .adm-invoice-body {
+            max-height: none !important; overflow: visible !important;
+            padding: 0 !important;
+          }
+
+          .adm-invoice-noprint { display: none !important; }
+          .adm-invoice-printonly { display: block !important; }
+
+          /* Hairlines survive the trip to paper; var(--border) can be near-white. */
+          #adm-invoice table, #adm-invoice td, #adm-invoice th { border-color: #999 !important; }
+          #adm-invoice table { page-break-inside: auto; }
+          #adm-invoice tr { page-break-inside: avoid; }
+
+          @page { margin: 16mm; }
+        }
       `}</style>
 
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
+
+      {cashTarget && (
+        <CashPaymentModal
+          bookingId={cashTarget.bookingId}
+          bookingName={cashTarget.bookingName}
+          notify={notify}
+          onClose={() => setCashTarget(null)}
+          onRecorded={applyCashResult}
+        />
+      )}
+
+      {/* ══════════ INVOICE VIEW ══════════
+          Shows the invoice Submit already issued. Line descriptions come from the
+          booking detail, but every figure comes from the INVOICE — those are the
+          captured totals the customer is billed against, and they can legitimately
+          differ from a live recomputation if a catalog price moved after submit. */}
+      {invoiceView && (() => {
+        const { booking: ib, invoice, detail } = invoiceView;
+        const close = () => setInvoiceView(null);
+        const balance = invoice ? invoice.grandTotal - invoice.paidTotal : 0;
+
+        const TotalRow = ({ label, value, strong }: { label: string; value: string; strong?: boolean }) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.3rem 0', fontFamily: 'var(--font-body)', fontSize: strong ? '0.95rem' : '0.8rem', fontWeight: strong ? 600 : 300, color: strong ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+            <span>{label}</span>
+            <span style={{ whiteSpace: 'nowrap', color: strong ? 'var(--primary)' : undefined }}>{value}</span>
+          </div>
+        );
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Invoice"
+            style={{
+              position: 'fixed', inset: 0, zIndex: 121,
+              background: 'rgba(20, 14, 8, 0.55)', backdropFilter: 'blur(6px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+            }}
+            onClick={close}
+          >
+            <div
+              id="adm-invoice"
+              className="adm-card"
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 'min(720px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
+            >
+              <div className="adm-invoice-noprint" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.8rem', padding: '1.2rem 1.5rem', borderBottom: '1px solid var(--border)' }}>
+                <div>
+                  <FieldLabel text={invoice ? `Invoice ${invoice.id.slice(0, 8).toUpperCase()}` : 'Invoice'} />
+                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0.15rem 0 0' }}>
+                    {ib.bookingName}
+                  </h3>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  {invoice && <StatusBadge label={invoice.status} color="var(--primary)" />}
+                  {invoice && (
+                    <button type="button" className="adm-btn outline" onClick={() => window.print()}>
+                      🖨 Print
+                    </button>
+                  )}
+                  <button type="button" className="adm-iconbtn" aria-label="Close" onClick={close}>✕</button>
+                </div>
+              </div>
+
+              {/* Paper-only letterhead. The on-screen modal has the dashboard around it
+                  for context; a printed page has nothing, so it needs to say who issued
+                  it and what it is. */}
+              <div className="adm-invoice-printonly">
+                <div className="adm-invoice-letterhead">
+                  <div>
+                    <div className="adm-invoice-brand">King Jegi Party Need and Catering Services</div>
+                    <div className="adm-invoice-sub">Calamba, Laguna · Events &amp; Catering</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="adm-invoice-word">INVOICE</div>
+                    {invoice && <div className="adm-invoice-sub">No. {invoice.id.slice(0, 8).toUpperCase()}</div>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="adm-invoice-body" style={{ overflowY: 'auto', padding: '1.4rem 1.5rem 1.8rem' }}>
+                {!invoice ? (
+                  /* The edge case. Submit is the only route to Pending and it always
+                     issues an invoice, so reaching this means something upstream
+                     skipped generation — worth investigating, not just clicking past. */
+                  <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                    <div style={{ fontSize: '1.6rem', marginBottom: '0.6rem' }}>🧾</div>
+                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.4rem' }}>
+                      No invoice yet
+                    </h4>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', maxWidth: 420, margin: '0 auto 1.2rem', lineHeight: 1.6 }}>
+                      Submitting a booking normally issues its invoice automatically, so this
+                      is unexpected. Issuing one here is safe, but it's worth checking how this
+                      booking reached {ib.status} without one.
+                    </p>
+                    <button
+                      type="button"
+                      className="adm-btn primary"
+                      disabled={invoiceBusyId === ib.id}
+                      onClick={() => void generateMissingInvoice(ib)}
+                    >
+                      {invoiceBusyId === ib.id ? 'Issuing…' : 'Issue invoice now'}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.9rem', marginBottom: '1.3rem' }}>
+                      <div>
+                        <FieldLabel text="Billed to" />
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>{ib.bookingName}</div>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>{ib.venueAddress}</div>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>{ib.contactNumber || '—'}</div>
+                      </div>
+                      <div>
+                        <FieldLabel text="Issued" />
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>{fmtDate(invoice.issueDate)}</div>
+                        <FieldLabel text="Due" />
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>{fmtDate(invoice.dueDate)}</div>
+                      </div>
+                      <div>
+                        <FieldLabel text="Event" />
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>{fmtDate(ib.eventDate)}</div>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                          {fmtTime(ib.startTime)}{ib.endTime ? ` – ${fmtTime(ib.endTime)}` : ''}
+                        </div>
+                      </div>
+                    </div>
+
+                    {detail && (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, marginBottom: '1.2rem' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                            <th style={{ textAlign: 'left', padding: '0.4rem 0', fontSize: '0.62rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Description</th>
+                            <th style={{ textAlign: 'right', padding: '0.4rem 0', fontSize: '0.62rem', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.package && (
+                            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.45rem 0' }}>Package — {detail.package.packageName}</td>
+                              <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(detail.package.basePrice)}</td>
+                            </tr>
+                          )}
+                          {detail.menuItems.map((m) => (
+                            <tr key={m.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.45rem 0' }}>{m.itemName} × {m.quantity}</td>
+                              <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(m.lineTotal)}</td>
+                            </tr>
+                          ))}
+                          {detail.menuTrays.map((t) => (
+                            <tr key={t.trayId} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.45rem 0' }}>{t.trayName} × {t.quantity}</td>
+                              <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(t.lineTotal)}</td>
+                            </tr>
+                          ))}
+                          {detail.rentals.map((r) => (
+                            <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.45rem 0' }}>Rental — {r.itemName} × {r.quantity}</td>
+                              <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
+                            </tr>
+                          ))}
+                          {detail.services.map((sv) => (
+                            <tr key={sv.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
+                              <td style={{ padding: '0.45rem 0' }}>Service — {sv.serviceName} × {sv.quantity}</td>
+                              <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(sv.totalCost)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.6rem' }}>
+                      <TotalRow label="Food" value={fmt(invoice.foodTotal)} />
+                      <TotalRow label="Rentals" value={fmt(invoice.rentalTotal)} />
+                      <TotalRow label="Services" value={fmt(invoice.serviceTotal)} />
+                      <TotalRow label="Tax" value={fmt(invoice.taxAmount)} />
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: '0.35rem', paddingTop: '0.35rem' }}>
+                        <TotalRow label="Grand total" value={fmt(invoice.grandTotal)} strong />
+                      </div>
+                      <TotalRow label="Paid" value={fmt(invoice.paidTotal)} />
+                      <TotalRow
+                        label={balance > 0 ? 'Balance due' : 'Balance'}
+                        value={fmt(balance)}
+                        strong={balance > 0}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ══════════ BOOKING DETAIL VIEW (phase 4) ══════════
           Read-only. Everything the admin needs at a glance without leaving the
@@ -2698,6 +3039,28 @@ export function AdminDashboardPage() {
                     </table>
                   )}
                 </div>
+
+                {/* Editing is Draft-only server-side (Bookingservice.EnsureEditableAsync),
+                    so the panel appears exactly where the API would accept it. */}
+                {b.status === 'Draft' && (
+                  <div>
+                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.2rem' }}>Add items</h4>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0 0 0.9rem' }}>
+                      Same catalog and rules the customer wizard uses. Submit freezes the
+                      total and issues the invoice, so add everything first.
+                    </p>
+                    <DraftItemsEditor
+                      detail={detailBooking}
+                      notify={notify}
+                      onChanged={async () => {
+                        // Refetch so the Items table and Money block above reflect the
+                        // server's recomputed total rather than a local guess.
+                        await refreshBookingDetail(b.id);
+                        await loadBookings();
+                      }}
+                    />
+                  </div>
+                )}
 
                 <div>
                   <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Money</h4>
@@ -3434,6 +3797,16 @@ export function AdminDashboardPage() {
                     style={{ flex: '0 1 300px' }}
                     aria-label="Search bookings"
                   />
+                  <select
+                    className="adm-input"
+                    style={{ flex: '0 1 190px' }}
+                    value={resSort}
+                    onChange={(e) => setResSort(e.target.value as ResSort)}
+                    aria-label="Sort bookings by event date"
+                  >
+                    <option value="date_asc">Event date · soonest first</option>
+                    <option value="date_desc">Event date · latest first</option>
+                  </select>
                   <button type="button" className="adm-btn primary" onClick={() => setNewBookingOpen(true)}>+ New Booking</button>
                 </div>
 
@@ -3522,30 +3895,61 @@ export function AdminDashboardPage() {
                               {submitBusyId === r.id ? 'Submitting…' : 'Submit for Customer'}
                             </button>
                           )}
+                          {/* Sits immediately before Confirm on purpose: logging cash is
+                              what makes Confirm usable, and the deposit hint says so. */}
                           {r.status === 'Pending' && (
-                            <button type="button" className="adm-btn success" onClick={() => setResStatus(r.id, 'Confirmed')}>Confirm</button>
+                            <button
+                              type="button"
+                              className={r.depositStatus === 'Unpaid' ? 'adm-btn primary' : 'adm-btn outline'}
+                              onClick={() => setCashTarget({ bookingId: r.id, bookingName: r.bookingName })}
+                            >
+                              💵 Log Cash
+                            </button>
+                          )}
+                          {r.status === 'Pending' && (
+                            <button
+                              type="button"
+                              className="adm-btn success"
+                              // Mirrors ConfirmBookingAsync's own guard, so the reason is
+                              // visible before the click rather than as a 400 after it.
+                              disabled={r.depositStatus === 'Unpaid'}
+                              title={r.depositStatus === 'Unpaid'
+                                ? 'No payment recorded yet — log the deposit first.'
+                                : undefined}
+                              onClick={() => setResStatus(r.id, 'Confirmed')}
+                            >
+                              Confirm
+                            </button>
                           )}
                           {r.status === 'Confirmed' && (
                             <button type="button" className="adm-btn info" onClick={() => setResStatus(r.id, 'Completed')}>Mark Completed</button>
                           )}
-                          {r.status === 'Confirmed' && (
+                          {/* Submit issues the invoice, so it exists from Pending
+                              onward — viewing it is useful at both stages, and there is
+                              nothing to "generate". */}
+                          {(r.status === 'Pending' || r.status === 'Confirmed') && (
                             <button
                               type="button"
                               className="adm-btn outline"
                               disabled={invoiceBusyId === r.id}
-                              onClick={() => void generateInvoiceFor(r)}
+                              onClick={() => void openInvoiceFor(r)}
                             >
-                              {invoiceBusyId === r.id ? 'Generating…' : 'Generate Invoice'}
+                              {invoiceBusyId === r.id ? 'Loading…' : '🧾 Invoice'}
                             </button>
                           )}
-                          {r.status === 'Confirmed' && (
+                          {/* Draft gets it too, and leads with it: the detail view is
+                              where items are added, which is the whole point of a Draft.
+                              "Submit for Customer" above is useless until that's done. */}
+                          {(r.status === 'Confirmed' || r.status === 'Draft') && (
                             <button
                               type="button"
-                              className="adm-btn outline"
+                              className={r.status === 'Draft' ? 'adm-btn primary' : 'adm-btn outline'}
                               disabled={detailBusyId === r.id}
                               onClick={() => void openBookingDetail(r)}
                             >
-                              {detailBusyId === r.id ? 'Loading…' : '🔍 View Details'}
+                              {detailBusyId === r.id
+                                ? 'Loading…'
+                                : r.status === 'Draft' ? '🍽 Add Items' : '🔍 View Details'}
                             </button>
                           )}
                           {r.status === 'Confirmed' && (
@@ -3638,9 +4042,33 @@ export function AdminDashboardPage() {
                       Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
                     </p>
                   </div>
-                  <button type="button" className="adm-btn outline" onClick={() => void loadPayments()} disabled={paymentsLoading}>
-                    {paymentsLoading ? 'Refreshing…' : '↻ Refresh'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* Cash is logged against a booking, and the picker below lists the
+                        ones that can still take one — Pending or Confirmed but not yet
+                        fully paid. A Draft has no invoice to pay against. */}
+                    <select
+                      className="adm-input"
+                      style={{ flex: '0 1 260px' }}
+                      value=""
+                      aria-label="Log cash payment for a booking"
+                      onChange={(e) => {
+                        const b = reservations.find((x) => x.id === e.target.value);
+                        if (b) setCashTarget({ bookingId: b.id, bookingName: b.bookingName });
+                      }}
+                    >
+                      <option value="">💵 Log cash payment for…</option>
+                      {reservations
+                        .filter((b) => (b.status === 'Pending' || b.status === 'Confirmed') && b.depositStatus !== 'Paid')
+                        .map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.bookingName} — {fmtDate(b.eventDate)} ({b.depositStatus})
+                          </option>
+                        ))}
+                    </select>
+                    <button type="button" className="adm-btn outline" onClick={() => void loadPayments()} disabled={paymentsLoading}>
+                      {paymentsLoading ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>

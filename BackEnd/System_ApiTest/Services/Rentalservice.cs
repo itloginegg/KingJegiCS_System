@@ -21,21 +21,82 @@ namespace System_ApiTest.Services
         }
 
         /// <summary>
-        /// Computes availability on demand (never stored):
-        ///   outgoing  = sum of quantities on rental lines for this item whose Booking
-        ///               is NOT Cancelled
-        ///   available = total_quantity − outgoing
+        /// THE definition of "this stock isn't available to me" — the single expression
+        /// every availability question in the system is answered with.
+        ///
+        /// It lives here as a shared predicate rather than being written out at each
+        /// call site because it previously WAS written out three times, and the copies
+        /// drifted: the confirm path grew a date filter while the catalog and the
+        /// low-stock worker stayed date-blind, so the two disagreed about the same item.
+        ///
+        /// A line counts when the booking is live (Confirmed/Completed, not returned)
+        /// AND either:
+        ///
+        ///   (a) its rental window overlaps the window being asked about — reserved for
+        ///       an overlapping period, even if nothing has physically moved yet; or
+        ///   (b) the goods are physically gone — Delivered, or Damaged and never coming
+        ///       back — which holds whatever the dates say.
+        ///
+        /// Pass no window and only (b) applies: the honest answer to "how many are off
+        /// the shelf right now", with future reservations excluded.
+        ///
+        /// Returned lines never count — those are back. Damaged deliberately still does,
+        /// so a broken chair can't quietly become bookable again.
         /// </summary>
-        public async Task<RentalAvailability> GetAvailabilityAsync(Guid rentalItemId)
+        /// <param name="excludeBookingId">The booking being placed, so it can't conflict with itself.</param>
+        public static System.Linq.Expressions.Expression<Func<Rental, bool>> CommittedStock(
+            Guid rentalItemId,
+            Guid? excludeBookingId = null,
+            DateOnly? windowStart = null,
+            DateOnly? windowEnd = null)
+        {
+            // Captured as plain values so the expression stays translatable to SQL.
+            var hasWindow = windowStart.HasValue && windowEnd.HasValue;
+            var start = windowStart ?? default;
+            var end = windowEnd ?? default;
+
+            return r => r.RentalItemId == rentalItemId
+                        && (excludeBookingId == null || r.BookingId != excludeBookingId)
+                        && (r.Booking.Status == BookingStatus.Confirmed ||
+                            r.Booking.Status == BookingStatus.Completed)
+                        && r.DeliveryStatus != DeliveryStatus.Returned
+                        && (
+                             (hasWindow
+                              && r.Booking.EventDate <= end
+                              && (r.Booking.EndDate ?? r.Booking.EventDate) >= start)
+                             || r.DeliveryStatus == DeliveryStatus.Delivered
+                             || r.DeliveryStatus == DeliveryStatus.Damaged
+                           );
+        }
+
+        /// <summary>
+        /// Computes availability on demand (never stored).
+        ///
+        /// With a date window, answers "how many could a booking over these dates take?"
+        /// — the same question, and the same rule, the confirm-time check applies, so the
+        /// catalog can't advertise a shortage the confirm would allow (or vice versa).
+        ///
+        /// Without one, answers "how many are physically off the shelf right now?".
+        /// Callers that know their dates should pass them.
+        /// </summary>
+        public async Task<RentalAvailability> GetAvailabilityAsync(
+            Guid rentalItemId, DateOnly? from = null, DateOnly? to = null)
         {
             var item = await _db.RentalItems.FindAsync(rentalItemId)
                 ?? throw new BookingRuleException("Rental item not found.");
 
+            // A single date is a one-day window, not a half-open range.
+            var (start, end) = (from, to ?? from);
+            if (start.HasValue && end.HasValue)
+            {
+                var turnaround = Math.Max(0,
+                    (await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync())?.RentalTurnaroundDays ?? 1);
+                start = start.Value.AddDays(-turnaround);
+                end = end.Value.AddDays(turnaround);
+            }
+
             var outgoing = await _db.Rentals
-                .Where(r => r.RentalItemId == rentalItemId
-                            && (r.Booking.Status == BookingStatus.Confirmed ||
-                                r.Booking.Status == BookingStatus.Completed)
-                            && r.DeliveryStatus != DeliveryStatus.Returned)
+                .Where(CommittedStock(rentalItemId, null, start, end))
                 .SumAsync(r => (int?)r.Quantity) ?? 0;
 
             return new RentalAvailability(item.TotalQuantity, outgoing, item.TotalQuantity - outgoing);

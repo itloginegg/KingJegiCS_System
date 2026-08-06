@@ -125,9 +125,19 @@ namespace System_ApiTest.Controllers
 
             try
             {
+                // Same check that lets an admin book on someone else's behalf decides the
+                // source: if staff created it, it's a walk-in.
+                var source = IsAdmin() ? BookingSource.WalkIn : BookingSource.Customer;
+
                 var booking = await _bookings.CreateAsync(
                     customerId, dto.BookingType, dto.EventDate, dto.StartTime, dto.EndDate, dto.EndTime,
-                    dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber);
+                    dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber,
+                    source);
+
+                // No-ops for a customer booking for themselves; records the walk-in case.
+                await _audit.LogAsync(User, AuditAction.CREATE, "BOOKING", booking.Id.ToString(),
+                    null, ToDto(booking));
+
                 return CreatedAtAction(nameof(GetById), new { id = booking.Id }, ToDto(booking));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -145,9 +155,17 @@ namespace System_ApiTest.Controllers
             {
                 var currentUserId = CurrentUserId() ?? Guid.Empty;
                 var changedById = (User.IsInRole("Owner") || User.IsInRole("Assistant")) ? (Guid?)currentUserId : null;
+
+                // Snapshot before the write, so the audit row carries a real diff.
+                var before = await _db.Bookings.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id);
+
                 var booking = await _bookings.UpdateAsync(
                     id, changedById, dto.BookingName, dto.EventDate, dto.StartTime, dto.EndDate,
                     dto.EndTime, dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber);
+
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING", id.ToString(),
+                    before is null ? null : ToDto(before), ToDto(booking));
+
                 return Ok(ToDto(booking));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -159,7 +177,14 @@ namespace System_ApiTest.Controllers
         [HttpPost("{id:guid}/confirm")]
         public async Task<IActionResult> Confirm(Guid id)
         {
-            try { await _bookings.ConfirmBookingAsync(id, CurrentUserId()); return await Refreshed(id); }
+            try
+            {
+                var before = await StatusSnapshotAsync(id);
+                await _bookings.ConfirmBookingAsync(id, CurrentUserId());
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_STATUS", id.ToString(),
+                    before, await StatusSnapshotAsync(id));
+                return await Refreshed(id);
+            }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
@@ -178,7 +203,10 @@ namespace System_ApiTest.Controllers
 
             try
             {
+                var before = await StatusSnapshotAsync(id);
                 await _bookings.CancelBookingAsync(id, byCustomer ? null : CurrentUserId(), byCustomer);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_STATUS", id.ToString(),
+                    before, await StatusSnapshotAsync(id));
                 return await Refreshed(id);
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -232,7 +260,10 @@ namespace System_ApiTest.Controllers
 
             try
             {
+                // Captured before deletion — afterwards there's nothing left to describe.
+                var snapshot = ToDto(booking);
                 await _bookings.DeleteDraftAsync(id);
+                await _audit.LogAsync(User, AuditAction.DELETE, "BOOKING", id.ToString(), snapshot, null);
                 return NoContent();
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -261,7 +292,14 @@ namespace System_ApiTest.Controllers
         [HttpPost("{id:guid}/complete")]
         public async Task<IActionResult> Complete(Guid id)
         {
-            try { await _bookings.CompleteBookingAsync(id, CurrentUserId()); return await Refreshed(id); }
+            try
+            {
+                var before = await StatusSnapshotAsync(id);
+                await _bookings.CompleteBookingAsync(id, CurrentUserId());
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_STATUS", id.ToString(),
+                    before, await StatusSnapshotAsync(id));
+                return await Refreshed(id);
+            }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
@@ -458,11 +496,22 @@ namespace System_ApiTest.Controllers
         /// it is only ever populated for an Owner/Assistant — a customer reading their own
         /// booking through this same endpoint gets null, never the note's contents.
         /// </summary>
+        /// <summary>
+        /// The fields a lifecycle transition actually moves. Kept small on purpose: a
+        /// confirm/cancel/complete audit row should show the status change, not a wall
+        /// of unchanged event details.
+        /// </summary>
+        private async Task<object?> StatusSnapshotAsync(Guid id) =>
+            await _db.Bookings.AsNoTracking()
+                .Where(b => b.Id == id)
+                .Select(b => new { Status = b.Status.ToString(), DepositStatus = b.DepositStatus.ToString(), b.TotalAmount })
+                .FirstOrDefaultAsync();
+
         private BookingResponseDto ToDto(Booking b) => new(
             b.Id, b.BookingName, b.CustomerId, b.BookingType.ToString(),
             b.EventDate, b.StartTime, b.EndDate, b.EndTime,
             b.EventType?.ToString(), b.VenueAddress, b.ContactNumber, b.GuestCount, b.Status.ToString(),
-            b.DepositStatus.ToString(), b.TotalAmount, b.MenuPackageId,
+            b.DepositStatus.ToString(), b.Source.ToString(), b.TotalAmount, b.MenuPackageId,
             b.CancellationRequested, b.CancellationRequestReason, b.CreatedAt,
             IsAdmin() ? b.AdminNote : null);
     }

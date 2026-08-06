@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System_ApiTest.Data;
 
@@ -11,9 +12,11 @@ using System_ApiTest.Data;
 namespace System_ApiTest.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260805130108_AddBookingSource")]
+    partial class AddBookingSource
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1219,9 +1222,6 @@ namespace System_ApiTest.Migrations
                     b.Property<TimeOnly>("OperatingHoursStart")
                         .HasColumnType("time");
 
-                    b.Property<int>("RentalTurnaroundDays")
-                        .HasColumnType("int");
-
                     b.Property<decimal>("ReservationFee")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -1253,8 +1253,6 @@ namespace System_ApiTest.Migrations
                             t.HasCheckConstraint("CK_SystemSettings_ReservationFeeNonNeg", "[ReservationFee] >= 0");
 
                             t.HasCheckConstraint("CK_SystemSettings_TaxRateNonNeg", "[TaxRate] >= 0");
-
-                            t.HasCheckConstraint("CK_SystemSettings_TurnaroundNonNeg", "[RentalTurnaroundDays] >= 0");
                         });
                 });
 

@@ -83,9 +83,16 @@ namespace System_ApiTest.Services
             return invoice;
         }
 
+        /// <param name="notifyRecorded">
+        /// Whether to emit the staff "payment recorded, awaiting verification" notice.
+        /// True for every path where verification really is a later, separate step.
+        /// The cash path passes false: it verifies in the same call, so that notice
+        /// would be stale before anyone read it, and RecordCashAsync's MarkSuccessAsync
+        /// emits the accurate PaymentConfirmed one instead.
+        /// </param>
         public async Task<Payment> RecordAsync(
             Guid invoiceId, decimal amount, PaymentMethod method,
-            DateTime? paidAt, string? transactionReference)
+            DateTime? paidAt, string? transactionReference, bool notifyRecorded = true)
         {
             await ValidatePayableAsync(invoiceId, amount);
 
@@ -109,9 +116,48 @@ namespace System_ApiTest.Services
 
             // Staff-facing: a payment has been recorded and is waiting to be verified.
             // Keyed on the payment id, so each payment notifies exactly once.
-            var (bookingId, _) = await ResolveRecipientsAsync(invoiceId);
-            await _notifications.WriteAsync(
-                NotificationKind.PaymentRecorded, bookingId, period: payment.Id.ToString("N"));
+            if (notifyRecorded)
+            {
+                var (bookingId, _) = await ResolveRecipientsAsync(invoiceId);
+                await _notifications.WriteAsync(
+                    NotificationKind.PaymentRecorded, bookingId, period: payment.Id.ToString("N"));
+            }
+
+            return payment;
+        }
+
+        /// <summary>
+        /// Records cash and verifies it in one step.
+        ///
+        /// The two-step "record, then confirm later" dance exists for money that arrives
+        /// somewhere the system can't see — a bank transfer someone has to go and check.
+        /// Cash handed over a counter has no such gap: the admin recording it IS the
+        /// verification, so splitting it in two just leaves the booking stuck.
+        ///
+        /// That stuckness is the bug this fixes. RecordAsync alone leaves the payment
+        /// Pending, and only MarkSuccessAsync runs SyncInvoiceAndDepositAsync — so
+        /// DepositStatus stayed Unpaid and ConfirmBookingAsync's "no money, no
+        /// confirmation" guard kept refusing, with the money already in the till.
+        ///
+        /// Composed from the two existing methods rather than reimplemented: the
+        /// overpayment guard, the date-still-winnable check, the deposit ladder and the
+        /// invoice re-sync all live in them already, and a second copy would be a second
+        /// thing to keep correct. Sequential, not nested — RecordAsync opens no
+        /// transaction and MarkSuccessAsync opens its own.
+        ///
+        /// Safe for walk-ins specifically because TryAutoConfirmOnReservationAsync
+        /// already refuses to auto-confirm them: verifying cash moves the deposit off
+        /// Unpaid, but committing the calendar slot still needs a deliberate Confirm.
+        /// </summary>
+        public async Task<Payment> RecordCashAsync(
+            Guid invoiceId, decimal amount, DateTime? paidAt, string? transactionReference, DateOnly today)
+        {
+            var payment = await RecordAsync(
+                invoiceId, amount, PaymentMethod.Cash, paidAt, transactionReference, notifyRecorded: false);
+
+            // Same DbContext, so this returns the tracked instance above — `payment`
+            // reflects Status = Success when it comes back.
+            await MarkSuccessAsync(payment.Id, today);
 
             return payment;
         }

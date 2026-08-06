@@ -96,6 +96,11 @@ export interface BookingResponse {
   guestCount: number | null;
   status: string;
   depositStatus: string;
+  /**
+   * Who created it: 'Customer' (self-service) or 'WalkIn' (an admin, on their behalf).
+   * Read-only — set once at creation and never accepted on input.
+   */
+  source: 'Customer' | 'WalkIn';
   totalAmount: number;
   menuPackageId: string | null;
   cancellationRequested: boolean;
@@ -492,6 +497,39 @@ export function generateInvoice(
 }
 
 /** Owner/Assistant: mark a Draft invoice as Sent to the customer. */
+/** Matches CashPaymentResultDto — what logging cash changed, in one response. */
+export interface CashPaymentResult {
+  payment: PaymentRecord;
+  bookingId: string;
+  /** The booking's status AFTER the payment. Walk-ins stay Pending by design. */
+  bookingStatus: string;
+  /** Off 'Unpaid' once the reservation fee is covered — this is what gates Confirm. */
+  depositStatus: string;
+  invoiceGrandTotal: number;
+  invoicePaidTotal: number;
+}
+
+/**
+ * Owner/Assistant: log cash and verify it in one call.
+ *
+ * Distinct from the generic record-a-payment endpoint, which leaves the payment
+ * Pending for someone to verify later — a step that makes sense for a bank transfer
+ * but not for cash in an admin's hand. Because this runs the deposit sync
+ * immediately, the booking's Confirm button becomes usable straight away; the
+ * returned depositStatus is what the caller should re-render from.
+ */
+export function recordCashPayment(
+  token: string,
+  payload: { invoiceId: string; amountPaid: number; transactionReference?: string | null; paymentDateTime?: string | null },
+): Promise<CashPaymentResult> {
+  return request<CashPaymentResult>('/api/Payments/cash', 'POST', token, {
+    invoiceId: payload.invoiceId,
+    amountPaid: payload.amountPaid,
+    transactionReference: payload.transactionReference?.trim() || null,
+    paymentDateTime: payload.paymentDateTime ?? null,
+  });
+}
+
 export function sendInvoice(token: string, invoiceId: string): Promise<InvoiceResponseDto> {
   return request<InvoiceResponseDto>(`/api/Invoices/${invoiceId}/send`, 'POST', token);
 }
