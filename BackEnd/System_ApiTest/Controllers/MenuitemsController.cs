@@ -140,8 +140,34 @@ namespace System_ApiTest.Controllers
         {
             var m = await _db.MenuItems.FindAsync(id);
             if (m is null) return NotFound();
+            if (!m.IsActive) return NoContent();   // already inactive; nothing to record
+
+            var old = ToDto(m);
             m.IsActive = false;
             await _db.SaveChangesAsync();
+            await _audit.LogAsync(User, AuditAction.UPDATE, "MENU_ITEM", m.Id.ToString(), old, ToDto(m));
+            return NoContent();
+        }
+
+        /// <summary>
+        /// Puts a deactivated item back in the catalog. The mirror of /deactivate.
+        ///
+        /// This is a dedicated endpoint rather than a field on the PUT update, because
+        /// MenuItemCreateDto carries no IsActive and the update is multipart/form-data —
+        /// flipping one boolean would otherwise mean re-posting every field plus the image.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{id:guid}/reactivate")]
+        public async Task<IActionResult> Reactivate(Guid id)
+        {
+            var m = await _db.MenuItems.FindAsync(id);
+            if (m is null) return NotFound();
+            if (m.IsActive) return NoContent();   // already active; nothing to record
+
+            var old = ToDto(m);
+            m.IsActive = true;
+            await _db.SaveChangesAsync();
+            await _audit.LogAsync(User, AuditAction.UPDATE, "MENU_ITEM", m.Id.ToString(), old, ToDto(m));
             return NoContent();
         }
 

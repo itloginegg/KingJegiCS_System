@@ -182,7 +182,8 @@ namespace System_ApiTest.DTOs
         int Quantity,
         decimal UnitPrice,
         decimal Subtotal,
-        string DeliveryStatus);
+        string DeliveryStatus,
+        string? DamageNote = null);
 
     public record BookingServiceLineDto(
         Guid LineId,

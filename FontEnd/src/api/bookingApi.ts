@@ -111,10 +111,44 @@ export interface BookingResponse {
 }
 
 /** Matches BookingDetailDto — returned by GET /api/Bookings/{id}. */
+/**
+ * The rental delivery lifecycle, mirroring Models/DeliveryStatus.
+ *
+ * Legal moves, enforced by Rentalservice.UpdateDeliveryStatusAsync — the UI must not
+ * offer anything outside this set, or the request comes back 400:
+ *   Pending   -> Delivered
+ *   Delivered -> Returned | Damaged
+ *   Damaged   -> Returned   (repaired or written off)
+ * Returned is terminal.
+ */
+export type DeliveryStatusName = 'Pending' | 'Delivered' | 'Returned' | 'Damaged';
+
+/** The moves the returns desk can make from each status. Drives which buttons render. */
+export const DELIVERY_NEXT_STATUSES: Record<DeliveryStatusName, DeliveryStatusName[]> = {
+  Pending: ['Delivered'],
+  Delivered: ['Returned', 'Damaged'],
+  Damaged: ['Returned'],
+  Returned: [],
+};
+
+/** One rental line still awaiting an admin action. Matches OutstandingRentalLineDto. */
+export interface OutstandingRentalLine {
+  rentalId: string;
+  bookingId: string;
+  customerName: string;
+  eventDate: string;
+  endDate: string | null;
+  rentalItemId: string;
+  itemName: string;
+  quantity: number;
+  deliveryStatus: DeliveryStatusName;
+  damageNote: string | null;
+}
+
 export interface BookingDetailResponse {
   booking: BookingResponse;
   package: { id: string; packageName: string; basePrice: number; inclusions: string[] } | null;
-  rentals: { lineId: string; rentalItemId: string; itemName: string; quantity: number; unitPrice: number; subtotal: number; deliveryStatus: string }[];
+  rentals: { lineId: string; rentalItemId: string; itemName: string; quantity: number; unitPrice: number; subtotal: number; deliveryStatus: DeliveryStatusName; damageNote: string | null }[];
   services: { lineId: string; serviceItemId: string; serviceName: string; quantity: number; unitCost: number; totalCost: number }[];
   menuItems: { itemId: string; itemName: string; quantity: number; capturedPrice: number; lineTotal: number }[];
   menuTrays: { trayId: string; trayName: string; quantity: number; capturedPrice: number; lineTotal: number }[];
@@ -598,4 +632,37 @@ export interface BookingHistoryEntry {
 /** Owner/Assistant: the append-only revision history for a booking, oldest first. */
 export function getBookingHistory(token: string, bookingId: string): Promise<BookingHistoryEntry[]> {
   return request<BookingHistoryEntry[]>(`/api/Bookings/${bookingId}/history`, 'GET', token);
+}
+
+// ── Rental returns / check-in ──────────────────────────────────────────
+
+/**
+ * Owner/Assistant: every rental line still needing an action, across all bookings —
+ * Pending, Delivered or Damaged, ordered by event date. Returned lines are done and
+ * do not appear.
+ */
+export function getOutstandingRentals(token: string): Promise<OutstandingRentalLine[]> {
+  return request<OutstandingRentalLine[]>('/api/Bookings/rentals/outstanding', 'GET', token);
+}
+
+/**
+ * Move a rental line along its lifecycle. `damageNote` is required by the backend when
+ * `status` is 'Damaged' and ignored otherwise.
+ *
+ * Returning a line is what frees its stock for other bookings; Damaged keeps holding the
+ * stock until the line is resolved, so a broken item can't quietly become bookable again.
+ */
+export function updateRentalDeliveryStatus(
+  token: string,
+  bookingId: string,
+  rentalId: string,
+  status: DeliveryStatusName,
+  damageNote?: string,
+): Promise<{ id: string; itemName: string; quantity: number; deliveryStatus: DeliveryStatusName; damageNote: string | null }> {
+  return request(
+    `/api/Bookings/${bookingId}/rentals/${rentalId}/delivery-status`,
+    'PUT',
+    token,
+    { deliveryStatus: status, damageNote: damageNote ?? null },
+  );
 }

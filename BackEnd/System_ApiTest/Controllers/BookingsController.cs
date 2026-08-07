@@ -84,7 +84,8 @@ namespace System_ApiTest.Controllers
                     booking.MenuPackage.BasePrice, booking.MenuPackage.Inclusions),
                 booking.Rentals.Select(r => new BookingRentalLineDto(
                     r.Id, r.RentalItemId, r.RentalItem.ItemName, r.Quantity,
-                    r.RentalItem.UnitPrice, r.Subtotal, r.DeliveryStatus.ToString())).ToList(),
+                    r.RentalItem.UnitPrice, r.Subtotal, r.DeliveryStatus.ToString(),
+                    r.DamageNote)).ToList(),
                 booking.Services.Select(sv => new BookingServiceLineDto(
                     sv.Id, sv.ServiceItemId, sv.ServiceItem.ServiceName, sv.Quantity,
                     sv.ServiceItem.UnitCost, sv.TotalCost)).ToList(),
@@ -417,6 +418,16 @@ namespace System_ApiTest.Controllers
         /// what frees the stock for other bookings; Damaged keeps holding stock until
         /// resolved (repair -> Returned, or write off and adjust the item's quantity).
         /// </summary>
+        /// <summary>
+        /// Every rental line still awaiting an admin action, across all bookings — the
+        /// returns/check-in desk. Grouped by event date on the client so a day's returns
+        /// get processed together after the event.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("rentals/outstanding")]
+        public async Task<IActionResult> GetOutstandingRentals()
+            => Ok(await _rentals.GetOutstandingAsync());
+
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPut("{id:guid}/rentals/{rentalId:guid}/delivery-status")]
         public async Task<IActionResult> UpdateRentalDeliveryStatus(
@@ -425,14 +436,16 @@ namespace System_ApiTest.Controllers
             if (!ModelState.IsValid) return BadRequest(ModelState);
             try
             {
-                var rental = await _rentals.UpdateDeliveryStatusAsync(id, rentalId, dto.DeliveryStatus);
+                var rental = await _rentals.UpdateDeliveryStatusAsync(
+                    id, rentalId, dto.DeliveryStatus, dto.DamageNote);
                 return Ok(new
                 {
                     rental.Id,
                     rental.RentalItemId,
                     itemName = rental.RentalItem.ItemName,
                     rental.Quantity,
-                    deliveryStatus = rental.DeliveryStatus.ToString()
+                    deliveryStatus = rental.DeliveryStatus.ToString(),
+                    rental.DamageNote
                 });
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }

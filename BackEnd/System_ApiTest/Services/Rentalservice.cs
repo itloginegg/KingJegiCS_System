@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using System_ApiTest.Data;
+using System_ApiTest.DTOs;
 using System_ApiTest.Models;
 
 namespace System_ApiTest.Services
@@ -176,7 +177,8 @@ namespace System_ApiTest.Services
         ///   holding stock until resolved) -> Returned once repaired/written off.
         /// Returned is terminal. Backward moves and skipping delivery are rejected.
         /// </summary>
-        public async Task<Rental> UpdateDeliveryStatusAsync(Guid bookingId, Guid rentalId, DeliveryStatus newStatus)
+        public async Task<Rental> UpdateDeliveryStatusAsync(
+            Guid bookingId, Guid rentalId, DeliveryStatus newStatus, string? damageNote = null)
         {
             var rental = await _db.Rentals
                 .Include(r => r.RentalItem)
@@ -197,8 +199,54 @@ namespace System_ApiTest.Services
                     "Valid moves: Pending→Delivered, Delivered→Returned/Damaged, Damaged→Returned.");
 
             rental.DeliveryStatus = newStatus;
+
+            // Recorded only on the move to Damaged. A later repair (Damaged -> Returned)
+            // deliberately leaves the note in place so the item's history survives.
+            if (newStatus == DeliveryStatus.Damaged)
+                rental.DamageNote = damageNote?.Trim();
+
             await _db.SaveChangesAsync();
             return rental;
+        }
+
+        /// <summary>
+        /// Every rental line still needing an admin action, for the returns/check-in list:
+        /// Pending (not yet handed over), Delivered (out), Damaged (out, awaiting repair or
+        /// write-off). Returned is excluded — that line is done.
+        ///
+        /// Pending is included deliberately. A list of only Delivered lines would start
+        /// empty and stay empty, because nothing else in the system moves a line off
+        /// Pending — that transition has to be reachable from here too.
+        ///
+        /// Only Confirmed/Completed bookings count, matching CommittedStock: a cancelled
+        /// booking holds no stock, so its lines are not the returns desk's problem.
+        ///
+        /// Drives the admin returns list, which would otherwise need one request per
+        /// booking to assemble the same thing client-side.
+        /// </summary>
+        public async Task<List<OutstandingRentalLineDto>> GetOutstandingAsync()
+        {
+            return await _db.Rentals
+                .AsNoTracking()
+                .Include(r => r.RentalItem)
+                .Include(r => r.Booking).ThenInclude(b => b.Customer)
+                .Where(r => r.DeliveryStatus != DeliveryStatus.Returned
+                         && (r.Booking.Status == BookingStatus.Confirmed
+                          || r.Booking.Status == BookingStatus.Completed))
+                .OrderBy(r => r.Booking.EventDate)
+                .ThenBy(r => r.RentalItem.ItemName)
+                .Select(r => new OutstandingRentalLineDto(
+                    r.Id,
+                    r.BookingId,
+                    r.Booking.Customer.FullName,
+                    r.Booking.EventDate,
+                    r.Booking.EndDate,
+                    r.RentalItemId,
+                    r.RentalItem.ItemName,
+                    r.Quantity,
+                    r.DeliveryStatus.ToString(),
+                    r.DamageNote))
+                .ToListAsync();
         }
     }
 }

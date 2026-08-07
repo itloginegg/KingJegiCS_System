@@ -1,3 +1,6 @@
 <Solution>
+  <Project Path="System_ApiTest.Application/System_ApiTest.Application.csproj" />
+  <Project Path="System_ApiTest.Domain/System_ApiTest.Domain.csproj" />
+  <Project Path="System_ApiTest.Infrastructure/System_ApiTest.Infrastructure.csproj" />
   <Project Path="System_ApiTest/System_ApiTest.csproj" />
 </Solution>

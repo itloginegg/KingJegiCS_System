@@ -11,6 +11,10 @@ using System_ApiTest.Seeding;
 using System_ApiTest.Services;
 using System_ApiTest.Workers;
 using System_ApiTest.Hubs;
+using System_ApiTest.Application;
+using System_ApiTest.Application.Common.Interfaces;
+using System_ApiTest.Infrastructure;
+using System_ApiTest.Endpoints;
 using static System_ApiTest.Services.Jwttokenservice;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -93,6 +97,27 @@ builder.Services.Configure<OtpOptions>(builder.Configuration.GetSection(OtpOptio
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<OtpService>();
 
+// --- Clean Architecture layers (new features only) ---------------------------------
+// Everything above stays exactly as it was: existing Controllers and services are
+// untouched. New features live in System_ApiTest.Application / .Domain / .Infrastructure
+// and are reached through MediatR + Minimal API endpoints registered further down.
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
+
+// The AddJsonOptions calls above configure MVC's serializer (Mvc.JsonOptions), which
+// Minimal APIs do not read — they use Http.JsonOptions. Without this, the new endpoints
+// would reject the string enums and DateOnly/TimeOnly formats the Controllers accept.
+// This affects Minimal API endpoints only; existing Controllers keep their own options.
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    options.SerializerOptions.Converters.Add(new DateOnlyJsonConverter());
+    options.SerializerOptions.Converters.Add(new TimeOnlyJsonConverter());
+});
+// The new layers talk to the SAME database through the SAME AppDbContext registered
+// above — IApplicationDbContext is just the Application layer's narrow view of it.
+builder.Services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -161,6 +186,11 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<PaymentHub>("/hubs/payment");
+
+// Minimal API endpoints for features built on the Clean Architecture layers.
+// These sit alongside the Controllers above — ASP.NET Core routes both from the same table,
+// so old and new coexist with no conflict. One MapXEndpoints() call per feature.
+app.MapVenueEndpoints();
 
 await DbSeeder.SeedAsync(app.Services);
 

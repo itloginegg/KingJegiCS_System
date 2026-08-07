@@ -232,6 +232,10 @@ export function deactivateMenuItem(token: string, id: string): Promise<void> {
   return sendJson<void>(`/api/Menuitems/${id}/deactivate`, 'POST', token, {});
 }
 
+export function reactivateMenuItem(token: string, id: string): Promise<void> {
+  return sendJson<void>(`/api/Menuitems/${id}/reactivate`, 'POST', token, {});
+}
+
 export function createMenuTray(token: string, payload: AdminMenuTrayPayload): Promise<AdminMenuTray> {
   return sendJson<AdminMenuTray>('/api/Menutrays', 'POST', token, payload);
 }
@@ -242,6 +246,10 @@ export function updateMenuTray(token: string, id: string, payload: AdminMenuTray
 
 export function deactivateMenuTray(token: string, id: string): Promise<void> {
   return sendJson<void>(`/api/Menutrays/${id}/deactivate`, 'POST', token, {});
+}
+
+export function reactivateMenuTray(token: string, id: string): Promise<void> {
+  return sendJson<void>(`/api/Menutrays/${id}/reactivate`, 'POST', token, {});
 }
 
 async function readErrorMessage(res: Response): Promise<string | null> {

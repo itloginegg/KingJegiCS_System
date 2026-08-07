@@ -9,9 +9,11 @@ import {
   createMenuItem,
   updateMenuItem,
   deactivateMenuItem,
+  reactivateMenuItem,
   createMenuTray,
   updateMenuTray,
   deactivateMenuTray,
+  reactivateMenuTray,
   MenuApiError,
   getFullImageUrl,
   type AdminMenuItem,
@@ -50,8 +52,13 @@ import {
   getBookingDetail,
   getBookingHistory,
   getInvoiceByBooking,
+  getOutstandingRentals,
+  updateRentalDeliveryStatus,
   BookingApiError,
   BOOKING_TYPE_LABELS,
+  DELIVERY_NEXT_STATUSES,
+  type OutstandingRentalLine,
+  type DeliveryStatusName,
   type CashPaymentResult,
   type BookingTypeName,
   type BookingResponse,
@@ -1215,6 +1222,18 @@ export function AdminDashboardPage() {
   const [rentalSaving, setRentalSaving] = useState(false);
   const [rentalFeedback, setRentalFeedback] = useState<string | null>(null);
   const [rentalFormError, setRentalFormError] = useState<string | null>(null);
+
+  /* ── returns / check-in desk ── */
+  const [outstandingRentals, setOutstandingRentals] = useState<OutstandingRentalLine[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+  const [returnsError, setReturnsError] = useState<string | null>(null);
+  const [returnsFeedback, setReturnsFeedback] = useState<string | null>(null);
+  /** Which line is mid-request, so only that row's buttons disable. */
+  const [returnsBusyId, setReturnsBusyId] = useState<string | null>(null);
+  /** The line being marked Damaged; the note modal is open while this is set. */
+  const [damageTarget, setDamageTarget] = useState<OutstandingRentalLine | null>(null);
+  const [damageNote, setDamageNote] = useState('');
+
   const rentalCategoryOptions = ['Linens', 'Chairs', 'Tables', 'Lights', 'Others'] as const;
   const rentalFormValid = Boolean(
     rentalFormItem.itemName.trim() &&
@@ -1640,6 +1659,132 @@ export function AdminDashboardPage() {
     }
   };
 
+  /** Every rental line still awaiting an action, for the returns desk. */
+  const loadOutstandingRentals = async () => {
+    const session = readSession();
+    if (!session) {
+      setReturnsError('You are not signed in. Sign in with an Owner or Assistant account to load returns.');
+      return;
+    }
+
+    setReturnsLoading(true);
+    setReturnsError(null);
+
+    try {
+      setOutstandingRentals(await getOutstandingRentals(session.token));
+    } catch (err) {
+      setReturnsError(
+        err instanceof BookingApiError
+          ? err.message
+          : 'Unable to load outstanding rentals. Please try again.',
+      );
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
+  /**
+   * Moves one rental line along its lifecycle.
+   *
+   * The catalog is reloaded afterwards because returning a line changes that item's
+   * quantityOut/stock — leaving the inventory table showing pre-return numbers would be
+   * the kind of stale reading an admin then acts on.
+   */
+  const applyDeliveryStatus = async (
+    line: OutstandingRentalLine,
+    next: DeliveryStatusName,
+    note?: string,
+  ) => {
+    const session = readSession();
+    if (!session) {
+      setReturnsError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+
+    setReturnsBusyId(line.rentalId);
+    setReturnsError(null);
+    setReturnsFeedback(null);
+
+    try {
+      await updateRentalDeliveryStatus(session.token, line.bookingId, line.rentalId, next, note);
+
+      // Returned lines drop off the desk entirely; the rest stay with a new status.
+      setOutstandingRentals((prev) =>
+        next === 'Returned'
+          ? prev.filter((l) => l.rentalId !== line.rentalId)
+          : prev.map((l) =>
+              l.rentalId === line.rentalId
+                ? { ...l, deliveryStatus: next, damageNote: note ?? l.damageNote }
+                : l,
+            ),
+      );
+
+      // Keep an open booking-detail modal in step. A no-op when it's closed or showing a
+      // different booking, which is why both entry points can share this one path.
+      setDetailBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              rentals: prev.rentals.map((r) =>
+                r.lineId === line.rentalId
+                  ? { ...r, deliveryStatus: next, damageNote: note ?? r.damageNote }
+                  : r,
+              ),
+            }
+          : prev,
+      );
+
+      setReturnsFeedback(
+        next === 'Returned'
+          ? `${line.quantity} × ${line.itemName} returned — stock is available again.`
+          : next === 'Damaged'
+            ? `${line.quantity} × ${line.itemName} flagged as damaged and held out of stock.`
+            : `${line.quantity} × ${line.itemName} marked delivered.`,
+      );
+
+      await loadRentalCatalog();
+    } catch (err) {
+      setReturnsError(
+        err instanceof BookingApiError
+          ? err.message
+          : 'Unable to update the rental line. Please try again.',
+      );
+    } finally {
+      setReturnsBusyId(null);
+    }
+  };
+
+  /**
+   * Turns a rental line on the open booking detail into the shape applyDeliveryStatus
+   * expects, so the inline actions and the returns desk go through identical rules.
+   */
+  const detailLineToOutstanding = (
+    line: BookingDetailResponse['rentals'][number],
+  ): OutstandingRentalLine | null => {
+    if (!detailBooking) return null;
+    const b = detailBooking.booking;
+    return {
+      rentalId: line.lineId,
+      bookingId: b.id,
+      customerName: b.bookingName,
+      eventDate: b.eventDate,
+      endDate: b.endDate,
+      rentalItemId: line.rentalItemId,
+      itemName: line.itemName,
+      quantity: line.quantity,
+      deliveryStatus: line.deliveryStatus,
+      damageNote: line.damageNote,
+    };
+  };
+
+  const confirmDamage = async () => {
+    if (!damageTarget || !damageNote.trim()) return;
+    const target = damageTarget;
+    setDamageTarget(null);
+    await applyDeliveryStatus(target, 'Damaged', damageNote.trim());
+    setDamageNote('');
+  };
+
   const openRentalForm = (mode: 'create' | 'edit', item?: AdminRentalItem) => {
     setRentalFormMode(mode);
     setRentalFormError(null);
@@ -1973,10 +2118,14 @@ export function AdminDashboardPage() {
     }
   };
 
-  const deactivateMenuEntry = async (mode: 'item' | 'tray', id: string) => {
+  /**
+   * Flips a menu item or tray between active and inactive — the same toggle the Rentals
+   * and Service Items tabs already have. `nextActive` is the state being moved TO.
+   */
+  const toggleMenuEntryActive = async (mode: 'item' | 'tray', id: string, nextActive: boolean) => {
     const session = readSession();
     if (!session) {
-      setMenuError('You are not signed in. Sign in with an Owner or Assistant account to deactivate entries.');
+      setMenuError('You are not signed in. Sign in with an Owner or Assistant account to change entry status.');
       setMenuAuthError(true);
       return;
     }
@@ -1986,18 +2135,18 @@ export function AdminDashboardPage() {
 
     try {
       if (mode === 'item') {
-        await deactivateMenuItem(session.token, id);
-        setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, isActive: false } : m)));
+        await (nextActive ? reactivateMenuItem : deactivateMenuItem)(session.token, id);
+        setMenuItems((prev) => prev.map((m) => (m.id === id ? { ...m, isActive: nextActive } : m)));
       } else {
-        await deactivateMenuTray(session.token, id);
-        setMenuTrays((prev) => prev.map((t) => (t.id === id ? { ...t, isActive: false } : t)));
+        await (nextActive ? reactivateMenuTray : deactivateMenuTray)(session.token, id);
+        setMenuTrays((prev) => prev.map((t) => (t.id === id ? { ...t, isActive: nextActive } : t)));
       }
     } catch (err) {
       if (err instanceof MenuApiError) {
         setMenuError(err.message);
         setMenuAuthError(err.isAuthError);
       } else {
-        setMenuError('Unable to deactivate the menu entry. Please try again.');
+        setMenuError(`Unable to ${nextActive ? 'reactivate' : 'deactivate'} the menu entry. Please try again.`);
       }
     } finally {
       setMenuLoading(false);
@@ -2231,7 +2380,10 @@ export function AdminDashboardPage() {
     // admin had visited the Bookings tab at least once.
     if (tab === 'overview' || tab === 'bookings' || tab === 'histories') void loadBookings();
     if (tab === 'menus') void loadMenuCatalog();
-    if (tab === 'rentals') void loadRentalCatalog();
+    if (tab === 'rentals') {
+      void loadRentalCatalog();
+      void loadOutstandingRentals();
+    }
     if (tab === 'services') void loadServiceCatalog();
     if (tab === 'testimonials') void loadTestimonials();
     if (tab === 'announcements') void loadAnnouncements();
@@ -2290,6 +2442,42 @@ export function AdminDashboardPage() {
      a request. An empty query matches everything. */
   const matchesQuery = (q: string, ...fields: (string | null | undefined)[]) =>
     q === '' || fields.some((f) => (f ?? '').toLowerCase().includes(q));
+
+  /**
+   * The three end states an admin actually reads at a glance:
+   *   Pending   — grey, still with us, hasn't gone out
+   *   Delivered — amber, out on an event
+   *   Damaged   — red, out and needs maintenance before it can go anywhere
+   * Returned never appears here; those lines leave the desk.
+   */
+  const DELIVERY_STATUS_STYLE: Record<DeliveryStatusName, { color: string; label: string }> = {
+    Pending: { color: 'var(--text-dim)', label: 'Not yet out' },
+    Delivered: { color: 'var(--warning, #d98324)', label: 'Out' },
+    Damaged: { color: 'var(--danger)', label: 'Needs maintenance' },
+    Returned: { color: 'var(--primary)', label: 'Back in stock' },
+  };
+
+  const DELIVERY_ACTION_LABEL: Record<DeliveryStatusName, string> = {
+    Delivered: 'Mark Delivered',
+    Returned: 'Return',
+    Damaged: 'Mark Damaged',
+    Pending: 'Reset to Pending',
+  };
+
+  /**
+   * Outstanding lines bucketed by event date, so a day's returns get processed together
+   * after the event rather than hunted for one booking at a time. The backend already
+   * orders by event date, so insertion order carries through.
+   */
+  const outstandingByDate = useMemo(() => {
+    const groups = new Map<string, OutstandingRentalLine[]>();
+    for (const line of outstandingRentals) {
+      const existing = groups.get(line.eventDate);
+      if (existing) existing.push(line);
+      else groups.set(line.eventDate, [line]);
+    }
+    return [...groups.entries()];
+  }, [outstandingRentals]);
 
   const visibleMenuItems = useMemo(() => {
     const q = menuSearch.trim().toLowerCase();
@@ -2909,6 +3097,40 @@ export function AdminDashboardPage() {
       {/* ══════════ BOOKING DETAIL VIEW (phase 4) ══════════
           Read-only. Everything the admin needs at a glance without leaving the
           Bookings tab; editing still happens through the existing actions. */}
+      {/* Top level, not inside the Rentals tab: the same modal is reachable from a
+          booking's detail view, which renders over any tab. The damage note is required
+          by the backend, so the confirm button stays disabled until there is one. */}
+      {damageTarget && (
+        <div className="adm-modal-overlay" onClick={() => setDamageTarget(null)}>
+          <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Mark rental line damaged">
+            <h3>Mark as Damaged</h3>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+              {damageTarget.quantity} × {damageTarget.itemName} — {damageTarget.customerName}, {fmtDate(damageTarget.eventDate)}.
+              This keeps the stock held out of inventory until the line is resolved.
+            </p>
+            <label style={{ display: 'block', marginTop: '1rem' }}>
+              <FieldLabel text="What's wrong? (required)" />
+              <textarea
+                className="adm-input"
+                rows={3}
+                maxLength={500}
+                value={damageNote}
+                autoFocus
+                onChange={(e) => setDamageNote(e.target.value)}
+                placeholder="e.g. 3 chairs with cracked legs"
+                style={{ width: '100%', resize: 'vertical' }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '1.1rem' }}>
+              <button type="button" className="adm-btn outline" onClick={() => setDamageTarget(null)}>Cancel</button>
+              <button type="button" className="adm-btn danger" disabled={!damageNote.trim()} onClick={() => void confirmDamage()}>
+                Mark Damaged
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detailBooking && (() => {
         const b = detailBooking.booking;
         const isDelivery = b.bookingType === 'FoodDelivery';
@@ -3024,7 +3246,40 @@ export function AdminDashboardPage() {
                           <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
                             <td style={{ padding: '0.45rem 0' }}>
                               Rental — {r.itemName} × {r.quantity}
-                              <span style={{ color: 'var(--text-dim)' }}> · {r.deliveryStatus}</span>
+                              <span style={{ color: DELIVERY_STATUS_STYLE[r.deliveryStatus].color }}>
+                                {' '}· {DELIVERY_STATUS_STYLE[r.deliveryStatus].label}
+                              </span>
+                              {r.damageNote && (
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--danger)' }}>
+                                  ⚠ {r.damageNote}
+                                </div>
+                              )}
+                              {/* Same actions as the returns desk, for an admin already
+                                  looking at this one event. */}
+                              {DELIVERY_NEXT_STATUSES[r.deliveryStatus].length > 0 && (
+                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
+                                  {DELIVERY_NEXT_STATUSES[r.deliveryStatus].map((next) => (
+                                    <button
+                                      key={next}
+                                      type="button"
+                                      className={`adm-btn ${next === 'Returned' ? 'success' : next === 'Damaged' ? 'danger' : 'info'}`}
+                                      disabled={returnsBusyId === r.lineId}
+                                      onClick={() => {
+                                        const line = detailLineToOutstanding(r);
+                                        if (!line) return;
+                                        if (next === 'Damaged') {
+                                          setDamageNote('');
+                                          setDamageTarget(line);
+                                        } else {
+                                          void applyDeliveryStatus(line, next);
+                                        }
+                                      }}
+                                    >
+                                      {DELIVERY_ACTION_LABEL[next]}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
                           </tr>
@@ -4786,11 +5041,11 @@ export function AdminDashboardPage() {
                               </button>
                               <button
                                 type="button"
-                                className="adm-btn danger"
-                                onClick={() => deactivateMenuEntry('item', m.id)}
-                                disabled={!m.isActive}
+                                className={`adm-btn ${m.isActive ? 'danger' : 'success'}`}
+                                onClick={() => void toggleMenuEntryActive('item', m.id, !m.isActive)}
+                                disabled={menuLoading}
                               >
-                                Deactivate
+                                {m.isActive ? 'Deactivate' : 'Activate'}
                               </button>
                             </div>
                           </div>
@@ -4842,11 +5097,11 @@ export function AdminDashboardPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="adm-btn danger"
-                                  onClick={() => deactivateMenuEntry('tray', t.id)}
-                                  disabled={!t.isActive}
+                                  className={`adm-btn ${t.isActive ? 'danger' : 'success'}`}
+                                  onClick={() => void toggleMenuEntryActive('tray', t.id, !t.isActive)}
+                                  disabled={menuLoading}
                                 >
-                                  Deactivate
+                                  {t.isActive ? 'Deactivate' : 'Activate'}
                                 </button>
                               </div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
@@ -5254,6 +5509,111 @@ export function AdminDashboardPage() {
                         )}
                       </div>
                     )}
+
+                    {/* ── Returns / check-in desk ───────────────────────────────
+                        Grouped by event date so a day's returns get processed together
+                        after the event. Actions offered per row come from
+                        DELIVERY_NEXT_STATUSES, which mirrors the backend state machine —
+                        the UI never offers a move the server would reject. */}
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem', marginTop: '1.2rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.8rem', marginBottom: '1rem' }}>
+                        <div>
+                          <FieldLabel text="Returns / Check-in" />
+                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
+                            Outstanding Lines ({outstandingRentals.length})
+                          </h3>
+                        </div>
+                        <button type="button" className="adm-btn outline" onClick={() => void loadOutstandingRentals()} disabled={returnsLoading}>
+                          {returnsLoading ? 'Refreshing…' : '↻ Refresh'}
+                        </button>
+                      </div>
+
+                      {returnsFeedback && (
+                        <div style={{ marginBottom: '0.9rem', padding: '0.7rem 0.9rem', borderRadius: 'var(--r-md)', background: 'var(--bg-subtle)', border: '1px solid var(--border)' }}>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--primary)' }}>{returnsFeedback}</div>
+                        </div>
+                      )}
+
+                      {returnsError && (
+                        <div style={{ marginBottom: '0.9rem', padding: '0.7rem 0.9rem', borderRadius: 'var(--r-md)', background: 'var(--bg-subtle)', border: '1px solid var(--danger)' }}>
+                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--danger)' }}>{returnsError}</div>
+                        </div>
+                      )}
+
+                      {returnsLoading && outstandingRentals.length === 0 ? (
+                        <div aria-hidden="true">
+                          {[0, 1, 2].map((i) => (
+                            <div key={i} className="adm-skel" style={{ height: '1rem', width: `${70 - i * 10}%`, marginBottom: '0.9rem' }} />
+                          ))}
+                        </div>
+                      ) : outstandingRentals.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          Nothing outstanding — every rental line on a confirmed booking is either back in stock or not yet due out.
+                        </p>
+                      ) : (
+                        outstandingByDate.map(([eventDate, lines]) => (
+                          <div key={eventDate} style={{ marginBottom: '1.4rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)', marginBottom: '0.4rem' }}>
+                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                {fmtDate(eventDate)}
+                              </span>
+                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 400, color: 'var(--text-dim)' }}>
+                                {lines.length} line{lines.length === 1 ? '' : 's'}
+                              </span>
+                            </div>
+
+                            {lines.map((line) => {
+                              const style = DELIVERY_STATUS_STYLE[line.deliveryStatus];
+                              const busy = returnsBusyId === line.rentalId;
+                              return (
+                                <div
+                                  key={line.rentalId}
+                                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.8rem', padding: '0.7rem 0', borderBottom: '1px solid var(--border)', opacity: busy ? 0.55 : 1 }}
+                                >
+                                  <div style={{ minWidth: 220, flex: '1 1 260px' }}>
+                                    <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.94rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                                      {line.quantity} × {line.itemName}
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                                      {line.customerName}
+                                      {line.endDate && line.endDate !== line.eventDate ? ` · through ${fmtDate(line.endDate)}` : ''}
+                                    </div>
+                                    {line.damageNote && (
+                                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--danger)', marginTop: '0.2rem' }}>
+                                        ⚠ {line.damageNote}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <StatusBadge label={style.label} color={style.color} />
+
+                                  <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                                    {DELIVERY_NEXT_STATUSES[line.deliveryStatus].map((next) => (
+                                      <button
+                                        key={next}
+                                        type="button"
+                                        className={`adm-btn ${next === 'Returned' ? 'success' : next === 'Damaged' ? 'danger' : 'info'}`}
+                                        disabled={busy}
+                                        onClick={() => {
+                                          if (next === 'Damaged') {
+                                            setDamageNote('');
+                                            setDamageTarget(line);
+                                          } else {
+                                            void applyDeliveryStatus(line, next);
+                                          }
+                                        }}
+                                      >
+                                        {DELIVERY_ACTION_LABEL[next]}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))
+                      )}
+                    </div>
 
                     {rentalFormOpen && (
                       <div className="adm-modal-overlay" onClick={closeRentalForm}>

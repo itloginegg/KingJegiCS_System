@@ -22,4 +22,9 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\System_ApiTest.Application\System_ApiTest.Application.csproj" />
+    <ProjectReference Include="..\System_ApiTest.Infrastructure\System_ApiTest.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>

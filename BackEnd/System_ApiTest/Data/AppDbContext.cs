@@ -6,7 +6,7 @@ using System_ApiTest.Models;
 
 namespace System_ApiTest.Data
 {
-    public class AppDbContext : DbContext
+    public class AppDbContext : DbContext, System_ApiTest.Application.Common.Interfaces.IApplicationDbContext
     {
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -66,9 +66,22 @@ namespace System_ApiTest.Data
         // Customer reviews (moderated before they go public)
         public DbSet<Testimonial> Testimonials => Set<Testimonial>();
 
+        // Entities owned by the Clean Architecture layers (System_ApiTest.Domain).
+        // These are mapped by IEntityTypeConfiguration classes in System_ApiTest.Infrastructure,
+        // not by data annotations, and are reached through MediatR rather than a Controller.
+        public DbSet<System_ApiTest.Domain.Entities.Venue> Venues
+            => Set<System_ApiTest.Domain.Entities.Venue>();
+
         protected override void OnModelCreating(ModelBuilder b)
         {
             base.OnModelCreating(b);
+
+            // Fluent API mappings for entities owned by the new Clean Architecture layers.
+            // Those entities live in System_ApiTest.Domain and carry no EF Core attributes,
+            // so their IEntityTypeConfiguration<T> classes in Infrastructure map them instead.
+            // Existing models below keep using data annotations + the inline config here.
+            b.ApplyConfigurationsFromAssembly(
+                System_ApiTest.Infrastructure.DependencyInjection.ConfigurationsAssembly);
 
             // ---------------- RevokedToken (JWT denylist) ----------------
             b.Entity<Revokedtoken>().HasIndex(t => t.ExpiresAt);
