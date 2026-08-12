@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -56,6 +57,29 @@ namespace System_ApiTest.Services
     }
 
     /// <summary>
+    /// One event from a streaming chat turn (see ChatStreamAsync). Deliberately narrower
+    /// than the voice layer's VoiceChunk: this service knows nothing about audio, so the
+    /// hub is free to compose these with TTS however it likes.
+    /// </summary>
+    /// <param name="Kind">"delta" | "status" | "completed".</param>
+    /// <param name="Text">Reply fragment (delta), progress note (status), or full reply (completed).</param>
+    public record AssistantStreamEvent(
+        string Kind,
+        string? Text = null,
+        Guid? ConversationId = null,
+        IReadOnlyList<ProposalDto>? Proposals = null)
+    {
+        public const string KindDelta = "delta";
+        public const string KindStatus = "status";
+        public const string KindCompleted = "completed";
+
+        public static AssistantStreamEvent Delta(string text) => new(KindDelta, text);
+        public static AssistantStreamEvent Status(string text) => new(KindStatus, text);
+        public static AssistantStreamEvent Completed(Guid id, string reply, IReadOnlyList<ProposalDto>? proposals)
+            => new(KindCompleted, reply, id, proposals);
+    }
+
+    /// <summary>
     /// Multi-turn virtual assistant backed by Gemini's generateContent endpoint with
     /// server-side tool calling. THE GOLDEN RULE holds: tools are read/propose only — the
     /// model never writes a booking or moves money, and every proposal comes from Slice
@@ -95,6 +119,14 @@ namespace System_ApiTest.Services
         }
 
         public bool Enabled => _options.Enabled;
+
+        /// <summary>
+        /// Enabled AND holding an API key. Distinct from <see cref="Enabled"/>, which is
+        /// only the config switch: without a key the service is switched on but every call
+        /// throws AssistantUnavailableException, so callers deciding whether to OFFER the
+        /// assistant (rather than whether it's turned on) must use this.
+        /// </summary>
+        public bool IsConfigured => _options.IsConfigured;
         public int MaxMessagesPerHour => _options.MaxMessagesPerHour;
 
         private const int MaxToolIterations = 5;
@@ -214,6 +246,141 @@ namespace System_ApiTest.Services
             throw new AssistantUnavailableException(
                 "The assistant took too many steps to answer. Please try the budget form.");
         }
+
+        /// <summary>
+        /// Streaming twin of <see cref="ChatAsync"/>, for the voice pipeline. Same tools,
+        /// same golden rule, same normalized history — the only difference is that the
+        /// reply arrives in fragments so the caller can start speaking the first sentence
+        /// while the rest is still being generated. That pipelining is what makes the
+        /// sub-1.5s round trip reachable; waiting for the full reply would cost ~1s alone.
+        ///
+        /// <para>
+        /// ChatAsync is left completely untouched: the existing text widget keeps using it,
+        /// so a bug here cannot regress text chat.
+        /// </para>
+        ///
+        /// <para>
+        /// On tool use, Gemini often emits a short preamble ("Let me check that…") before
+        /// the functionCall parts. We stream that preamble immediately — it is genuinely
+        /// useful cover for the tool round trip — and fold it into the single Model text
+        /// turn persisted at the end. History therefore keeps ChatAsync's exact shape
+        /// (User → Model(calls) → Tool(results) → Model(text)), so replay is unaffected.
+        /// </para>
+        /// </summary>
+        public async IAsyncEnumerable<AssistantStreamEvent> ChatStreamAsync(
+            Guid customerId, Guid? conversationId, string message,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            if (!_options.IsConfigured)
+                throw new AssistantUnavailableException(
+                    "The assistant is currently unavailable. Please use the budget form to get suggestions.");
+
+            Conversation conversation;
+            List<Conversationmessage> history;
+
+            if (conversationId is not null)
+            {
+                conversation = await _db.Conversations.FirstOrDefaultAsync(c => c.Id == conversationId, ct)
+                    ?? throw new KeyNotFoundException("Conversation not found.");
+                if (conversation.CustomerId != customerId)
+                    throw new KeyNotFoundException("Conversation not found.");   // don't leak existence
+                history = await _db.ConversationMessages
+                    .Where(m => m.ConversationId == conversation.Id)
+                    .OrderBy(m => m.Ordinal)
+                    .ToListAsync(ct);
+            }
+            else
+            {
+                conversation = new Conversation { CustomerId = customerId, Title = Truncate(message, 200) };
+                _db.Conversations.Add(conversation);
+                history = new List<Conversationmessage>();
+            }
+
+            var seedContext = history.Count > 0
+                              && history[0].Role == ConversationRole.Model
+                              && history[0].ToolPayloadJson is null
+                ? history[0].Text
+                : null;
+
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            var contents = BuildContents(history, message);
+            var newTurns = new List<Conversationmessage> { Turn(ConversationRole.User, text: message) };
+            var proposals = new List<ProposalDto>();
+            var spoken = new StringBuilder();   // everything the customer actually hears
+
+            for (var iteration = 0; iteration < MaxToolIterations; iteration++)
+            {
+                var calls = new List<(string Name, JsonNode? Args, string? ThoughtSignature)>();
+
+                await foreach (var part in StreamGeminiAsync(contents, seedContext, ct))
+                {
+                    if (part.CallName is not null)
+                    {
+                        calls.Add((part.CallName, part.CallArgs, part.ThoughtSignature));
+                    }
+                    else if (!string.IsNullOrEmpty(part.Text))
+                    {
+                        spoken.Append(part.Text);
+                        yield return AssistantStreamEvent.Delta(part.Text);
+                    }
+                }
+
+                if (calls.Count == 0)
+                {
+                    var reply = spoken.ToString().Trim();
+                    if (reply.Length == 0)
+                        reply = "Sorry, I couldn't produce a response. Please try the budget form.";
+
+                    newTurns.Add(Turn(ConversationRole.Model, text: reply));
+                    await PersistAsync(conversation, newTurns, ct);
+                    yield return AssistantStreamEvent.Completed(
+                        conversation.Id, reply, proposals.Count > 0 ? proposals : null);
+                    yield break;
+                }
+
+                // Identical bookkeeping to ChatAsync — including re-emitting each call's
+                // opaque thoughtSignature verbatim, which Gemini 3.x requires.
+                var callsArray = new JsonArray();
+                foreach (var call in calls)
+                {
+                    var callObj = new JsonObject
+                    {
+                        ["name"] = call.Name,
+                        ["args"] = call.Args?.DeepClone() ?? new JsonObject()
+                    };
+                    if (call.ThoughtSignature is not null)
+                        callObj["thoughtSignature"] = call.ThoughtSignature;
+                    callsArray.Add(callObj);
+                }
+                contents.Add(ModelFunctionCallContent(callsArray));
+                newTurns.Add(Turn(ConversationRole.Model, toolPayloadJson: callsArray.ToJsonString()));
+
+                yield return AssistantStreamEvent.Status(StatusFor(calls[0].Name));
+
+                var resultsArray = new JsonArray();
+                foreach (var call in calls)
+                {
+                    var response = await ExecuteToolAsync(customerId, call.Name, call.Args, proposals, today, ct);
+                    resultsArray.Add(new JsonObject { ["name"] = call.Name, ["response"] = response });
+                }
+                contents.Add(ToolResponseContent(resultsArray));
+                newTurns.Add(Turn(ConversationRole.Tool, toolPayloadJson: resultsArray.ToJsonString()));
+            }
+
+            throw new AssistantUnavailableException(
+                "The assistant took too many steps to answer. Please try the budget form.");
+        }
+
+        /// <summary>Customer-facing progress line while a tool runs, so the UI isn't silent.</summary>
+        private static string StatusFor(string toolName) => toolName switch
+        {
+            "check_date_availability" => "Checking that date…",
+            "suggest_within_budget"   => "Working out some options…",
+            "get_catalog_summary"     => "Looking through the menu…",
+            "get_my_bookings"         => "Pulling up your bookings…",
+            "get_payment_schedule"    => "Checking your payment schedule…",
+            _                         => "One moment…"
+        };
 
         /// <summary>
         /// Generates a short, warm proactive nudge (1–2 sentences) from a factual context
@@ -416,6 +583,123 @@ namespace System_ApiTest.Services
             }
 
             return (text.ToString(), calls);
+        }
+
+        /// <summary>One part out of the SSE stream: either a text fragment or a function call.</summary>
+        private readonly record struct GeminiStreamPart(
+            string? Text, string? CallName, JsonNode? CallArgs, string? ThoughtSignature);
+
+        /// <summary>
+        /// Same request as <see cref="CallGeminiAsync"/>, but against
+        /// <c>:streamGenerateContent?alt=sse</c>, yielding parts as they arrive.
+        ///
+        /// <para>
+        /// No 429 retry here, unlike PostGenerateContentAsync. That retry costs a 2s
+        /// backoff, which would blow the voice latency budget outright — and voice already
+        /// has a better answer for a throttled provider than waiting: fail fast and let the
+        /// widget drop to text, where the retrying path still applies.
+        /// </para>
+        /// </summary>
+        private async IAsyncEnumerable<GeminiStreamPart> StreamGeminiAsync(
+            JsonArray contents, string? seedContext, [EnumeratorCancellation] CancellationToken ct)
+        {
+            var system = SystemPrompt;
+            if (!string.IsNullOrWhiteSpace(seedContext))
+                system += "\n\nEarlier you proactively messaged this customer: \"" + seedContext.Trim() +
+                          "\" Continue that conversation and help them.";
+
+            var request = new JsonObject
+            {
+                ["systemInstruction"] = new JsonObject
+                {
+                    ["parts"] = new JsonArray(new JsonObject { ["text"] = system })
+                },
+                ["contents"] = contents.DeepClone(),
+                ["tools"] = JsonNode.Parse(ToolDeclarationsJson),
+                ["generationConfig"] = new JsonObject { ["maxOutputTokens"] = _options.MaxOutputTokens }
+            };
+
+            using var httpRequest = new HttpRequestMessage(
+                HttpMethod.Post, $"models/{_options.Model}:streamGenerateContent?alt=sse")
+            {
+                Content = new StringContent(request.ToJsonString(), Encoding.UTF8, "application/json")
+            };
+
+            HttpResponseMessage response;
+            try
+            {
+                // ResponseHeadersRead is essential: the default buffers the ENTIRE response
+                // before returning, which would silently undo the streaming we came for.
+                response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new AssistantUnavailableException("The assistant service is unreachable.", ex);
+            }
+
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync(ct);
+                    _logger.LogWarning("Gemini stream returned {Status}: {Body}", (int)response.StatusCode, body);
+                    throw new AssistantUnavailableException(
+                        (int)response.StatusCode == 429
+                            ? "The assistant is busy right now (rate limited). Please try again shortly."
+                            : $"The assistant service returned an error ({(int)response.StatusCode}).");
+                }
+
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+
+                while (await reader.ReadLineAsync(ct) is { } line)
+                {
+                    // SSE framing: blank lines separate events, and we only care about `data:`.
+                    if (!line.StartsWith("data:", StringComparison.Ordinal))
+                        continue;
+
+                    var json = line[5..].Trim();
+                    if (json.Length == 0 || json == "[DONE]")
+                        continue;
+
+                    foreach (var part in ParseStreamChunk(json))
+                        yield return part;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pulls parts out of one SSE frame. Tolerates frames with no candidates — the
+        /// final frame commonly carries only usageMetadata — and skips unparseable ones
+        /// rather than failing the turn.
+        /// </summary>
+        private static IEnumerable<GeminiStreamPart> ParseStreamChunk(string json)
+        {
+            var parts = TryParseJson(json)?["candidates"]?[0]?["content"]?["parts"]?.AsArray();
+            if (parts is null)
+                yield break;
+
+            foreach (var part in parts)
+            {
+                if (part?["functionCall"] is JsonNode fc)
+                {
+                    yield return new GeminiStreamPart(
+                        null,
+                        fc["name"]?.GetValue<string>() ?? "",
+                        fc["args"]?.DeepClone(),
+                        part["thoughtSignature"]?.GetValue<string>());
+                }
+                else if (part?["text"] is JsonNode t)
+                {
+                    yield return new GeminiStreamPart(t.GetValue<string>(), null, null, null);
+                }
+            }
+        }
+
+        private static JsonNode? TryParseJson(string json)
+        {
+            try { return JsonNode.Parse(json); }
+            catch (JsonException) { return null; }
         }
 
         // ---------------------------------------------------------------------------

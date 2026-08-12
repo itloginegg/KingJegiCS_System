@@ -11,6 +11,8 @@ import { BookingPage } from '../pages/BookingPage';
 import { CustomerDashboardPage } from '../pages/CustomerDashboardPage';
 import { AdminDashboardPage } from '../pages/AdminDashboardPage';
 import { PaymentReturnPage } from '../pages/PaymentReturnPage';
+import { AvatarLabPage } from '../pages/AvatarLabPage';
+import { VoiceLabPage } from '../pages/VoiceLabPage';
 
 export function AppRoutes() {
   return (
@@ -25,6 +27,17 @@ export function AppRoutes() {
           <Route path="/book" element={<BookingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+
+          {/* Dev-only avatar harness. The real avatar sits behind a customer login inside
+              a floating widget driven by paid TTS, which makes it impractical to tune
+              during development; this drives the same component from synthetic cues.
+              Stripped from production builds by the DEV guard. */}
+          {import.meta.env.DEV && (
+            <Route path="/__avatar-lab" element={<AvatarLabPage />} />
+          )}
+          {import.meta.env.DEV && (
+            <Route path="/__voice-lab" element={<VoiceLabPage />} />
+          )}
 
           {/* Customer-only area — LoginPage routes customers here after sign-in */}
           <Route element={<ProtectedRoute allow={['customer']} />}>

@@ -21,12 +21,27 @@ namespace System_ApiTest.Controllers
     {
         private readonly Assistantservice _assistant;
         private readonly Airatelimiter _rateLimiter;
+        private readonly Speechservice _speech;
 
-        public AssistantController(Assistantservice assistant, Airatelimiter rateLimiter)
+        public AssistantController(Assistantservice assistant, Airatelimiter rateLimiter, Speechservice speech)
         {
             _assistant = assistant;
             _rateLimiter = rateLimiter;
+            _speech = speech;
         }
+
+        /// <summary>
+        /// What the voice pipeline can actually do right now, so the widget can decide
+        /// between server audio, browser-local speech, or hiding the mic entirely —
+        /// instead of opening a hub connection only to discover it's unconfigured.
+        /// </summary>
+        [HttpGet("voice/capabilities")]
+        public IActionResult VoiceCapabilities() => Ok(new VoiceCapabilitiesDto(
+            // IsConfigured, not Enabled: Enabled defaults to true even with no API key, so
+            // reporting it here offered a mic that failed on every single turn.
+            VoiceAvailable: _assistant.IsConfigured,
+            ServerTtsAvailable: _speech.IsConfigured,
+            SampleRate: Speechservice.SampleRate));
 
         /// <summary>Sends one message. Omit conversationId to start a new thread; include it to continue.</summary>
         [HttpPost("chat")]

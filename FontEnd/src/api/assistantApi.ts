@@ -154,3 +154,21 @@ export function listConversations(token: string): Promise<ConversationSummary[]>
 export function getConversation(token: string, id: string): Promise<ConversationDetail> {
   return request<ConversationDetail>(`/api/assistant/conversations/${id}`, 'GET', token);
 }
+
+/** Matches VoiceCapabilitiesDto. */
+export interface VoiceCapabilities {
+  /** False when the assistant itself is unconfigured — voice is pointless then. */
+  voiceAvailable: boolean;
+  /** False when no Azure Speech key is present; the client should speak replies locally instead. */
+  serverTtsAvailable: boolean;
+  /** Sample rate of the PCM the server streams, needed to build AudioBuffers. */
+  sampleRate: number;
+}
+
+/**
+ * Ask what the voice pipeline can do before opening a hub connection, so the widget can
+ * hide the mic entirely rather than failing after the user clicks it.
+ */
+export function getVoiceCapabilities(token: string): Promise<VoiceCapabilities> {
+  return request<VoiceCapabilities>('/api/assistant/voice/capabilities', 'GET', token);
+}

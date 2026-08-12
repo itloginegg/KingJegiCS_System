@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { readSession } from '../../lib/tokenStorage';
-import { sendChat, listConversations, getConversation, AssistantApiError } from '../../api/assistantApi';
+import {
+  sendChat, listConversations, getConversation, getVoiceCapabilities, AssistantApiError,
+} from '../../api/assistantApi';
+import type { VoiceCapabilities } from '../../api/assistantApi';
 import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from '../../api/supportApi';
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
+import { useVoiceSession, voiceInputSupported } from '../../hooks/useVoiceSession';
+import type { VoiceState } from '../../hooks/useVoiceSession';
+import { AvatarStage } from '../avatar/AvatarStage';
 
 /*
  * Global floating assistant (item 3). Mounted on every page. Logged-in customers get
@@ -15,10 +21,8 @@ import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
 
 type ChatMsg = { id: string; role: 'me' | 'assistant'; text: string; proposals?: Proposal[] };
 
-/* Web Speech API (item 3): browser-native, no dependencies. Feature-detected so the
-   controls simply don't render where unsupported (Firefox STT, some mobile). */
-const SpeechRecognitionCtor: any =
-  typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
+/* Read-aloud for TYPED replies. Separate from voice mode below, which is a full spoken
+   conversation over /hubs/voice — this is just the browser reading a message you typed. */
 const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
 /**
@@ -99,37 +103,63 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   const [showBudgetCta, setShowBudgetCta] = useState(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  /* voice */
-  const [listening, setListening] = useState(false);
   const [speak, setSpeak] = useState(false);
-  const recognitionRef = useRef<any>(null);
 
   const speakText = (text: string) => {
     if (!ttsSupported) return;
     try { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'en-PH'; window.speechSynthesis.speak(u); } catch { /* ignore */ }
   };
 
-  const toggleMic = () => {
-    if (!SpeechRecognitionCtor) return;
-    if (listening) { recognitionRef.current?.stop(); return; }
-    const rec = new SpeechRecognitionCtor();
-    rec.lang = 'en-PH';
-    rec.interimResults = true;
-    rec.continuous = false;
-    rec.onresult = (e: any) => {
-      const transcript = Array.from(e.results).map((r: any) => r[0].transcript).join('');
-      setInput(transcript);
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recognitionRef.current = rec;
-    setListening(true);
-    rec.start();
-  };
+  /* ── Voice mode ──────────────────────────────────────────────────────────
+     Purely additive: the typed send() path below is untouched, and voice turns
+     land in the same `messages` array so the two interleave in one thread. */
 
-  // Stop speech/mic if the panel unmounts.
+  const [caps, setCaps] = useState<VoiceCapabilities | null>(null);
+
+  // Which assistant bubble the in-flight spoken reply is streaming into.
+  const streamingIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const session = readSession();
+    if (!session || !voiceInputSupported) return;
+    getVoiceCapabilities(session.token)
+      .then(setCaps)
+      .catch(() => { /* voice simply stays hidden */ });
+  }, []);
+
+  const upsertAssistant = (id: string, text: string, proposals?: Proposal[] | null) =>
+    setMessages((prev) => (prev.some((m) => m.id === id)
+      ? prev.map((m) => (m.id === id ? { ...m, text, proposals: proposals ?? m.proposals } : m))
+      : [...prev, { id, role: 'assistant', text, proposals: proposals ?? undefined }]));
+
+  const voice = useVoiceSession({
+    sampleRate: caps?.sampleRate ?? 24000,
+    serverTtsAvailable: caps?.serverTtsAvailable ?? false,
+    conversationId,
+    onUserUtterance: (text) => {
+      setMessages((prev) => [...prev, { id: `me-${Date.now()}`, role: 'me', text }]);
+      streamingIdRef.current = `a-${Date.now()}`;
+      setShowBudgetCta(false);
+    },
+    onReplyProgress: (replySoFar) => {
+      if (streamingIdRef.current) upsertAssistant(streamingIdRef.current, replySoFar);
+    },
+    onReplyDone: (cid, reply, proposals) => {
+      setConversationId(cid);
+      upsertAssistant(streamingIdRef.current ?? `a-${Date.now()}`, reply, proposals);
+      streamingIdRef.current = null;
+    },
+    onFailure: (message) => {
+      streamingIdRef.current = null;
+      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: message }]);
+    },
+  });
+
+  // Voice is offered only when the browser can transcribe AND the assistant is configured.
+  const voiceOffered = voiceInputSupported && caps?.voiceAvailable === true;
+
+  // Stop read-aloud if the panel unmounts. (The voice session tears itself down.)
   useEffect(() => () => {
-    recognitionRef.current?.stop?.();
     if (ttsSupported) window.speechSynthesis.cancel();
   }, []);
 
@@ -197,6 +227,17 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   return (
     <div className="cw-panel" role="dialog" aria-label="King Jegi Assistant">
       <ProposalCardStyles />
+
+      {/* Mounted only in voice mode: a typed conversation shouldn't pay for a WebGL
+          context, and the 3D bundle isn't fetched until this first renders. */}
+      {voice.active && (
+        <AvatarStage
+          visemesRef={voice.visemesRef}
+          getPlaybackMs={voice.getPlaybackMs}
+          state={voice.state}
+        />
+      )}
+
       <div className="cw-head">
         <div className="cw-glyph">KJ</div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -238,15 +279,48 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
         <div ref={endRef} />
       </div>
 
+      {voice.active && <VoiceBar state={voice.state} interim={voice.interim} status={voice.status} />}
+
       <form onSubmit={send} className="cw-foot">
-        {SpeechRecognitionCtor && (
-          <button type="button" className={`cw-icon${listening ? ' on' : ''}`} onClick={toggleMic} aria-label={listening ? 'Stop voice input' : 'Start voice input'} title="Voice input">
+        {voiceOffered && (
+          <button
+            type="button"
+            className={`cw-icon${voice.active ? ' on' : ''}`}
+            onClick={() => (voice.active ? voice.stop() : void voice.start())}
+            aria-label={voice.active ? 'End voice conversation' : 'Start a voice conversation'}
+            aria-pressed={voice.active}
+            title={voice.active
+              ? 'End voice conversation'
+              : 'Talk to the assistant. Speech is transcribed by your browser, which sends audio to Google.'}
+          >
             🎤
           </button>
         )}
-        <input className="cw-input" placeholder={listening ? 'Listening…' : 'Write a message…'} value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Message input" />
+        <input className="cw-input" placeholder={voice.active ? 'Listening — or type instead…' : 'Write a message…'} value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Message input" />
         <button type="submit" className="cw-btn primary" disabled={sending || !input.trim()}>{sending ? '…' : 'Send'}</button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * The voice session's status strip. Shows which half of the conversation is active, plus
+ * the live partial transcript — without it, the pause between speaking and hearing a reply
+ * reads as a broken mic.
+ */
+function VoiceBar({ state, interim, status }: { state: VoiceState; interim: string; status: string }) {
+  const label: Record<VoiceState, string> = {
+    idle: '',
+    connecting: 'Connecting…',
+    listening: 'Listening…',
+    thinking: status || 'Thinking…',
+    speaking: 'Speaking — say something to interrupt',
+  };
+
+  return (
+    <div className={`cw-voicebar ${state}`} role="status" aria-live="polite">
+      <span className="cw-voicedot" aria-hidden="true" />
+      <span className="cw-voicelabel">{interim || label[state]}</span>
     </div>
   );
 }
@@ -511,6 +585,39 @@ function ChatStyles() {
       .cw-icon.on { background: var(--primary-muted); border-color: var(--primary); }
       .cw-icon.on { animation: cwPulse 1.2s ease-in-out infinite; }
       @keyframes cwPulse { 0%,100% { box-shadow: 0 0 0 0 var(--primary-muted); } 50% { box-shadow: 0 0 0 4px var(--primary-muted); } }
+
+      /* ── 3D avatar stage ── */
+      .cw-avatar {
+        height: 175px; width: 100%; flex-shrink: 0;
+        background: radial-gradient(120% 90% at 50% 15%, var(--accent-muted) 0%, var(--surface) 70%);
+        border-bottom: 1px solid var(--border);
+        cursor: default;
+      }
+      .cw-avatar canvas { display: block; }
+      .cw-avatar-fallback {
+        height: 175px; width: 100%; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(120% 90% at 50% 15%, var(--accent-muted) 0%, var(--surface) 70%);
+        border-bottom: 1px solid var(--border);
+      }
+      .cw-avatar-fallback .cw-glyph { width: 56px; height: 56px; font-size: 1.35rem; }
+
+      /* ── voice session status strip ── */
+      .cw-voicebar {
+        display: flex; align-items: center; gap: 0.5rem;
+        padding: 0.45rem 1rem; border-top: 1px solid var(--border);
+        background: var(--bg-subtle);
+        font-family: var(--font-body); font-size: 0.72rem; color: var(--text-muted);
+      }
+      .cw-voicelabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cw-voicedot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-dim); }
+      .cw-voicebar.listening .cw-voicedot { background: var(--primary); animation: cwPulseDot 1.1s ease-in-out infinite; }
+      .cw-voicebar.thinking .cw-voicedot { background: var(--accent); animation: cwPulseDot 0.7s ease-in-out infinite; }
+      .cw-voicebar.speaking .cw-voicedot { background: var(--accent); }
+      @keyframes cwPulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
+      @media (prefers-reduced-motion: reduce) {
+        .cw-voicebar .cw-voicedot, .cw-icon.on { animation: none; }
+      }
     `}</style>
   );
 }
