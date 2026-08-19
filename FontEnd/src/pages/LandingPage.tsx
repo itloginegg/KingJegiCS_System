@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getCalendarDays, getDayTimeSlots, type DayTimeSlots } from '../api/calendarApi';
 import { getApprovedTestimonials, type PublicTestimonial } from '../api/testimonialsApi';
-import { fetchMenuItems, type AdminMenuItem } from '../api/menuAdminApi';
-import { pickFeatureOfTheDay } from '../lib/featureOfTheDay';
+import { fetchBestSeller, type AdminMenuItem } from '../api/menuAdminApi';
 import { Navbar } from '../components/landing/Navbar';
 import { ChatWidget } from '../components/landing/ChatWidget';
+import { AmbientAudio } from '../components/landing/AmbientAudio';
 
 /** The paths BookingPage can be opened straight into from the reserve modal. */
 type BookingPreset = 'event' | 'rentals' | 'plan';
@@ -681,26 +681,29 @@ export function LandingPage() {
   const firstWeekday = getFirstDayOfMonth(calYear, calMonth);
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
 
-  /* Today's Feature — a real dish off /api/Menuitems rather than hardcoded copy.
-     `todayISO` is the local calendar day, so the pick holds until midnight. */
+  /* Best Seller — the top-selling dish of the fortnight, ranked server-side.
+     Replaces the old client-side date hash, which rotated through the catalog and had
+     nothing to do with sales. The window is anchored to a fixed epoch on the server so
+     every visitor sees the same dish and it turns over on a defined boundary rather
+     than drifting per-browser. */
   const [feature, setFeature] = useState<AdminMenuItem | null>(null);
   const [featureLoading, setFeatureLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    // The catalog GET is anonymous, so no token here.
-    fetchMenuItems('')
-      .then((items) => {
-        if (!cancelled) setFeature(pickFeatureOfTheDay(items, todayISO));
+    fetchBestSeller()
+      .then((best) => {
+        if (!cancelled) setFeature(best?.item ?? null);
       })
       .catch(() => {
+        // The section is a teaser; a failure just falls back to the generic copy below.
         if (!cancelled) setFeature(null);
       })
       .finally(() => {
         if (!cancelled) setFeatureLoading(false);
       });
     return () => { cancelled = true; };
-  }, [todayISO]);
+  }, []);
 
   /* Real availability for the month on screen. Dates the backend has no row for have
      never been booked, so a miss simply means "open". A failed fetch leaves the map
@@ -1699,7 +1702,7 @@ export function LandingPage() {
                     color: 'rgba(255,255,255,0.55)', display: 'block', marginBottom: '0.5rem',
                   }}
                 >
-                  Today's Feature
+                  Best Seller
                 </span>
                 <h3
                   style={{
@@ -1719,7 +1722,7 @@ export function LandingPage() {
                   }}
                 >
                   {featureLoading
-                    ? 'Picking today’s dish…'
+                    ? 'Finding this fortnight’s favourite…'
                     : feature
                       ? feature.description
                       : 'Freshly prepared Filipino classics, made to order.'}
@@ -2545,6 +2548,7 @@ export function LandingPage() {
         </div>
       )}
 
+      <AmbientAudio />
       <ChatWidget />
     </>
   );

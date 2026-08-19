@@ -97,7 +97,10 @@ namespace System_ApiTest.Services
             string? contactNumber = null,
             // Defaulted so the customer-facing callers (and Suggestionservice's
             // materialize) keep working unchanged; only the admin path passes WalkIn.
-            BookingSource source = BookingSource.Customer)
+            BookingSource source = BookingSource.Customer,
+            // Null means "no event details supplied" — valid for a walk-in that is so
+            // far only a date and an event type. ApplyTo drops whatever doesn't fit.
+            BookingEventDetails? details = null)
         {
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
@@ -192,6 +195,10 @@ namespace System_ApiTest.Services
                 Source = source,
                 // Status = Draft, DepositStatus = Unpaid, TotalAmount = 0 by default.
             };
+
+            // After `type` has been forced to null for a delivery above, so the details
+            // are dropped for exactly the bookings that can't carry them.
+            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
 
             _db.Bookings.Add(booking);
             await _db.SaveChangesAsync();
@@ -1105,7 +1112,8 @@ namespace System_ApiTest.Services
         public async Task<Booking> UpdateAsync(
             Guid bookingId, Guid? changedByAdminId,
             string bookingName, DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
-            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId, string? contactNumber)
+            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId, string? contactNumber,
+            BookingEventDetails? details = null)
         {
             if (string.IsNullOrWhiteSpace(bookingName))
                 throw new BookingRuleException("Booking name cannot be blank.");
@@ -1195,6 +1203,10 @@ namespace System_ApiTest.Services
             booking.ContactNumber = contactNumber?.Trim();
             booking.GuestCount = guestCount;
             booking.MenuPackageId = menuPackageId;
+
+            // Keyed on the NEW event type, so an edit that switches type clears the
+            // details belonging to the old one rather than orphaning them.
+            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();

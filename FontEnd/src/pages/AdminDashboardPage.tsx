@@ -143,6 +143,7 @@ import {
 } from '../api/announcementsApi';
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
 import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
+import EventResourcesModal from '../components/admin/EventResourcesModal';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1362,6 +1363,8 @@ export function AdminDashboardPage() {
 
   /* internal staff notes — one open editor at a time, keyed by booking id */
   const [noteResId, setNoteResId] = useState<string | null>(null);
+  /** Booking whose Event Resources modal is open, or null. Mirrors noteResId. */
+  const [resourcesResId, setResourcesResId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
 
@@ -2911,6 +2914,33 @@ export function AdminDashboardPage() {
         />
       )}
 
+      {/* Event resource planning — furniture, service-ware and staff counts. Separate
+          from DraftItemsEditor above: that one adds PRICED lines and is Draft-only,
+          this one is operational and works on a Confirmed booking. */}
+      {resourcesResId && (() => {
+        const target = reservations.find((r) => r.id === resourcesResId);
+        // The row could have gone (a refresh mid-modal); close rather than render an
+        // allocation form with no booking behind it.
+        if (!target) return null;
+        return (
+          <EventResourcesModal
+            bookingId={target.id}
+            eventType={target.eventType}
+            guestCount={target.guestCount}
+            bookingName={target.bookingName}
+            notify={notify}
+            // Completed is a historical record: viewable so staff can check what was
+            // sent, but not editable. The server would still accept a write (it only
+            // refuses Cancelled) — this is a product decision enforced in the UI.
+            readOnly={target.status === 'Completed'}
+            onClose={() => setResourcesResId(null)}
+            // Refetch so the row's button reflects the saved plan, mirroring how
+            // DraftItemsEditor's onChanged reloads after a change.
+            onSaved={() => { void loadBookings(); }}
+          />
+        );
+      })()}
+
       {/* ══════════ INVOICE VIEW ══════════
           Shows the invoice Submit already issued. Line descriptions come from the
           booking detail, but every figure comes from the INVOICE — those are the
@@ -3075,7 +3105,10 @@ export function AdminDashboardPage() {
                       <TotalRow label="Food" value={fmt(invoice.foodTotal)} />
                       <TotalRow label="Rentals" value={fmt(invoice.rentalTotal)} />
                       <TotalRow label="Services" value={fmt(invoice.serviceTotal)} />
-                      <TotalRow label="Tax" value={fmt(invoice.taxAmount)} />
+                      {/* VAT was removed, so new invoices carry 0 and the row is noise.
+                          Invoices issued while VAT applied keep their tax and still show
+                          it — the figure is part of what the customer was billed. */}
+                      {invoice.taxAmount > 0 && <TotalRow label="Tax" value={fmt(invoice.taxAmount)} />}
                       <div style={{ borderTop: '1px solid var(--border)', marginTop: '0.35rem', paddingTop: '0.35rem' }}>
                         <TotalRow label="Grand total" value={fmt(invoice.grandTotal)} strong />
                       </div>
@@ -3324,7 +3357,7 @@ export function AdminDashboardPage() {
                     <Row label="Booking total" value={fmt(b.totalAmount)} />
                     {detailInvoice ? (
                       <>
-                        <Row label="Tax" value={fmt(detailInvoice.taxAmount)} />
+                        {detailInvoice.taxAmount > 0 && <Row label="Tax" value={fmt(detailInvoice.taxAmount)} />}
                         <Row label="Grand total" value={<span style={{ color: 'var(--primary)' }}>{fmt(detailInvoice.grandTotal)}</span>} />
                         <Row label="Paid" value={fmt(detailInvoice.paidTotal)} />
                         <Row label="Balance" value={fmt(detailInvoice.grandTotal - detailInvoice.paidTotal)} />
@@ -3451,7 +3484,9 @@ export function AdminDashboardPage() {
                   <span>Line items subtotal: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(lineTotal)}</strong></span>
                   {contractInvoice ? (
                     <>
-                      <span>Tax: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.taxAmount)}</strong></span>
+                      {contractInvoice.taxAmount > 0 && (
+                        <span>Tax: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.taxAmount)}</strong></span>
+                      )}
                       <span style={{ fontSize: '0.9rem' }}>
                         Total contract price:{' '}
                         <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(contractInvoice.grandTotal)}</strong>
@@ -4224,6 +4259,33 @@ export function AdminDashboardPage() {
                               onClick={() => (noteResId === r.id ? setNoteResId(null) : openNoteEditor(r))}
                             >
                               {r.adminNote ? '📝 Edit Note' : '📝 Add Note'}
+                            </button>
+                          )}
+                          {/* Sits BESIDE the note button rather than replacing it — the
+                              note is a separate capability (allergies, site access) with
+                              its own endpoint, and it is most useful on exactly these
+                              bookings.
+
+                              Shown from Confirmed onward, and deliberately still shown
+                              once Completed: a booking spends the rest of its life in
+                              that state, and "what did we actually send to that event?"
+                              is precisely what staff look back for. Hiding it there
+                              would make the record permanently unreachable in the UI, so
+                              Completed opens the same modal read-only instead.
+
+                              Draft/Pending are hidden because nothing is committed yet,
+                              and Cancelled because the server refuses it outright. */}
+                          {(r.status === 'Confirmed' || r.status === 'Completed') && (
+                            <button
+                              type="button"
+                              className="adm-btn outline"
+                              onClick={() => setResourcesResId(r.id)}
+                            >
+                              {/* One label, always. The affordance for "already has a
+                                  plan" is the ✓ suffix, not a different verb — the button
+                                  changing its name based on state is what made this
+                                  control hard to find across revisions. */}
+                              🧰 Allocate Resources{r.resourceAllocation?.isApproved ? ' ✓' : ''}
                             </button>
                           )}
                           <button

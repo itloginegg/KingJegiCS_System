@@ -21,12 +21,29 @@ namespace System_ApiTest.Controllers
         private readonly AppDbContext _db;
         private readonly Auditlogservice _audit;
         private readonly IWebHostEnvironment _env;
+        private readonly Bestsellerservice _bestSeller;
 
-        public MenuitemsController(AppDbContext db, Auditlogservice audit, IWebHostEnvironment env)
+        public MenuitemsController(AppDbContext db, Auditlogservice audit, IWebHostEnvironment env,
+                                   Bestsellerservice bestSeller)
         {
             _db = db;
             _audit = audit;
             _env = env;
+            _bestSeller = bestSeller;
+        }
+
+        /// <summary>
+        /// The best-selling dish of the fortnight, for the landing page feature section.
+        /// Anonymous — the landing page has no token.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpGet("best-seller")]
+        public async Task<IActionResult> GetBestSeller(CancellationToken ct)
+        {
+            // Server local date, so every visitor shares one bucket boundary rather than
+            // rolling over at their own midnight.
+            var result = await _bestSeller.GetAsync(DateOnly.FromDateTime(DateTime.Now), ct);
+            return result is null ? NoContent() : Ok(result);
         }
 
         /// <summary>List dishes. Customers see only active ones; optional package filter.</summary>

@@ -25,6 +25,10 @@ import {
   setBookingPackage,
   deleteDraftBooking,
   deleteDraftBookingOnUnload,
+  eventDetailFieldsFor,
+  uploadMotifImage,
+  uploadThemeImage,
+  validateReferenceImage,
   BookingApiError,
   type BookingCreatePayload,
   type BookingUpdatePayload,
@@ -117,6 +121,27 @@ export function BookingPage() {
   const [startTime, setStartTime] = useState('');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('');
+
+  /* Step 2 — event-type-specific details.
+     Only the set matching the chosen type is sent; the server rejects the others
+     outright (EventDetailRules), so these are cleared whenever the type changes. */
+  const [groomName, setGroomName] = useState('');
+  const [brideName, setBrideName] = useState('');
+  const [celebrantName, setCelebrantName] = useState('');
+  const [celebrantSex, setCelebrantSex] = useState('');
+  const [celebrantAge, setCelebrantAge] = useState('');
+  const [eventName, setEventName] = useState('');
+
+  /* Step 2 — motif & theme. The text saves with the booking; the images upload
+     separately once the Draft exists, because create is JSON and a file needs
+     multipart. Held as Files until then. */
+  const [motif, setMotif] = useState('');
+  const [theme, setTheme] = useState('');
+  const [motifImage, setMotifImage] = useState<File | null>(null);
+  const [themeImage, setThemeImage] = useState<File | null>(null);
+  const [motifPreview, setMotifPreview] = useState<string | null>(null);
+  const [themePreview, setThemePreview] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   /* Real availability for the chosen date, straight from the backend's calendar
      (isLocked = manually locked, or the confirmed count has reached capacity). This
@@ -373,8 +398,75 @@ export function BookingPage() {
   // must supply the fields CreateAsync requires: event type, guests, dates, and times.
   // The lead-time check joins them: a too-soon date is rejected by the API, so blocking
   // Next here gets the customer a friendlier message before they've filled in the rest.
+  /* Which detail fields the chosen type uses. 'none' covers a booking with no event
+     type at all (a food delivery), where the whole block renders nothing. */
+  const detailGroup = eventDetailFieldsFor(eventType || null);
+
+  /* Picks a reference image and swaps in a local preview.
+     Validated before upload so a 10 MB file is refused instantly rather than after
+     the round trip; the server enforces the same limits regardless. The previous
+     object URL is revoked on replace — without that, every re-pick leaks a blob for
+     the life of the page. */
+  const pickImage = (kind: 'motif' | 'theme', file: File | null) => {
+    setImageError(null);
+    const prev = kind === 'motif' ? motifPreview : themePreview;
+    if (prev) URL.revokeObjectURL(prev);
+
+    if (!file) {
+      if (kind === 'motif') { setMotifImage(null); setMotifPreview(null); }
+      else { setThemeImage(null); setThemePreview(null); }
+      return;
+    }
+
+    const problem = validateReferenceImage(file);
+    if (problem) {
+      setImageError(problem);
+      if (kind === 'motif') { setMotifImage(null); setMotifPreview(null); }
+      else { setThemeImage(null); setThemePreview(null); }
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    if (kind === 'motif') { setMotifImage(file); setMotifPreview(url); }
+    else { setThemeImage(file); setThemePreview(url); }
+  };
+
+  // Release any surviving preview URLs when the wizard unmounts.
+  useEffect(() => () => {
+    if (motifPreview) URL.revokeObjectURL(motifPreview);
+    if (themePreview) URL.revokeObjectURL(themePreview);
+    // Intentionally empty deps: this is unmount-only cleanup, and the previews are
+    // already revoked on replace by pickImage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Switching event type clears the previous type's answers.
+     Not cosmetic: the server rejects a payload carrying fields that don't belong to
+     the chosen type, so leaving a groom's name behind after switching to Birthday
+     would make Next fail with a validation error pointing at an invisible field. */
+  const chooseEventType = (value: string) => {
+    if (value === eventType) return;
+    setEventType(value);
+    setGroomName(''); setBrideName('');
+    setCelebrantName(''); setCelebrantSex(''); setCelebrantAge('');
+    setEventName('');
+  };
+
+  /* Every applicable detail field must be filled before Step 2 can advance.
+     This is a wizard-level requirement, not a server one — the API accepts a booking
+     with details still missing so that admin walk-ins (often just a date and a type
+     over the phone) aren't blocked. A customer going through the wizard, though,
+     knows these answers, so asking up front saves a follow-up call. */
+  const detailsComplete =
+    detailGroup === 'couple' ? Boolean(groomName.trim() && brideName.trim())
+      : detailGroup === 'celebrant'
+        ? Boolean(celebrantName.trim() && celebrantSex.trim() && celebrantAge.trim())
+        : detailGroup === 'named' ? Boolean(eventName.trim())
+          : true;
+
   const eventComplete =
-    eventType && guests >= 1 && eventDate && startTime && endDate && endTime && !dateTooSoon;
+    eventType && guests >= 1 && eventDate && startTime && endDate && endTime
+    && !dateTooSoon && detailsComplete;
 
   const stepLabels = useMemo(() => {
     if (serviceFlow === 'event') return ['Contact', 'Event Details', 'Package & Add‑ons', 'Review'];
@@ -465,6 +557,34 @@ export function BookingPage() {
     });
   };
 
+  /**
+   * Uploads whichever reference images are pending, then forgets them so a later
+   * re-save doesn't send the same file again.
+   *
+   * Failures here are deliberately swallowed rather than thrown: the booking itself
+   * has already been saved by this point, and blocking the customer's progress to
+   * Step 3 over an optional inspiration photo would be a worse outcome than the photo
+   * simply not being attached. The error is surfaced inline instead.
+   */
+  const uploadPendingImages = async (token: string, id: string) => {
+    try {
+      if (motifImage) {
+        await uploadMotifImage(token, id, motifImage);
+        setMotifImage(null);
+      }
+      if (themeImage) {
+        await uploadThemeImage(token, id, themeImage);
+        setThemeImage(null);
+      }
+    } catch (err) {
+      setImageError(
+        err instanceof BookingApiError
+          ? `Your booking was saved, but the reference image didn't upload: ${err.message}`
+          : "Your booking was saved, but the reference image didn't upload.",
+      );
+    }
+  };
+
   /* ── Step 2 → 3: create booking ── */
   const handleCreateBooking = async () => {
     const session = readSession();
@@ -495,6 +615,20 @@ export function BookingPage() {
       venueAddress: venueAddress || 'To be provided',
       guestCount: guests,
       contactNumber: phone || null,
+      // Only the group matching the event type. Sending a field that doesn't belong to
+      // the chosen type is a 400 from EventDetailRules, so the others go as null rather
+      // than as empty strings.
+      groomName: detailGroup === 'couple' ? groomName.trim() || null : null,
+      brideName: detailGroup === 'couple' ? brideName.trim() || null : null,
+      celebrantName: detailGroup === 'celebrant' ? celebrantName.trim() || null : null,
+      celebrantSex: detailGroup === 'celebrant' ? celebrantSex.trim() || null : null,
+      celebrantAge:
+        detailGroup === 'celebrant' && celebrantAge.trim()
+          ? Number(celebrantAge)
+          : null,
+      eventName: detailGroup === 'named' ? eventName.trim() || null : null,
+      motif: motif.trim() || null,
+      theme: theme.trim() || null,
     };
 
     try {
@@ -520,14 +654,26 @@ export function BookingPage() {
           guestCount: payload.guestCount,
           menuPackageId: currentPkgId,
           contactNumber: payload.contactNumber,
+          groomName: payload.groomName,
+          brideName: payload.brideName,
+          celebrantName: payload.celebrantName,
+          celebrantSex: payload.celebrantSex,
+          celebrantAge: payload.celebrantAge,
+          eventName: payload.eventName,
+          motif: payload.motif,
+          theme: payload.theme,
         };
         const result = await updateBooking(session.token, bookingId, updatePayload);
         setBookingResponse(result);
+        await uploadPendingImages(session.token, bookingId);
         setStep(3);
       } else {
         const result = await createBooking(session.token, payload);
         setBookingId(result.id);
         setBookingResponse(result);
+        // Only now can the images go up: they need multipart and a booking id, and
+        // the Draft that create just returned is the first point both exist.
+        await uploadPendingImages(session.token, result.id);
         setStep(3);
       }
     } catch (err) {
@@ -931,13 +1077,118 @@ export function BookingPage() {
                 <label className="bk-label">Event Type</label>
                 <div className="bk-type-grid">
                   {EVENT_TYPES.map(t => (
-                    <div key={t.value} className={`bk-type-card${eventType === t.value ? ' active' : ''}`} onClick={() => setEventType(t.value)}>
+                    <div key={t.value} className={`bk-type-card${eventType === t.value ? ' active' : ''}`} onClick={() => chooseEventType(t.value)}>
                       <span className="bk-type-icon">{t.icon}</span>
                       <span className="bk-type-label">{t.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
+
+              {/* Event-type-specific details.
+                  Renders nothing at all when no type is chosen, which also covers the
+                  bookings that never have one — the backend leaves EventType null for a
+                  FoodDelivery, and every field here would be rejected for it. */}
+              {detailGroup === 'couple' && (
+                <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
+                  <div className="bk-field">
+                    <label className="bk-label">Groom's Name</label>
+                    <input className="bk-input" value={groomName} onChange={e => setGroomName(e.target.value)} placeholder="Full name" />
+                  </div>
+                  <div className="bk-field">
+                    <label className="bk-label">Bride's Name</label>
+                    <input className="bk-input" value={brideName} onChange={e => setBrideName(e.target.value)} placeholder="Full name" />
+                  </div>
+                </div>
+              )}
+
+              {/* Birthday and Debut take an identical field set, so they share one block
+                  rather than being duplicated per type. */}
+              {detailGroup === 'celebrant' && (
+                <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
+                  <div className="bk-field">
+                    <label className="bk-label">Celebrant's Name</label>
+                    <input className="bk-input" value={celebrantName} onChange={e => setCelebrantName(e.target.value)} placeholder="Full name" />
+                  </div>
+                  <div className="bk-field">
+                    <label className="bk-label">Celebrant's Sex</label>
+                    <select className="bk-input" value={celebrantSex} onChange={e => setCelebrantSex(e.target.value)}>
+                      <option value="">Select…</option>
+                      <option value="Female">Female</option>
+                      <option value="Male">Male</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div className="bk-field">
+                    <label className="bk-label">Celebrant's Age</label>
+                    <input
+                      className="bk-input"
+                      type="number"
+                      min={0}
+                      max={130}
+                      value={celebrantAge}
+                      onChange={e => setCelebrantAge(e.target.value)}
+                      placeholder="e.g. 18"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {detailGroup === 'named' && (
+                <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
+                  <label className="bk-label">Event Name</label>
+                  <input className="bk-input" value={eventName} onChange={e => setEventName(e.target.value)} placeholder="e.g. Annual Awards Night" />
+                </div>
+              )}
+
+              {/* Motif & theme. Optional throughout — a customer who hasn't decided yet
+                  can leave these blank and the events team follows up. */}
+              {detailGroup !== 'none' && (
+                <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
+                  <div className="bk-field">
+                    <label className="bk-label">Motif (optional)</label>
+                    <input className="bk-input" value={motif} onChange={e => setMotif(e.target.value)} placeholder="e.g. Sage green and blush" />
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={e => pickImage('motif', e.target.files?.[0] ?? null)}
+                      style={{ marginTop: '0.5rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}
+                      aria-label="Motif reference image"
+                    />
+                    {motifPreview && (
+                      <img
+                        src={motifPreview}
+                        alt="Motif reference preview"
+                        style={{ marginTop: '0.5rem', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 'var(--r-lg)' }}
+                      />
+                    )}
+                  </div>
+                  <div className="bk-field">
+                    <label className="bk-label">Theme (optional)</label>
+                    <input className="bk-input" value={theme} onChange={e => setTheme(e.target.value)} placeholder="e.g. Rustic garden" />
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={e => pickImage('theme', e.target.files?.[0] ?? null)}
+                      style={{ marginTop: '0.5rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)' }}
+                      aria-label="Theme reference image"
+                    />
+                    {themePreview && (
+                      <img
+                        src={themePreview}
+                        alt="Theme reference preview"
+                        style={{ marginTop: '0.5rem', width: '100%', maxHeight: 140, objectFit: 'cover', borderRadius: 'var(--r-lg)' }}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {imageError && (
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--danger)', marginBottom: '1rem' }}>
+                  {imageError}
+                </p>
+              )}
 
               <div className="bk-grid">
                 <div className="bk-field">

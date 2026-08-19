@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { readSession } from '../../lib/tokenStorage';
 import {
@@ -9,7 +10,7 @@ import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from 
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
 import { useVoiceSession, voiceInputSupported } from '../../hooks/useVoiceSession';
-import type { VoiceState } from '../../hooks/useVoiceSession';
+import type { VisemeCue, VoiceState } from '../../hooks/useVoiceSession';
 import { AvatarStage } from '../avatar/AvatarStage';
 
 /*
@@ -25,22 +26,236 @@ type ChatMsg = { id: string; role: 'me' | 'assistant'; text: string; proposals?:
    conversation over /hubs/voice — this is just the browser reading a message you typed. */
 const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
+/* ── Is the browser reading a reply aloud right now? ────────────────────
+ *
+ * Module-level rather than React state because the two halves sit in different
+ * subtrees: the utterance is created inside ChatPanel, and the standing avatar that
+ * has to react to it is a sibling of the panel, not a descendant. Lifting the flag to
+ * ChatWidget would mean threading a setter down through the panel purely so a sibling
+ * could watch it.
+ *
+ * Event-driven off the utterance rather than polling `speechSynthesis.speaking`, so the
+ * mouth starts and stops on the same tick the audio does.
+ */
+const ttsListeners = new Set<(speaking: boolean) => void>();
+let ttsSpeaking = false;
+
+function setTtsSpeaking(next: boolean) {
+  if (next === ttsSpeaking) return;
+  ttsSpeaking = next;
+  for (const listener of ttsListeners) listener(next);
+}
+
+/** Cancels any in-progress speech AND clears the flag. */
+function stopSpeaking() {
+  if (!ttsSupported) return;
+  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+  // Set explicitly: cancel() firing `end` on the current utterance is inconsistent
+  // across browsers, and a stuck `true` would leave the avatar talking to itself.
+  setTtsSpeaking(false);
+}
+
+function useTtsSpeaking(): boolean {
+  const [speaking, setSpeaking] = useState(ttsSpeaking);
+  useEffect(() => {
+    ttsListeners.add(setSpeaking);
+    setSpeaking(ttsSpeaking);
+    return () => { ttsListeners.delete(setSpeaking); };
+  }, []);
+  return speaking;
+}
+
+/* ── Live voice session, shared with the standing avatar ────────────────
+ *
+ * Same bridge as the TTS flag above and for the same reason: useVoiceSession runs
+ * inside ChatPanel, and the avatar that should lip-sync to it is a sibling of the
+ * panel rather than a child.
+ *
+ * This carries the real thing, not a boolean — the viseme cue stream and the audio
+ * clock — so during a voice call the mouth is driven by actual phoneme timings instead
+ * of the generic open/closed oscillation used for browser read-aloud.
+ *
+ * `visemesRef` is a useRef and `getPlaybackMs` a useCallback, so publishing them costs
+ * one notification; only `state` changes with any frequency.
+ */
+interface VoicePresence {
+  state: VoiceState;
+  visemesRef: React.MutableRefObject<VisemeCue[]>;
+  getPlaybackMs: () => number | null;
+}
+
+const voiceListeners = new Set<(p: VoicePresence | null) => void>();
+let voicePresence: VoicePresence | null = null;
+
+function setVoicePresence(next: VoicePresence | null) {
+  voicePresence = next;
+  for (const listener of voiceListeners) listener(next);
+}
+
+/** Null whenever no voice call is live — the avatar then falls back to the TTS flag. */
+function useVoicePresence(): VoicePresence | null {
+  const [presence, setPresence] = useState(voicePresence);
+  useEffect(() => {
+    voiceListeners.add(setPresence);
+    setPresence(voicePresence);
+    return () => { voiceListeners.delete(setPresence); };
+  }, []);
+  return presence;
+}
+
 /**
  * Fired to open the widget straight onto the support conversation — used when a
  * customer clicks a chat notification in the dashboard bell.
  *
- * A window event rather than lifted state or a prop: ChatWidget is mounted globally,
- * outside the router's page tree, so there is no shared parent to hold the flag and
- * no prop path from the dashboard to here that wouldn't mean threading it through
- * every page.
+ * A window event rather than lifted state or a prop: ChatWidget is mounted separately
+ * by each page that wants it, so there is no shared parent to hold the flag and no
+ * prop path from the dashboard to here that wouldn't mean threading it through every
+ * page that renders the widget.
  */
 export const OPEN_SUPPORT_CHAT_EVENT = 'kingjegi:open-support-chat';
+
+/* ═══════════════════════════════════════════════════════════════════════
+   VIRTUAL ASSISTANT — ALL TWEAKABLE VALUES
+   ───────────────────────────────────────────────────────────────────────
+   Size, position and stacking for the on-page avatar. Nothing else in this
+   file hardcodes these numbers: the hook below and the CSS near the bottom
+   both read from here, so this block is the only place to edit.
+   ═══════════════════════════════════════════════════════════════════════ */
+const AVATAR_UI = {
+  /**
+   * Below this viewport width the avatar is not rendered at all.
+   *
+   * Not a taste call: the chat panel is 370px, and a phone can't fit that plus an
+   * avatar column side by side. Mobile keeps the launcher button, which is also what
+   * spares phones the WebGL context and the model download entirely.
+   *
+   * Raising `widthPx` much further means raising this too — at 768px the panel and
+   * the column together already use most of the viewport.
+   */
+  minViewportWidth: 768,
+
+  /** Avatar column size. The chat panel offsets itself by `widthPx` automatically. */
+  widthPx: 300,
+  heightPx: 600,
+
+  /**
+   * How tightly the figure fills its column — the "scale" control.
+   *
+   * It's a camera margin, not a CSS transform: 1.0 crops to the exact silhouette,
+   * higher values pull back and leave air around it. Lower this to make the avatar
+   * read bigger without touching the column size.
+   */
+  fitMargin: 1.04,
+
+  /**
+   * Ceiling on the rendered height, so a tall avatar can't overrun a short laptop
+   * screen. Safe to change: the camera fits the figure from the model's real bounding
+   * box against the live aspect ratio, so a shorter container reframes rather than crops.
+   */
+  maxHeightVh: 78,
+
+  /** Distance from the viewport edges. 0 sits flush in the corner. */
+  rightRem: 0,
+  bottomRem: 0,
+
+  /** Gap between the avatar column and the chat panel when the panel is open. */
+  panelGapRem: 1,
+
+  /** Below the chat panel/launcher's 60 band, so an open panel always wins. */
+  zIndex: 59,
+} as const;
+
+/**
+ * Routes the standing avatar must not appear on. Matched as path PREFIXES, so a
+ * nested route like /dashboard/orders is covered without listing it.
+ *
+ * Scope note: this hides the AVATAR only, not the whole widget. The dashboard opens
+ * the support panel by dispatching OPEN_SUPPORT_CHAT_EVENT when a customer clicks a
+ * chat notification, so unmounting ChatWidget there would leave that click doing
+ * nothing. The launcher button takes the avatar's place instead.
+ *
+ * A BLOCKLIST rather than an allowlist, deliberately — see shouldHideAssistant.
+ */
+const ASSISTANT_HIDDEN_ROUTES = ['/dashboard'] as const;
+
+/**
+ * Why a blocklist and not an allowlist:
+ *
+ * Mounting `<ChatWidget />` is already an explicit per-page opt-in — six pages import
+ * and render it, and the pages that don't simply never show it. An allowlist would
+ * duplicate that same decision in a second place, so adding a page would mean
+ * remembering to do BOTH, and forgetting the allowlist entry fails silently (the
+ * widget mounts, runs, and renders nothing).
+ *
+ * With a blocklist, forgetting an entry fails loudly and visibly — the assistant turns
+ * up somewhere new and you notice immediately. The quiet failure is the worse one, so
+ * the list holds the exceptions, not the permissions.
+ */
+function shouldHideAssistant(pathname: string): boolean {
+  return ASSISTANT_HIDDEN_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+}
+
+/**
+ * True once the viewport is wide enough AND the browser has had a chance to paint.
+ *
+ * The delay is the point. Mounting the avatar during the initial render would put a
+ * WebGL context and a 1.5 MB fetch on the critical path of every desktop landing-page
+ * visit — the exact cost the launcher-button design was avoiding. Deferring to idle
+ * keeps first paint clean and lets the avatar arrive a moment later.
+ */
+function useDeferredDesktopAvatar(): boolean {
+  const [wideEnough, setWideEnough] = useState(false);
+  const [afterPaint, setAfterPaint] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${AVATAR_UI.minViewportWidth}px)`);
+    const sync = () => setWideEnough(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  useEffect(() => {
+    // requestIdleCallback isn't in Safari; the timeout is the fallback, and doubles as
+    // the upper bound when the main thread stays busy.
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+
+    if (ric) {
+      const id = ric(() => setAfterPaint(true), { timeout: 2000 });
+      return () => (window as unknown as { cancelIdleCallback?: (h: number) => void })
+        .cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(() => setAfterPaint(true), 600);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  return wideEnough && afterPaint;
+}
 
 export function ChatWidget() {
   const { user } = useAuth();
   const isCustomer = user?.role === 'customer';
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<'assistant' | 'support'>('assistant');
+  /* Set when the launcher image can't load, so the button falls back to the "KJ"
+     monogram rather than rendering a broken image. */
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  /* Set when even the STATIC standing image is missing, i.e. 3D couldn't run and there
+     is no picture to stand in for it. The whole avatar column is dropped and the
+     launcher button comes back — better a familiar button than a hole in the layout. */
+  const [standingBroken, setStandingBroken] = useState(false);
+
+  /* Route-based, not window.location — this re-renders on navigation, where reading
+     location directly would leave a stale answer after a client-side route change. */
+  const { pathname } = useLocation();
+  const avatarHiddenHere = shouldHideAssistant(pathname);
+
+  const avatarSlotAvailable = useDeferredDesktopAvatar();
+  const showStanding = avatarSlotAvailable && !standingBroken && !avatarHiddenHere;
 
   useEffect(() => {
     const openSupport = () => {
@@ -54,12 +269,31 @@ export function ChatWidget() {
   return (
     <>
       <ChatStyles />
-      {open && (isCustomer
-        ? (mode === 'assistant'
-            ? <ChatPanel onClose={() => setOpen(false)} onSwitch={() => setMode('support')} />
-            : <SupportPanel onClose={() => setOpen(false)} onSwitch={() => setMode('assistant')} />)
-        : <TeaserPanel loggedIn={!!user} onClose={() => setOpen(false)} />)}
 
+      {/* Wrapper exists purely to scope a CSS rule: .cw-panel is position:fixed, so
+          this adds no layout, but the descendant selector still lets the panel shift
+          left to make room for the avatar column without every panel component needing
+          to know the avatar exists. */}
+      <div className={showStanding ? 'cw-dock cw-dock--with-avatar' : 'cw-dock'}>
+        {open && (isCustomer
+          ? (mode === 'assistant'
+              ? <ChatPanel onClose={() => setOpen(false)} onSwitch={() => setMode('support')} />
+              : <SupportPanel onClose={() => setOpen(false)} onSwitch={() => setMode('assistant')} />)
+          : <TeaserPanel loggedIn={!!user} onClose={() => setOpen(false)} />)}
+      </div>
+
+      {showStanding && (
+        <StandingAvatar
+          open={open}
+          onToggle={() => setOpen((o) => !o)}
+          onUnavailable={() => setStandingBroken(true)}
+        />
+      )}
+
+      {/* The launcher and the standing avatar are the same control in two forms — only
+          ever one at a time, or clicking either would toggle a chat the other also
+          claims to open. */}
+      {!showStanding && (
       <button
         type="button"
         className="cw-bubble"
@@ -69,10 +303,110 @@ export function ChatWidget() {
         {open ? (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="22" height="22" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
         ) : (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
+          /* The assistant's face, as a flat image.
+             Deliberately NOT the live AvatarStage: that mounts a WebGL context and
+             pulls a 1.5 MB glb, and as an always-visible launcher every visitor would
+             pay both on every page load — on mobile too — for a 54px circle. The 3D
+             avatar stays where it earns its cost, in voice mode. A share of users
+             (no WebGL, reduced motion) would have seen the monogram anyway.
+
+             Falls back to that same monogram if the image is missing, so the launcher
+             is never a broken-image icon. */
+          avatarFailed ? (
+            <span className="cw-bubble-glyph">KJ</span>
+          ) : (
+            <img
+              src="/avatar/launcher.webp"
+              alt=""
+              aria-hidden="true"
+              width={54}
+              height={54}
+              className="cw-bubble-avatar"
+              onError={() => setAvatarFailed(true)}
+            />
+          )
         )}
       </button>
+      )}
     </>
+  );
+}
+
+/**
+ * The persistent standing assistant — a full-body figure at the edge of the page that
+ * opens the chat when clicked.
+ *
+ * Only ever mounted on a wide viewport and after first paint (see
+ * useDeferredDesktopAvatar), because it costs a WebGL context and the 1.5 MB model.
+ *
+ * A canvas has no role and can't take focus, so the interactive element is this
+ * wrapper: it carries the button semantics, the keyboard handlers and the expanded
+ * state, and the canvas inside it is decorative.
+ */
+function StandingAvatar({
+  open,
+  onToggle,
+  onUnavailable,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onUnavailable: () => void;
+}) {
+  /* Two sources can make the assistant talk, and they are not equivalent.
+     A live voice call carries real phoneme timings, so it wins: passing its cue stream
+     and audio clock through gives proper lip-sync. Browser read-aloud exposes neither,
+     so it only contributes a boolean and the mouth falls back to a generic open/closed
+     oscillation. When a call is up, the full VoiceState also reaches the avatar, which
+     is what lets it look attentive while listening and glance away while thinking. */
+  const voice = useVoicePresence();
+  const ttsSpeaking = useTtsSpeaking();
+
+  const state: VoiceState = voice ? voice.state : (ttsSpeaking ? 'speaking' : 'idle');
+
+  return (
+    <div
+      className="cw-standing"
+      role="button"
+      tabIndex={0}
+      aria-label={open ? 'Close chat' : 'Chat with the assistant'}
+      aria-expanded={open}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        // Space scrolls the page by default, and Enter/Space are what a real <button>
+        // would answer to — both are required for this to behave like the control it
+        // claims to be.
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+    >
+      <AvatarStage
+        framing="full"
+        fitMargin={AVATAR_UI.fitMargin}
+        state={state}
+        /* Undefined when no call is live. AvatarStage then supplies its own empty cue
+           ref, which is exactly the condition useVisemeDriver treats as "talk with a
+           generic mouth" — so read-aloud still moves the jaw with no extra wiring. */
+        visemesRef={voice?.visemesRef}
+        getPlaybackMs={voice?.getPlaybackMs}
+        // Nothing while the 3D chunk and model download — the figure simply appears when
+        // ready. Explicitly NOT the image below: that one's onError means "give up on the
+        // avatar entirely", which during a normal load would be wrong.
+        loadingFallback={null}
+        fallback={
+          <img
+            src="/avatar/standing.webp"
+            alt=""
+            aria-hidden="true"
+            className="cw-standing-img"
+            // No WebGL AND no picture: nothing to show. Tell the parent so it drops the
+            // column and restores the launcher button rather than leaving a gap.
+            onError={onUnavailable}
+          />
+        }
+      />
+    </div>
   );
 }
 
@@ -107,7 +441,20 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
 
   const speakText = (text: string) => {
     if (!ttsSupported) return;
-    try { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = 'en-PH'; window.speechSynthesis.speak(u); } catch { /* ignore */ }
+    try {
+      stopSpeaking();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-PH';
+      // These are what put the avatar into its talking loop and take it out again.
+      // onerror matters as much as onend: a failed utterance that never reported would
+      // leave the figure gesturing at nothing.
+      u.onstart = () => setTtsSpeaking(true);
+      u.onend = () => setTtsSpeaking(false);
+      u.onerror = () => setTtsSpeaking(false);
+      window.speechSynthesis.speak(u);
+    } catch {
+      setTtsSpeaking(false);
+    }
   };
 
   /* ── Voice mode ──────────────────────────────────────────────────────────
@@ -159,9 +506,9 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   const voiceOffered = voiceInputSupported && caps?.voiceAvailable === true;
 
   // Stop read-aloud if the panel unmounts. (The voice session tears itself down.)
-  useEffect(() => () => {
-    if (ttsSupported) window.speechSynthesis.cancel();
-  }, []);
+  // stopSpeaking rather than a bare cancel(), so the avatar leaves its talking loop
+  // instead of miming a reply that is no longer being read.
+  useEffect(() => () => stopSpeaking(), []);
 
   /* Open into the newest existing thread (which may be a proactively-seeded nudge). */
   useEffect(() => {
@@ -189,6 +536,24 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, sending]);
+
+  /* Publish the live voice session to the standing avatar.
+     Cleared when the call ends AND on unmount — closing the panel tears the session
+     down, and a stale presence would leave the avatar lip-syncing against an audio
+     clock that no longer advances. */
+  useEffect(() => {
+    if (!voice.active) {
+      setVoicePresence(null);
+      return;
+    }
+    setVoicePresence({
+      state: voice.state,
+      visemesRef: voice.visemesRef,
+      getPlaybackMs: voice.getPlaybackMs,
+    });
+  }, [voice.active, voice.state, voice.visemesRef, voice.getPlaybackMs]);
+
+  useEffect(() => () => setVoicePresence(null), []);
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -228,18 +593,14 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
     <div className="cw-panel" role="dialog" aria-label="King Jegi Assistant">
       <ProposalCardStyles />
 
-      {/* Mounted only in voice mode: a typed conversation shouldn't pay for a WebGL
-          context, and the 3D bundle isn't fetched until this first renders. */}
-      {voice.active && (
-        <AvatarStage
-          visemesRef={voice.visemesRef}
-          getPlaybackMs={voice.getPlaybackMs}
-          state={voice.state}
-        />
-      )}
+      {/* No avatar inside the panel.
+          The persistent standing figure at the side of the page is the assistant's only
+          face now — a second one in this header read as a duplicate of the same
+          character, and it cost a WebGL context and the model download on top of the
+          one already running beside it. Voice mode still works; see VoiceBar below for
+          its state, and the note in StandingAvatar about what it does not yet mirror. */}
 
       <div className="cw-head">
-        <div className="cw-glyph">KJ</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="cw-head-title">King Jegi Assistant</div>
           <button type="button" className="cw-switch" onClick={onSwitch}>Talk to staff →</button>
@@ -248,7 +609,7 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
           <button
             type="button"
             className={`cw-icon${speak ? ' on' : ''}`}
-            onClick={() => setSpeak((s) => { if (s && ttsSupported) window.speechSynthesis.cancel(); return !s; })}
+            onClick={() => setSpeak((s) => { if (s) stopSpeaking(); return !s; })}
             aria-label={speak ? 'Stop reading replies aloud' : 'Read replies aloud'}
             title="Read replies aloud"
           >
@@ -440,7 +801,6 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
   return (
     <div className="cw-panel" role="dialog" aria-label="Chat support">
       <div className="cw-head">
-        <div className="cw-glyph">KJ</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="cw-head-title">Chat Support</div>
           <button type="button" className="cw-switch" onClick={onSwitch}>← Assistant</button>
@@ -524,6 +884,16 @@ function ChatStyles() {
         box-shadow: var(--shadow-gold); transition: transform 0.2s;
       }
       .cw-bubble:hover { transform: translateY(-2px); }
+      /* Fills the button edge to edge — the avatar render is the launcher, not an
+         icon sitting inside a coloured circle. overflow is clipped by the radius. */
+      .cw-bubble { overflow: hidden; padding: 0; }
+      .cw-bubble-avatar {
+        width: 100%; height: 100%; object-fit: cover; display: block;
+      }
+      .cw-bubble-glyph {
+        font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
+        letter-spacing: 0.04em; color: #fff;
+      }
       .cw-panel {
         position: fixed; right: 1.5rem; bottom: 5.5rem; z-index: 60;
         width: min(370px, calc(100vw - 3rem));
@@ -594,6 +964,60 @@ function ChatStyles() {
         cursor: default;
       }
       .cw-avatar canvas { display: block; }
+
+      /* Full-body variant: fills the standing column instead of being a fixed-height
+         banner, and drops the panel chrome — it floats over the page, not inside a card. */
+      .cw-avatar.cw-avatar--full {
+        height: 100%; width: 100%;
+        background: none; border-bottom: none;
+      }
+
+      /* ── persistent standing avatar (desktop only) ──
+         Every number here comes from AVATAR_UI at the top of this file. */
+      .cw-standing {
+        position: fixed;
+        right: ${AVATAR_UI.rightRem}rem;
+        bottom: ${AVATAR_UI.bottomRem}rem;
+        z-index: ${AVATAR_UI.zIndex};
+        width: ${AVATAR_UI.widthPx}px;
+        height: ${AVATAR_UI.heightPx}px;
+        /* Keeps a tall avatar inside a short window. The camera fits the figure from
+           its bounding box against the live aspect, so this reframes, never crops. */
+        max-height: ${AVATAR_UI.maxHeightVh}vh;
+        cursor: pointer;
+        /* The figure is the target, not the box around it — without this the invisible
+           corners of the column would swallow clicks meant for the page behind it. */
+        background: none; border: none;
+        display: flex; align-items: flex-end; justify-content: center;
+        transition: transform 0.25s ease;
+      }
+      .cw-standing:hover { transform: translateY(-4px); }
+      .cw-standing:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 4px;
+        border-radius: var(--r-lg);
+      }
+      .cw-standing-img {
+        max-height: 100%; max-width: 100%;
+        object-fit: contain; object-position: bottom;
+        display: block;
+      }
+
+      /* Shift the panel left so it sits BESIDE the avatar rather than behind it.
+         Scoped to the dock wrapper so the panel keeps its normal position whenever the
+         avatar isn't showing — mobile, reduced motion, or a missing model. */
+      .cw-dock--with-avatar .cw-panel {
+        right: calc(${AVATAR_UI.rightRem}rem + ${AVATAR_UI.widthPx}px + ${AVATAR_UI.panelGapRem}rem);
+      }
+
+      /* Belt and braces with the JS breakpoint: if a resize outpaces the media-query
+         listener, the avatar is hidden and the panel is back at the edge for the frame
+         in between, rather than shoved off-screen. */
+      @media (max-width: ${AVATAR_UI.minViewportWidth - 1}px) {
+        .cw-standing { display: none; }
+        .cw-dock--with-avatar .cw-panel { right: 1.5rem; }
+      }
+
       .cw-avatar-fallback {
         height: 175px; width: 100%; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;

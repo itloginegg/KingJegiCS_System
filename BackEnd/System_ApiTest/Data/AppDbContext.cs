@@ -49,6 +49,9 @@ namespace System_ApiTest.Data
         public DbSet<Invoice> Invoices => Set<Invoice>();
         public DbSet<Payment> Payments => Set<Payment>();
 
+        // Operational planning (no money, no stock — see BookingResourceAllocation)
+        public DbSet<BookingResourceAllocation> BookingResourceAllocations => Set<BookingResourceAllocation>();
+
         // Notifications (background worker idempotency ledger)
         public DbSet<Sentnotification> SentNotifications => Set<Sentnotification>();
 
@@ -357,6 +360,8 @@ namespace System_ApiTest.Data
                 e.Property(s => s.DepositPercentage).HasPrecision(9, 4);
                 e.Property(s => s.ReservationFee).HasPrecision(18, 2);
                 e.Property(s => s.EventBufferHours).HasPrecision(5, 2);
+                e.Property(s => s.ChairsPerGuest).HasPrecision(5, 2);
+                e.Property(s => s.UtensilsPerGuest).HasPrecision(5, 2);
                 e.ToTable(t =>
                 {
                     t.HasCheckConstraint("CK_SystemSettings_TaxRateNonNeg", "[TaxRate] >= 0");
@@ -373,6 +378,14 @@ namespace System_ApiTest.Data
                     // 0 is meaningful ("free the day after pickup"); negative is not.
                     t.HasCheckConstraint("CK_SystemSettings_TurnaroundNonNeg",
                         "[RentalTurnaroundDays] >= 0");
+                    // Every one of these is a divisor in the SUGGEST formulas, so zero
+                    // would be a divide-by-zero and a negative would suggest negative
+                    // furniture. Guard at the database, not just in the service.
+                    t.HasCheckConstraint("CK_SystemSettings_SuggestDivisorsPositive",
+                        "[GuestsPerLongTable] >= 1 AND [GuestsPerRoundTable] >= 1 AND " +
+                        "[GuestsPerWaiter] >= 1 AND [GuestsPerServer] >= 1");
+                    t.HasCheckConstraint("CK_SystemSettings_SuggestMultipliersNonNeg",
+                        "[ChairsPerGuest] >= 0 AND [UtensilsPerGuest] >= 0");
                 });
             });
 
@@ -391,6 +404,29 @@ namespace System_ApiTest.Data
                 // Deleting a Booking must not silently delete its Invoice.
                 e.HasOne(i => i.Booking).WithOne(bk => bk.Invoice)
                  .HasForeignKey<Invoice>(i => i.BookingId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- BookingResourceAllocation ----------------
+            b.Entity<BookingResourceAllocation>(e =>
+            {
+                e.HasIndex(a => a.BookingId).IsUnique();   // one resource plan per booking
+
+                // Cascade, unlike Invoice: a resource plan is internal logistics with no
+                // financial or audit standing, so there is nothing to preserve once the
+                // booking it describes is gone.
+                e.HasOne(a => a.Booking).WithOne(bk => bk.ResourceAllocation)
+                 .HasForeignKey<BookingResourceAllocation>(a => a.BookingId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                // Counts are physical objects and people: never negative, and an upper
+                // bound so a slipped keypress can't store a six-figure chair order.
+                e.ToTable(t => t.HasCheckConstraint(
+                    "CK_BookingResourceAllocation_CountsInRange",
+                    "[LongTables] BETWEEN 0 AND 100000 AND [RoundTables] BETWEEN 0 AND 100000 AND " +
+                    "[Chairs] BETWEEN 0 AND 100000 AND [Plates] BETWEEN 0 AND 100000 AND " +
+                    "[Spoons] BETWEEN 0 AND 100000 AND [Forks] BETWEEN 0 AND 100000 AND " +
+                    "[Waiters] BETWEEN 0 AND 100000 AND [Servers] BETWEEN 0 AND 100000 AND " +
+                    "[Others] BETWEEN 0 AND 100000"));
             });
 
             // ---------------- Payment ----------------

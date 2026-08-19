@@ -157,6 +157,68 @@ namespace System_ApiTest.Models
         /// <summary>Guest count for a catered event. Null for FoodDelivery.</summary>
         public int? GuestCount { get; set; }
 
+        // ---- Event-type-specific details ----
+        // Every field here is nullable and none is required by the entity, because which
+        // ones apply is decided by EventType — and EventType is itself null for
+        // FoodDelivery and RentalService bookings, where none of them apply at all.
+        // Which set is mandatory for a given EventType is enforced on the create/update
+        // DTOs (see BookingCreateDto.Validate), not here: the column can't express
+        // "required only when EventType is Wedding", and existing rows predate all of
+        // these, so a NOT NULL column would fail to migrate.
+
+        /// <summary>Groom's name. Applies to Wedding.</summary>
+        [MaxLength(150)]
+        public string? GroomName { get; set; }
+
+        /// <summary>Bride's name. Applies to Wedding.</summary>
+        [MaxLength(150)]
+        public string? BrideName { get; set; }
+
+        /// <summary>Name of the person being celebrated. Applies to Birthday and Debut.</summary>
+        [MaxLength(150)]
+        public string? CelebrantName { get; set; }
+
+        /// <summary>
+        /// Celebrant's sex. Applies to Birthday and Debut.
+        ///
+        /// Deliberately a free string rather than an enum, unlike most of this file: the
+        /// value is descriptive detail for the events team (it drives motif and styling
+        /// conversations), not a value the system branches on, so closing the set buys
+        /// nothing and excludes customers the enum's authors didn't think of.
+        /// </summary>
+        [MaxLength(20)]
+        public string? CelebrantSex { get; set; }
+
+        /// <summary>Celebrant's age at the event. Applies to Birthday and Debut.</summary>
+        public int? CelebrantAge { get; set; }
+
+        /// <summary>Name of the event. Applies to Corporate and Others.</summary>
+        [MaxLength(200)]
+        public string? EventName { get; set; }
+
+        // ---- Motif & theme ----
+        // Text plus an optional customer-supplied reference image for each. Images are
+        // stored on local disk by ImageUploadHelper and these hold the relative URL it
+        // returns, exactly like Menuitem/Rentalitem image columns — not the bytes.
+        // Uploaded through their own endpoints after the Draft exists, because booking
+        // create is a JSON DTO and IFormFile needs multipart.
+
+        /// <summary>Colour motif, free text (e.g. "Sage green and blush").</summary>
+        [MaxLength(200)]
+        public string? Motif { get; set; }
+
+        /// <summary>Relative URL of the motif reference image, or null if none was uploaded.</summary>
+        [MaxLength(500)]
+        public string? MotifImageUrl { get; set; }
+
+        /// <summary>Event theme, free text (e.g. "Rustic garden").</summary>
+        [MaxLength(200)]
+        public string? Theme { get; set; }
+
+        /// <summary>Relative URL of the theme reference image, or null if none was uploaded.</summary>
+        [MaxLength(500)]
+        public string? ThemeImageUrl { get; set; }
+
         // ---- Status fields ----
 
         public BookingStatus Status { get; set; } = BookingStatus.Draft;
@@ -228,5 +290,16 @@ namespace System_ApiTest.Models
 
         /// <summary>0 or 1 invoice. Restrict on delete so an invoice is never silently lost.</summary>
         public Invoice? Invoice { get; set; }
+
+        /// <summary>
+        /// 0 or 1 operational resource plan — how many tables, utensils and staff the
+        /// event needs. Created lazily the first time an admin saves one.
+        ///
+        /// Deliberately NOT part of Rentals/Services: those are priced lines that move
+        /// TotalAmount and consume real stock, and they are editable only while Draft.
+        /// This is headcount planning that has to work on a Confirmed booking, so it
+        /// carries no money and touches no inventory. See BookingResourceAllocation.
+        /// </summary>
+        public BookingResourceAllocation? ResourceAllocation { get; set; }
     }
 }

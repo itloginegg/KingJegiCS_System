@@ -82,7 +82,8 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<Tokendenylistservice>();
 builder.Services.AddScoped<Menutrayservice>();
 builder.Services.AddScoped<Rentalservice>();
-builder.Services.AddScoped<Bookingservice>(); 
+builder.Services.AddScoped<Bookingservice>();
+builder.Services.AddScoped<Bookingresourceservice>();
 builder.Services.AddScoped<Packageservice>();
 builder.Services.AddScoped<Invoiceservice>();
 builder.Services.AddScoped<Paymentservice>();
@@ -95,6 +96,7 @@ builder.Services.AddScoped<Notificationfeedservice>();
 builder.Services.AddScoped<Notificationwriteservice>();
 builder.Services.AddScoped<Announcementservice>();
 builder.Services.AddScoped<Reportservice>();
+builder.Services.AddScoped<Bestsellerservice>();
 builder.Services.AddMemoryCache();   // backs Reportservice's AI sales-summary cache
 builder.Services.AddHostedService<DenylistCleanupWorker>();
 builder.Services.Configure<DraftCleanupOptions>(builder.Configuration.GetSection(DraftCleanupOptions.SectionName));

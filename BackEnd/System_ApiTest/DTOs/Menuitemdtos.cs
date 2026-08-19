@@ -59,6 +59,23 @@ namespace System_ApiTest.DTOs
         bool IsActive,
         string? ImageUrl);
 
+    /// <summary>
+    /// The fortnight's best-selling dish, for the landing page's feature section.
+    ///
+    /// <para><see cref="UnitsSold"/> is 0 exactly when <see cref="IsFallback"/> is true —
+    /// no dish sold in the window, so the item is a deterministic rotation pick rather
+    /// than a ranking. The UI should not print "0 sold"; use the flag to decide whether
+    /// to show sales figures at all.</para>
+    ///
+    /// <para>The window dates are inclusive and describe when the orders were PLACED.</para>
+    /// </summary>
+    public record BestSellerDto(
+        MenuItemResponseDto Item,
+        int UnitsSold,
+        DateOnly WindowStart,
+        DateOnly WindowEnd,
+        bool IsFallback);
+
     /// <summary>Compact item projection used inside packages, trays, and templates.</summary>
     public record MenuItemBriefDto(
         Guid Id,

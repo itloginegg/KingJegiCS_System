@@ -119,6 +119,37 @@ export function fetchMenuTrays(token: string): Promise<AdminMenuTray[]> {
   return getJson<AdminMenuTray[]>('/api/Menutrays', token);
 }
 
+/** Matches BestSellerDto (Menuitemdtos.cs). */
+export interface BestSeller {
+  item: AdminMenuItem;
+  /**
+   * Trays ordered in the window. 0 exactly when `isFallback` is true, so don't print
+   * it as a sales figure without checking the flag.
+   */
+  unitsSold: number;
+  /** Inclusive dates of the fortnight the ranking covers (when orders were placed). */
+  windowStart: string;
+  windowEnd: string;
+  /**
+   * True when nothing sold in the window and the dish is a deterministic rotation
+   * pick instead of a genuine ranking — a quiet fortnight, or a fresh install.
+   */
+  isFallback: boolean;
+}
+
+/**
+ * GET /api/Menuitems/best-seller — the fortnight's top dish.
+ *
+ * Anonymous, so no token. Returns null on 204, which is what the server sends when
+ * the catalog has no priced, active dish to feature at all.
+ */
+export async function fetchBestSeller(): Promise<BestSeller | null> {
+  const res = await fetch(`${API_BASE_URL}/api/Menuitems/best-seller`);
+  if (res.status === 204) return null;
+  if (!res.ok) throw new Error(`Failed to load the best seller (HTTP ${res.status}).`);
+  return (await res.json()) as BestSeller;
+}
+
 export function buildMenuItemFormData(payload: AdminMenuItemPayload): FormData {
   const formData = new FormData();
   formData.append('ItemName', payload.itemName);

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { AvatarStage } from '../components/avatar/AvatarStage';
+import type { AvatarFraming } from '../components/avatar/framing';
 import type { VisemeCue, VoiceState } from '../hooks/useVoiceSession';
 import { AZURE_VISEME_TO_TARGET } from '../components/avatar/visemeMap';
 
@@ -17,6 +18,9 @@ import { AZURE_VISEME_TO_TARGET } from '../components/avatar/visemeMap';
 export function AvatarLabPage() {
   const visemesRef = useRef<VisemeCue[]>([]);
   const [state, setState] = useState<VoiceState>('idle');
+  /* The two framings behave differently enough to need separate eyes on them: only
+     `full` swaps to the talking body clip, and only `full` fits from the bounding box. */
+  const [framing, setFraming] = useState<AvatarFraming>('bust');
   const [playing, setPlaying] = useState(false);
   const startedAt = useRef(0);
 
@@ -68,9 +72,35 @@ export function AvatarLabPage() {
       <div>
         <h1 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Avatar lab (dev only)</h1>
 
-        {/* Same width as the real widget panel, so framing is judged at the true size. */}
-        <div style={{ width: 370, border: '1px solid #ccc', borderRadius: 12, overflow: 'hidden' }}>
-          <AvatarStage visemesRef={visemesRef} getPlaybackMs={getPlaybackMs} state={state} />
+        {/* Sized to whichever surface is being judged: the chat panel's width for the
+            bust banner, the standing column's dimensions for the full-body figure. */}
+        <div
+          style={{
+            width: framing === 'full' ? 300 : 370,
+            height: framing === 'full' ? 600 : undefined,
+            border: '1px solid #ccc',
+            borderRadius: 12,
+            overflow: 'hidden',
+          }}
+        >
+          <AvatarStage
+            visemesRef={visemesRef}
+            getPlaybackMs={getPlaybackMs}
+            state={state}
+            framing={framing}
+          />
+        </div>
+
+        <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.4rem' }}>
+          {(['bust', 'full'] as AvatarFraming[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFraming(f)}
+              style={{ fontWeight: framing === f ? 700 : 400 }}
+            >
+              {f}
+            </button>
+          ))}
         </div>
 
         <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>

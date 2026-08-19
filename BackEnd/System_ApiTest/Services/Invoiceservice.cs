@@ -58,6 +58,10 @@ namespace System_ApiTest.Services
             }
 
             var settings = await _settings.GetAsync();
+            // Zero under the current settings — VAT was removed by setting the rate to 0
+            // rather than by deleting this line, so that the budget planner (which does
+            // the same multiplication) can never disagree with the invoice. See
+            // Systemsettings.TaxRate.
             var tax = subtotal * settings.TaxRate;
 
             var invoice = new Invoice

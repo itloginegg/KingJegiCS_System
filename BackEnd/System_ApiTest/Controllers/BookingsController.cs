@@ -21,9 +21,12 @@ namespace System_ApiTest.Controllers
         private readonly Packageservice _packages;
         private readonly Invoiceservice _invoices;
         private readonly Auditlogservice _audit;
+        private readonly IWebHostEnvironment _env;
+        private readonly Bookingresourceservice _resources;
 
         public BookingsController(AppDbContext db, Bookingservice bookings, Rentalservice rentals,
-                                  Packageservice packages, Invoiceservice invoices, Auditlogservice audit)
+                                  Packageservice packages, Invoiceservice invoices, Auditlogservice audit,
+                                  IWebHostEnvironment env, Bookingresourceservice resources)
         {
             _db = db;
             _bookings = bookings;
@@ -31,6 +34,8 @@ namespace System_ApiTest.Controllers
             _packages = packages;
             _invoices = invoices;
             _audit = audit;
+            _env = env;
+            _resources = resources;
         }
 
         // ---------------- Reads ----------------
@@ -55,8 +60,13 @@ namespace System_ApiTest.Controllers
 
             if (status is not null) query = query.Where(b => b.Status == status);
 
-            var list = await query.OrderByDescending(b => b.CreatedAt).ToListAsync();
-            return Ok(list.Select(b => ToDto(b)));
+            // Included so the admin list can show whether each booking already has a
+            // resource plan. One extra left join; the summary is dropped for customers.
+            var list = await query
+                .Include(b => b.ResourceAllocation)
+                .OrderByDescending(b => b.CreatedAt)
+                .ToListAsync();
+            return Ok(list.Select(b => ToDtoWithResources(b)));
         }
 
         /// <summary>Booking detail: scalars plus every line item (rental lines carry
@@ -70,6 +80,7 @@ namespace System_ApiTest.Controllers
                 .Include(b => b.Services).ThenInclude(sv => sv.ServiceItem)
                 .Include(b => b.MenuItems).ThenInclude(mi => mi.Item)
                 .Include(b => b.MenuTrays).ThenInclude(mt => mt.Tray)
+                .Include(b => b.ResourceAllocation)
                 .FirstOrDefaultAsync(b => b.Id == id);
             if (booking is null) return NotFound();
 
@@ -78,7 +89,7 @@ namespace System_ApiTest.Controllers
                 return Forbid();
 
             var detail = new BookingDetailDto(
-                ToDto(booking),
+                ToDtoWithResources(booking),
                 booking.MenuPackage is null ? null : new BookingPackageSummaryDto(
                     booking.MenuPackage.Id, booking.MenuPackage.PackageName,
                     booking.MenuPackage.BasePrice, booking.MenuPackage.Inclusions),
@@ -133,7 +144,11 @@ namespace System_ApiTest.Controllers
                 var booking = await _bookings.CreateAsync(
                     customerId, dto.BookingType, dto.EventDate, dto.StartTime, dto.EndDate, dto.EndTime,
                     dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber,
-                    source);
+                    source,
+                    new BookingEventDetails(
+                        dto.GroomName, dto.BrideName,
+                        dto.CelebrantName, dto.CelebrantSex, dto.CelebrantAge,
+                        dto.EventName, dto.Motif, dto.Theme));
 
                 // No-ops for a customer booking for themselves; records the walk-in case.
                 await _audit.LogAsync(User, AuditAction.CREATE, "BOOKING", booking.Id.ToString(),
@@ -162,7 +177,11 @@ namespace System_ApiTest.Controllers
 
                 var booking = await _bookings.UpdateAsync(
                     id, changedById, dto.BookingName, dto.EventDate, dto.StartTime, dto.EndDate,
-                    dto.EndTime, dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber);
+                    dto.EndTime, dto.EventType, dto.VenueAddress, dto.GuestCount, dto.MenuPackageId, dto.ContactNumber,
+                    new BookingEventDetails(
+                        dto.GroomName, dto.BrideName,
+                        dto.CelebrantName, dto.CelebrantSex, dto.CelebrantAge,
+                        dto.EventName, dto.Motif, dto.Theme));
 
                 await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING", id.ToString(),
                     before is null ? null : ToDto(before), ToDto(booking));
@@ -287,6 +306,103 @@ namespace System_ApiTest.Controllers
                 return Ok(ToDto(booking));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // ---------------- Event resource allocation ----------------
+
+        /// <summary>
+        /// The booking's resource plan plus a server-computed suggestion. Owner/Assistant
+        /// only — this is internal logistics, never shown to the customer.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("{id:guid}/resources")]
+        public async Task<IActionResult> GetResources(Guid id)
+        {
+            try { return Ok(await _resources.GetAsync(id)); }
+            catch (BookingRuleException ex) { return NotFound(new { message = ex.Message }); }
+        }
+
+        /// <summary>
+        /// Creates or replaces the resource plan.
+        ///
+        /// Works on Confirmed bookings by design — see Bookingresourceservice for why
+        /// this path does not go through the Draft-only edit guard.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPut("{id:guid}/resources")]
+        public async Task<IActionResult> SaveResources(Guid id, [FromBody] SaveResourceAllocationDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            try
+            {
+                var result = await _resources.SaveAsync(id, dto, CurrentUserId());
+                await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_RESOURCES", id.ToString(),
+                    null, result.Allocation);
+                return Ok(result);
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // ---------------- Motif & theme reference images ----------------
+
+        /// <summary>
+        /// Replaces the motif reference image. Multipart, because booking create/update
+        /// are JSON DTOs and IFormFile can't ride along in a JSON body — which is also
+        /// why this is its own endpoint, called after the Draft exists rather than
+        /// converting the whole create path to multipart.
+        /// </summary>
+        [HttpPost("{id:guid}/motif-image")]
+        public Task<IActionResult> UploadMotifImage(Guid id, IFormFile? file) =>
+            StoreReferenceImageAsync(id, file, isMotif: true);
+
+        /// <summary>Replaces the theme reference image. See UploadMotifImage.</summary>
+        [HttpPost("{id:guid}/theme-image")]
+        public Task<IActionResult> UploadThemeImage(Guid id, IFormFile? file) =>
+            StoreReferenceImageAsync(id, file, isMotif: false);
+
+        /// <summary>
+        /// Shared body for both reference-image uploads.
+        ///
+        /// Deliberately NOT gated on Draft. A reference image carries no price and no
+        /// stock, so none of the reasons UpdateAsync is Draft-only apply — and a customer
+        /// who finds the right inspiration photo the week before their wedding should be
+        /// able to attach it. Terminal states are still refused: there is nothing to plan
+        /// for an event that is over or called off.
+        /// </summary>
+        private async Task<IActionResult> StoreReferenceImageAsync(Guid id, IFormFile? file, bool isMotif)
+        {
+            var booking = await _db.Bookings.FindAsync(id);
+            if (booking is null) return NotFound(new { message = "Booking not found." });
+            if (!IsAdmin() && booking.CustomerId != CurrentUserId()) return Forbid();
+
+            if (booking.Status is BookingStatus.Cancelled or BookingStatus.Completed)
+                return BadRequest(new { message = $"A {booking.Status} booking can no longer be changed." });
+
+            // ValidateImage treats "no file" as valid (it's used for optional images
+            // elsewhere), so the required-ness of the upload is checked here.
+            if (file is null || file.Length == 0)
+                return BadRequest(new { message = "No image file was supplied." });
+
+            var (isValid, error) = ImageUploadHelper.ValidateImage(file);
+            if (!isValid) return BadRequest(new { message = error });
+
+            var previous = isMotif ? booking.MotifImageUrl : booking.ThemeImageUrl;
+
+            var url = await ImageUploadHelper.SaveImageAsync(file, _env, isMotif ? "motif" : "theme");
+            if (isMotif) booking.MotifImageUrl = url;
+            else booking.ThemeImageUrl = url;
+
+            await _db.SaveChangesAsync();
+
+            // Only after the new URL is committed — if the save above throws, the old
+            // image is still the one on record and must survive.
+            if (!string.IsNullOrWhiteSpace(previous))
+                ImageUploadHelper.DeleteImage(_env, previous);
+
+            await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING", id.ToString(),
+                new { ImageUrl = previous }, new { ImageUrl = url });
+
+            return Ok(ToDto(booking));
         }
 
         [Authorize(Roles = "Owner,Assistant")]
@@ -526,6 +642,30 @@ namespace System_ApiTest.Controllers
             b.EventType?.ToString(), b.VenueAddress, b.ContactNumber, b.GuestCount, b.Status.ToString(),
             b.DepositStatus.ToString(), b.Source.ToString(), b.TotalAmount, b.MenuPackageId,
             b.CancellationRequested, b.CancellationRequestReason, b.CreatedAt,
-            IsAdmin() ? b.AdminNote : null);
+            IsAdmin() ? b.AdminNote : null,
+            // Unlike AdminNote, these are the customer's own answers — they go back to
+            // whoever can already see the booking, admin or not.
+            b.GroomName, b.BrideName, b.CelebrantName, b.CelebrantSex, b.CelebrantAge, b.EventName,
+            b.Motif, b.MotifImageUrl, b.Theme, b.ThemeImageUrl);
+
+        /// <summary>
+        /// ToDto plus the resource-plan summary. Only for callers that have actually
+        /// Included Booking.ResourceAllocation — reading that navigation property on an
+        /// entity loaded without it yields null, which would be indistinguishable from
+        /// "no plan has been saved" and would quietly mislabel every row.
+        ///
+        /// Admin-only, like AdminNote: resource planning is internal.
+        /// </summary>
+        private BookingResponseDto ToDtoWithResources(Booking b)
+        {
+            var dto = ToDto(b);
+            if (!IsAdmin() || b.ResourceAllocation is null) return dto;
+
+            return dto with
+            {
+                ResourceAllocation = new BookingResourceSummaryDto(
+                    b.ResourceAllocation.IsApproved, b.ResourceAllocation.UpdatedAt)
+            };
+        }
     }
 }

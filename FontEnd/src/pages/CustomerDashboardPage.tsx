@@ -99,7 +99,12 @@ export type BookingStatusKey =
   | 'awaiting_confirmation'
   | 'confirmed_balance'
   | 'confirmed_paid'
-  | 'completed'
+  // Completed splits on payment exactly as confirmed does. A booking can legitimately
+  // be Completed with money still owed — CompleteBookingAsync gates on the event's end
+  // time having passed, not on the invoice being settled — so a single "Completed"
+  // label would hide a real outstanding balance from both staff and customer.
+  | 'completed_balance'
+  | 'completed_paid'
   | 'cancelled';
 
 export interface DerivedBookingStatus {
@@ -116,14 +121,18 @@ export const DERIVED_STATUS: Record<BookingStatusKey, { label: string; color: st
   awaiting_confirmation: { label: 'Payment Received — Awaiting Confirmation', color: 'var(--accent)' },
   confirmed_balance: { label: 'Confirmed · Awaiting Balance', color: 'var(--primary)' },
   confirmed_paid: { label: 'Confirmed · Fully Paid', color: 'var(--primary)' },
-  completed: { label: 'Completed', color: 'var(--success)' },
+  // Kept as a warning colour, not success: the event happened, but there is money
+  // outstanding and the row should not read as finished business.
+  completed_balance: { label: 'Completed · Balance Due', color: 'var(--accent)' },
+  completed_paid: { label: 'Completed · Paid', color: 'var(--success)' },
   cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
 
 /** Every label the filter can offer, in the order a booking travels through them. */
 export const BOOKING_STATUS_ORDER: BookingStatusKey[] = [
   'draft', 'awaiting_fee', 'awaiting_confirmation',
-  'confirmed_balance', 'confirmed_paid', 'completed', 'cancelled',
+  'confirmed_balance', 'confirmed_paid',
+  'completed_balance', 'completed_paid', 'cancelled',
 ];
 
 /**
@@ -135,10 +144,13 @@ export function derivedStatusOf(booking: BookingResponseDto): DerivedBookingStat
   const deposit = (booking.depositStatus ?? '').toLowerCase();
 
   // Lifecycle first: Cancelled and Completed are admin-asserted facts about the event
-  // and must never be overridden by how much has been paid.
+  // and must never be overridden by how much has been paid. Payment only ever refines
+  // the label WITHIN a lifecycle state — it never moves a booking out of one, so a
+  // fully-paid booking still reads as Completed, and an unpaid one still reads as
+  // Completed rather than being demoted back to Confirmed.
   const key: BookingStatusKey =
     status.includes('cancel') ? 'cancelled'
-      : status === 'completed' ? 'completed'
+      : status === 'completed' ? (deposit === 'paid' ? 'completed_paid' : 'completed_balance')
       : status === 'draft' ? 'draft'
       : status === 'confirmed'
         // Confirmed with nothing on file shouldn't happen (ConfirmBookingAsync refuses
@@ -572,10 +584,14 @@ function InvoiceModal({ order, customer, onClose }: { order: InvoiceResponseDto;
                 <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Services & Add-ons</td>
                 <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.serviceTotal)}</td>
               </tr>
-              <tr>
-                <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Tax</td>
-                <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.taxAmount)}</td>
-              </tr>
+              {/* VAT was removed, so new invoices carry 0 and the row is noise. An
+                  invoice issued while VAT applied keeps its tax and still shows it. */}
+              {invoice.taxAmount > 0 && (
+                <tr>
+                  <td style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>Tax</td>
+                  <td style={{ textAlign: 'right', fontFamily: 'var(--font-display)', fontWeight: 500, color: 'var(--text-primary)' }}>{fmt(invoice.taxAmount)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
 
@@ -782,6 +798,49 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '1rem', marginTop: 0 }}>Checkout</h3>
               
+              {/* One-click stage payments.
+                  Rendered FROM the milestone array, never from a fixed three-button
+                  list: a FoodDelivery booking has exactly one milestone ("Balance due
+                  (delivery)"), and the deposit stage's label carries the admin-editable
+                  DepositPercentage, so hardcoding "50% Payment" would go stale the
+                  moment that setting changes. */}
+              {milestones.length > 0 && (
+                <div style={{ marginBottom: '1.1rem' }}>
+                  <label style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                    Pay a stage
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {milestones.map((m, i) => {
+                      // Milestones are CUMULATIVE targets, not independent invoices:
+                      // once something has been paid, m.amountDue is no longer what is
+                      // owed for that stage. What's outstanding is the cumulative target
+                      // minus everything paid so far, capped at the remaining balance.
+                      const owed = Math.min(
+                        remaining,
+                        Math.max(0, m.cumulativeDue - schedule.paidTotal),
+                      );
+                      const done = m.status === 'Paid' || owed <= 0;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          className="cds-btn outline"
+                          disabled={done || isSubmitting}
+                          onClick={() => { setAmount(owed); setCheckoutError(''); }}
+                          style={{
+                            fontSize: '0.78rem',
+                            opacity: done ? 0.5 : 1,
+                            cursor: done ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          {m.label}{done ? ' · Paid' : ` · ${fmt(owed)}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
                   Payment Amount
@@ -807,7 +866,7 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
                   disabled={isSubmitting}
                 />
                 <p style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '0.4rem' }}>
-                  You may enter a partial amount to pay.
+                  Pick a stage above, or enter any partial amount.
                 </p>
               </div>
 

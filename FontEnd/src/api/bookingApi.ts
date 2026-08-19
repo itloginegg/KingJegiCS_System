@@ -64,6 +64,19 @@ export interface BookingCreatePayload {
   guestCount?: number | null;
   menuPackageId?: string | null;
   contactNumber?: string | null;
+  /**
+   * Event-type-specific details. The server rejects fields that don't belong to the
+   * chosen eventType (see EventDetailRules), so send only the applicable set — the
+   * helper `eventDetailFieldsFor` below says which that is.
+   */
+  groomName?: string | null;
+  brideName?: string | null;
+  celebrantName?: string | null;
+  celebrantSex?: string | null;
+  celebrantAge?: number | null;
+  eventName?: string | null;
+  motif?: string | null;
+  theme?: string | null;
 }
 
 /** Matches BookingUpdateDto on the backend. */
@@ -78,6 +91,14 @@ export interface BookingUpdatePayload {
   guestCount?: number | null;
   menuPackageId?: string | null;
   contactNumber?: string | null;
+  groomName?: string | null;
+  brideName?: string | null;
+  celebrantName?: string | null;
+  celebrantSex?: string | null;
+  celebrantAge?: number | null;
+  eventName?: string | null;
+  motif?: string | null;
+  theme?: string | null;
 }
 
 /** Matches BookingResponseDto. */
@@ -108,6 +129,58 @@ export interface BookingResponse {
   createdAt: string;
   /** Internal staff note. Always null for a customer — the server only fills it for admins. */
   adminNote: string | null;
+
+  // Event-type-specific details. Whichever set doesn't apply to `eventType` is null.
+  groomName: string | null;
+  brideName: string | null;
+  celebrantName: string | null;
+  celebrantSex: string | null;
+  celebrantAge: number | null;
+  eventName: string | null;
+
+  motif: string | null;
+  motifImageUrl: string | null;
+  theme: string | null;
+  themeImageUrl: string | null;
+
+  /**
+   * Resource-plan summary, for the admin list's "Edit Resources" affordance.
+   *
+   * null means EITHER no plan has been saved OR this particular response didn't load
+   * it — only the list and detail reads populate it, never a mutation response. Treat
+   * null as "unknown/none" and refetch rather than concluding a plan was deleted.
+   */
+  resourceAllocation: { isApproved: boolean; updatedAt: string } | null;
+}
+
+/** Which event-detail fields the server will accept for a given event type. */
+export function eventDetailFieldsFor(
+  eventType: string | null | undefined,
+): 'couple' | 'celebrant' | 'named' | 'none' {
+  if (eventType === 'Wedding') return 'couple';
+  if (eventType === 'Birthday' || eventType === 'Debut') return 'celebrant';
+  if (eventType === 'Corporate' || eventType === 'Others') return 'named';
+  return 'none';
+}
+
+/**
+ * Display names for the EventType enum.
+ *
+ * The enum value is not the label: `Others` shows as "Other" in the booking wizard,
+ * and a raw enum should never reach a heading or subtitle.
+ */
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  Wedding: 'Wedding',
+  Corporate: 'Corporate Event',
+  Birthday: 'Birthday Party',
+  Debut: 'Debut',
+  Others: 'Other',
+};
+
+/** Enum → label, falling back to the raw value for anything unmapped. */
+export function eventTypeLabel(eventType: string | null | undefined): string | null {
+  if (!eventType) return null;
+  return EVENT_TYPE_LABELS[eventType] ?? eventType;
 }
 
 /** Matches BookingDetailDto — returned by GET /api/Bookings/{id}. */
@@ -665,4 +738,139 @@ export function updateRentalDeliveryStatus(
     token,
     { deliveryStatus: status, damageNote: damageNote ?? null },
   );
+}
+
+// ── Event resource allocation (admin) ──────────────────────────────────
+//
+// Operational planning only: furniture, service-ware and staff counts. Carries no
+// price, consumes no rental stock, and never touches the booking total or invoice —
+// which is exactly why, unlike the rentals/services lines, it can be edited on a
+// Confirmed booking. See Models/Bookingresourceallocation.cs for the full rationale.
+
+/** The nine counts. Same shape for a saved plan and for the server's suggestion. */
+export interface ResourceCounts {
+  longTables: number;
+  roundTables: number;
+  chairs: number;
+  plates: number;
+  spoons: number;
+  forks: number;
+  waiters: number;
+  servers: number;
+  others: number;
+}
+
+/** Matches BookingResourcesDto. */
+export interface BookingResources {
+  bookingId: string;
+  eventType: string | null;
+  guestCount: number | null;
+  /** null when no plan has been saved yet — distinct from a plan that is all zeros. */
+  allocation: ResourceCounts | null;
+  isApproved: boolean;
+  approvedAt: string | null;
+  updatedAt: string | null;
+  /**
+   * Server-computed from guest count and the SystemSettings ratios, so the formulas
+   * live in one place and can be retuned without a redeploy. null when the booking has
+   * no guest count to scale from (a food delivery).
+   */
+  suggested: ResourceCounts | null;
+}
+
+/** The nine counts plus the plan-level sign-off. Matches SaveResourceAllocationDto. */
+export interface SaveResourcesPayload extends ResourceCounts {
+  /** Approves the RESOURCE PLAN. Does not change the booking's status. */
+  isApproved: boolean;
+}
+
+/** Read a booking's resource plan and the suggestion for it. Owner/Assistant only. */
+export function getBookingResources(
+  token: string,
+  bookingId: string,
+): Promise<BookingResources> {
+  return request<BookingResources>(`/api/Bookings/${bookingId}/resources`, 'GET', token);
+}
+
+/** Create or replace a booking's resource plan. Owner/Assistant only. */
+export function saveBookingResources(
+  token: string,
+  bookingId: string,
+  payload: SaveResourcesPayload,
+): Promise<BookingResources> {
+  return request<BookingResources>(`/api/Bookings/${bookingId}/resources`, 'PUT', token, payload);
+}
+
+// ── Motif & theme reference images ─────────────────────────────────────
+
+/**
+ * Uploads a reference image, replacing any previous one for that field.
+ *
+ * Multipart rather than JSON, so it can't go through `request` — that helper sets a
+ * JSON Content-Type, and a multipart body needs the browser to set the header itself
+ * (it has to append the boundary token, which we can't know here).
+ */
+async function uploadBookingImage(
+  token: string,
+  bookingId: string,
+  kind: 'motif' | 'theme',
+  file: File,
+): Promise<BookingResponse> {
+  const form = new FormData();
+  form.append('file', file);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/Bookings/${bookingId}/${kind}-image`, {
+      method: 'POST',
+      // Deliberately no Content-Type — see above.
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+  } catch {
+    throw new BookingApiError(
+      'Unable to reach the server. Make sure the backend is running, then try again.',
+    );
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new BookingApiError(
+      'Your session has expired or you lack permission. Please sign in again.',
+      res.status,
+    );
+  }
+  if (!res.ok) {
+    const message = await readErrorMessage(res);
+    throw new BookingApiError(
+      message ?? `The server responded with an error (HTTP ${res.status}).`,
+      res.status,
+    );
+  }
+  return (await res.json()) as BookingResponse;
+}
+
+export function uploadMotifImage(token: string, bookingId: string, file: File) {
+  return uploadBookingImage(token, bookingId, 'motif', file);
+}
+
+export function uploadThemeImage(token: string, bookingId: string, file: File) {
+  return uploadBookingImage(token, bookingId, 'theme', file);
+}
+
+/**
+ * Client-side guard mirroring ImageUploadHelper.ValidateImage, so an oversized or
+ * wrong-typed file is refused before it is uploaded rather than after. The server
+ * still enforces both — this is for feedback speed, not security.
+ */
+export const REFERENCE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const REFERENCE_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+export function validateReferenceImage(file: File): string | null {
+  if (!REFERENCE_IMAGE_TYPES.includes(file.type)) {
+    return 'Please choose a JPG, PNG, or WebP image.';
+  }
+  if (file.size > REFERENCE_IMAGE_MAX_BYTES) {
+    return 'That image is larger than 5 MB. Please choose a smaller file.';
+  }
+  return null;
 }
