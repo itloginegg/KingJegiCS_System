@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
@@ -141,6 +141,25 @@ import {
   AnnouncementApiError,
   type Announcement,
 } from '../api/announcementsApi';
+import {
+  fetchGalleryForAdmin,
+  uploadGalleryImage,
+  deleteGalleryImage,
+  getFullImageUrl as getGalleryImageUrl,
+  GalleryApiError,
+  GALLERY_ACCEPTED_TYPES,
+  GALLERY_MAX_IMAGES,
+  GALLERY_MAX_IMAGE_BYTES,
+  type GalleryImageAdmin,
+} from '../api/galleryApi';
+import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { PaymentsToolbar } from '../components/admin/payments/PaymentsToolbar';
+import { PaymentsTable } from '../components/admin/payments/PaymentsTable';
+import { RefundConfirmModal } from '../components/admin/payments/RefundConfirmModal';
+import { BookingsTreeMenu } from '../components/admin/bookings/BookingsTreeMenu';
+import { BookingsToolbar } from '../components/admin/bookings/BookingsToolbar';
+import { BookingsTable } from '../components/admin/bookings/BookingsTable';
+import type { BookingGroupKey, BookingRowActions } from '../components/admin/bookings/types';
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
 import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
 import EventResourcesModal from '../components/admin/EventResourcesModal';
@@ -153,10 +172,9 @@ import { ToastViewport, useToasts } from '../components/ui/Toasts';
 /* Fallback identity; the signed-in admin account takes precedence. */
 const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
-type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
+export type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
 /** Sort order for the Bookings tab list. */
-type ResSort = 'date_asc' | 'date_desc';
 
 
 
@@ -268,11 +286,11 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
    Status maps & helpers
 ───────────────────────────────────────────────────────────────────────── */
 
-const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
+export const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
   Draft: { label: 'Draft', color: 'var(--text-dim)' },
   Pending: { label: 'Pending', color: 'var(--accent)' },
   Confirmed: { label: 'Confirmed', color: 'var(--primary)' },
-  Completed: { label: 'Completed', color: '#4a90d9' },
+  Completed: { label: 'Completed', color: 'var(--status-info)' },
   Cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
 
@@ -282,12 +300,38 @@ const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }>
   Pending: { label: 'Pending', color: 'var(--accent)' },
   Success: { label: 'Success', color: 'var(--primary)' },
   Failed: { label: 'Failed', color: 'var(--danger)' },
-  PartiallyRefunded: { label: 'Partially Refunded', color: '#4a90d9' },
-  Refunded: { label: 'Refunded', color: '#4a90d9' },
+  PartiallyRefunded: { label: 'Partially Refunded', color: 'var(--status-refund)' },
+  Refunded: { label: 'Refunded', color: 'var(--status-refund)' },
 };
 
 const paymentStatusMeta = (status: string) =>
   PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-dim)' };
+
+/**
+ * Booking.DepositStatus → badge colour.
+ *
+ * Deliberately NOT PAYMENT_STATUS, despite both being "payment" colours: that map is
+ * keyed by the *Payment record's* status (Pending/Success/Failed/PartiallyRefunded/
+ * Refunded) and shares not one key with DepositStatus. Reusing it would silently fall
+ * through to the grey default on every booking row.
+ *
+ * Same { label, color } shape as the maps above, so StatusBadge and the bookings
+ * table derive the soft wash from one value via color-mix.
+ */
+export type DepositStatusKey = 'Unpaid' | 'Reserved' | 'Partial' | 'Paid';
+
+export const DEPOSIT_STATUS: Record<DepositStatusKey, { label: string; color: string }> = {
+  Unpaid: { label: 'Unpaid', color: 'var(--status-unpaid)' },
+  Reserved: { label: 'Reserved', color: 'var(--primary)' },
+  Partial: { label: 'Partial', color: 'var(--status-partial)' },
+  Paid: { label: 'Paid', color: 'var(--status-paid)' },
+};
+
+/** Enum order, for sorting the Payment Status column by progress rather than alphabet. */
+export const DEPOSIT_STATUS_ORDER: DepositStatusKey[] = ['Unpaid', 'Reserved', 'Partial', 'Paid'];
+
+export const depositStatusMeta = (status: string) =>
+  DEPOSIT_STATUS[status as DepositStatusKey] ?? { label: status, color: 'var(--text-dim)' };
 
 const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
   Pending: { label: 'Pending', color: 'var(--accent)' },
@@ -296,7 +340,67 @@ const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> 
 };
 
 export const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
-const fmtDate = (iso: string) => {
+
+/** Zero-pads a month/day for building a local "YYYY-MM-DD" without UTC drift. */
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Rounds a chart axis maximum up to a readable step, so the gridline labels land
+ * on round pesos instead of whatever the tallest bar happened to be. The ladder is
+ * deliberately fine-grained — a coarse 1/2/5 one leaves the tallest bar stranded
+ * at ~60% of the plot on a lot of real windows.
+ */
+const NICE_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+const niceCeil = (v: number) => {
+  if (v <= 0) return 0;
+  const mag = 10 ** Math.floor(Math.log10(v));
+  const n = v / mag;
+  return (NICE_STEPS.find((s) => n <= s) ?? 10) * mag;
+};
+
+/** Compact peso for axis ticks: ₱1.2M, ₱12k, ₱850. */
+const fmtCompact = (n: number) => {
+  if (n >= 1_000_000) return `₱${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `₱${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}k`;
+  return `₱${Math.round(n)}`;
+};
+
+/** Minimal line icons for the overview KPI cards. */
+function OvIcon({ name }: { name: 'wallet' | 'clock' | 'calendar' | 'inbox' }) {
+  const paths = {
+    wallet: (
+      <>
+        <rect x="2.6" y="5" width="14.8" height="11" rx="2.6" />
+        <path d="M2.6 8.6h14.8" />
+        <circle cx="14" cy="12.2" r="1" fill="currentColor" stroke="none" />
+      </>
+    ),
+    clock: (
+      <>
+        <circle cx="10" cy="10" r="7.1" />
+        <path d="M10 5.9v4.4l2.9 1.7" />
+      </>
+    ),
+    calendar: (
+      <>
+        <rect x="3" y="4.6" width="14" height="12.4" rx="2.6" />
+        <path d="M3 8.6h14M7 3.1v3M13 3.1v3" />
+      </>
+    ),
+    inbox: (
+      <>
+        <path d="M3 11.6 5.2 5.3A1.6 1.6 0 0 1 6.7 4.2h6.6a1.6 1.6 0 0 1 1.5 1.1l2.2 6.3v2.9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z" />
+        <path d="M3 11.6h3.6l.9 1.9h5l.9-1.9H17" />
+      </>
+    ),
+  }[name];
+  return (
+    <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths}
+    </svg>
+  );
+}
+export const fmtDate = (iso: string) => {
   try {
     return new Date(iso).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
   } catch {
@@ -308,7 +412,7 @@ const fmtDate = (iso: string) => {
  * "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, which isn't a date, so it's
  * parsed positionally. Null/absent renders as an em dash.
  */
-const fmtTime = (hms: string | null | undefined) => {
+export const fmtTime = (hms: string | null | undefined) => {
   if (!hms) return '—';
   const [h, m] = hms.split(':').map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return hms;
@@ -371,6 +475,28 @@ type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rental
 
 /** The sidebar's "Booking Histories" link routes here rather than switching tabs in place. */
 const HISTORIES_PATH = '/admin/booking-histories';
+
+/**
+ * Tabs that survive a refresh, as `?tab=`. Overview is the default and carries no
+ * param, so a bare /admin stays clean.
+ *
+ * 'histories' is absent on purpose: it owns HISTORIES_PATH, a real pathname, and
+ * giving it a second spelling would let the URL contradict itself.
+ * 'placeholder' is absent because it means nothing without the in-memory name that
+ * goes with it — restoring it from a URL would land on a blank panel.
+ */
+const URL_TABS = [
+  'bookings', 'payments', 'packages', 'menus', 'rentals',
+  'services', 'testimonials', 'audit', 'announcements',
+] as const;
+
+const isUrlTab = (v: string | null): v is (typeof URL_TABS)[number] =>
+  v !== null && (URL_TABS as readonly string[]).includes(v);
+
+const RES_STATUS_VALUES = ['Draft', 'Pending', 'Confirmed', 'Completed', 'Cancelled'] as const;
+
+const isResStatusParam = (v: string | null): v is ResStatus =>
+  v !== null && (RES_STATUS_VALUES as readonly string[]).includes(v);
 
 /* "Announcements" used to live here — it's a real tab now, backed by
    /api/Announcements. */
@@ -747,7 +873,7 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <strong style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', color: 'var(--text-primary)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.customerName}</strong>
-                {t.unreadFromCustomer > 0 && <span style={{ background: 'var(--accent)', color: '#fff', fontSize: '0.55rem', fontWeight: 600, borderRadius: 'var(--r-full)', padding: '0.1rem 0.4rem' }}>{t.unreadFromCustomer}</span>}
+                {t.unreadFromCustomer > 0 && <span style={{ background: 'var(--accent)', color: 'var(--accent-text)', fontSize: '0.55rem', fontWeight: 600, borderRadius: 'var(--r-full)', padding: '0.1rem 0.4rem' }}>{t.unreadFromCustomer}</span>}
                 {t.status === 'Closed' && <span style={{ color: 'var(--text-dim)', fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Closed</span>}
               </div>
               <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '0.15rem' }}>{t.lastMessagePreview ?? 'No messages yet'}</div>
@@ -860,12 +986,18 @@ export function AdminDashboardPage() {
   const { user: authUser, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const adminName = authUser?.name ?? FALLBACK_ADMIN.name;
 
   const [tab, setTab] = useState<Tab>('overview');
   const [placeholderName, setPlaceholderName] = useState(PLACEHOLDER_ITEMS[0]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /* Sidebar accordion for Bookings. Lives here, not in the component, so it survives
+     tab switches and can be forced open when a status arrives from the URL. */
+  const [bookingsNavOpen, setBookingsNavOpen] = useState(false);
+  /** Last status the admin chose, so returning to Bookings resumes where they left off. */
+  const lastBookingStatus = useRef<'all' | ResStatus>('all');
 
   const [reservations, setReservations] = useState<BookingResponse[]>([]);
   const [newBookingOpen, setNewBookingOpen] = useState(false);
@@ -971,6 +1103,106 @@ export function AdminDashboardPage() {
     }
   };
 
+  /* ── gallery images ───────────────────────────────────────────────────────
+     The public "Events by King Jegi" gallery. Deliberately independent of the
+     announcement composer above: separate state, separate submit, separate
+     endpoint. Posting an announcement never touches these, and uploading here
+     never creates an announcement. */
+  const [galleryImages, setGalleryImages] = useState<GalleryImageAdmin[]>([]);
+  const [galLoading, setGalLoading] = useState(false);
+  const [galError, setGalError] = useState<string | null>(null);
+  const [galUploading, setGalUploading] = useState(false);
+  const [galDeletingId, setGalDeletingId] = useState<string | null>(null);
+  const [galCaption, setGalCaption] = useState('');
+
+  const loadGallery = async () => {
+    const session = readSession();
+    if (!session?.token) {
+      setGalError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+    setGalLoading(true);
+    setGalError(null);
+    try {
+      setGalleryImages(await fetchGalleryForAdmin(session.token));
+    } catch (err) {
+      setGalError(
+        err instanceof GalleryApiError ? err.message : 'Could not load the gallery. Please try again.',
+      );
+    } finally {
+      setGalLoading(false);
+    }
+  };
+
+  const uploadGalleryImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = ''; // let the same file be re-picked after a removal
+    if (picked.length === 0) return;
+
+    const session = readSession();
+    if (!session?.token) {
+      setGalError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+
+    const room = GALLERY_MAX_IMAGES - galleryImages.length;
+    const problems: string[] = [];
+    const queue: File[] = [];
+    for (const file of picked) {
+      if (!GALLERY_ACCEPTED_TYPES.includes(file.type)) {
+        problems.push(`${file.name} — only JPG, PNG or WebP.`);
+      } else if (file.size > GALLERY_MAX_IMAGE_BYTES) {
+        problems.push(`${file.name} — over 5 MB.`);
+      } else if (queue.length >= room) {
+        problems.push(`${file.name} — the gallery is full at ${GALLERY_MAX_IMAGES} images.`);
+      } else {
+        queue.push(file);
+      }
+    }
+
+    setGalUploading(true);
+    setGalError(null);
+    let uploaded = 0;
+    try {
+      for (const file of queue) {
+        // The caption applies to the whole batch — one caption box, so a
+        // multi-file pick shares it rather than silently captioning only the first.
+        const saved = await uploadGalleryImage(session.token, file, galCaption);
+        uploaded += 1;
+        // Merged as each lands, so a mid-batch failure still shows what succeeded.
+        setGalleryImages((prev) => [...prev, saved]);
+      }
+      if (uploaded > 0) setGalCaption('');
+    } catch (err) {
+      problems.push(err instanceof GalleryApiError ? err.message : 'One of the uploads failed.');
+    } finally {
+      setGalUploading(false);
+      setGalError(problems.length > 0 ? problems.join(' ') : null);
+      if (uploaded > 0) {
+        notify('success', `${uploaded} image${uploaded === 1 ? '' : 's'} added to the gallery.`);
+      }
+    }
+  };
+
+  const removeGalleryImage = async (id: string) => {
+    const session = readSession();
+    if (!session?.token) {
+      setGalError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+    setGalDeletingId(id);
+    setGalError(null);
+    try {
+      await deleteGalleryImage(session.token, id);
+      setGalleryImages((prev) => prev.filter((img) => img.id !== id));
+      notify('success', 'Image removed from the gallery.');
+    } catch (err) {
+      setGalError(err instanceof GalleryApiError ? err.message : 'Could not remove that image.');
+    } finally {
+      setGalDeletingId(null);
+    }
+  };
+
   /* calendar — real per-day lock state from /api/CalendarDays (no invented thresholds) */
   const [calendarDays, setCalendarDays] = useState<Map<string, CalendarDay>>(new Map());
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -1032,6 +1264,36 @@ export function AdminDashboardPage() {
   };
 
   /* Owner decisions on a payment; refetches the list afterwards so totals stay honest. */
+  /**
+   * The Payments table's own fetch, scoped to one day server-side.
+   *
+   * Separate from loadPayments so narrowing the table to a date can't narrow the
+   * array the Overview tiles and the refund queue read from.
+   */
+  const loadDatedPayments = async (date: string) => {
+    const session = readSession();
+    if (!session) {
+      setDatedError('You are not signed in. Sign in with an Owner or Assistant account to load payments.');
+      setDatedAuthError(true);
+      return;
+    }
+    setDatedLoading(true);
+    setDatedError(null);
+    setDatedAuthError(false);
+    try {
+      setDatedPayments(await getRecentPayments(session.token, 200, date));
+    } catch (err) {
+      if (err instanceof PaymentApiError) {
+        setDatedError(err.message);
+        setDatedAuthError(err.isAuthError);
+      } else {
+        setDatedError('Unable to load payments. Please try again.');
+      }
+    } finally {
+      setDatedLoading(false);
+    }
+  };
+
   const runPaymentAction = async (
     paymentId: string,
     action: 'confirm' | 'reject' | 'refund' | 'deny',
@@ -1063,7 +1325,9 @@ export function AdminDashboardPage() {
         setDenyTargetId(null);
         setDenyReason('');
       }
-      await loadPayments();
+      // Both: loadPayments backs the Overview tiles and the refund queue, while the
+      // dated list is what the table actually renders.
+      await Promise.all([loadPayments(), loadDatedPayments(paymentDate)]);
     } catch (err) {
       notify(
         'error',
@@ -1354,10 +1618,9 @@ export function AdminDashboardPage() {
   /* bookings tab state */
   const [resFilter, setResFilter] = useState<'all' | ResStatus>('all');
   const [resTypeFilter, setResTypeFilter] = useState<'all' | BookingTypeName>('all');
+  /** Whether the toolbar's Filter panel (the booking-type axis) is expanded. */
+  const [resFilterOpen, setResFilterOpen] = useState(false);
   const [resSearch, setResSearch] = useState('');
-  /* The list has always been sorted by event date ascending; this just makes that a
-     choice. Soonest-first stays the default — it's the order staff work in. */
-  const [resSort, setResSort] = useState<ResSort>('date_asc');
   const [cancelResId, setCancelResId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
@@ -1396,7 +1659,25 @@ export function AdminDashboardPage() {
   /* payments tab state */
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentStatusKey>('all');
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<'all' | BookingTypeName>('all');
-  const [expandedPayment, setExpandedPayment] = useState<string | null>(null);
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState('all');
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentFilterOpen, setPaymentFilterOpen] = useState(false);
+
+  /* The Payments table is scoped to one day, server-side. It gets its own state and
+     loader rather than sharing `payments`: that array also feeds the Overview revenue
+     tiles and the refund queue, and narrowing it to a single day would quietly wrong
+     those numbers. Defaults to today — never a hardcoded date. */
+  const [paymentDate, setPaymentDate] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  });
+  const [datedPayments, setDatedPayments] = useState<AdminPaymentRecord[]>([]);
+  const [datedLoading, setDatedLoading] = useState(false);
+  const [datedError, setDatedError] = useState<string | null>(null);
+  const [datedAuthError, setDatedAuthError] = useState(false);
+
+  /** Payment awaiting refund confirmation, or null. Nothing reaches the endpoint without it. */
+  const [refundTarget, setRefundTarget] = useState<AdminPaymentRecord | null>(null);
 
   /* packages tab state */
 
@@ -1502,25 +1783,50 @@ export function AdminDashboardPage() {
       .filter((r) => resFilter === 'all' || r.status === resFilter)
       // Status and type are independent axes — both must match.
       .filter((r) => resTypeFilter === 'all' || r.bookingType === resTypeFilter)
+      // Name / email / phone / event type. Email joined in from Customer on the list
+      // read — before that the placeholder claimed to search it and never could.
       .filter(
         (r) =>
           q === '' ||
           (r.bookingName && r.bookingName.toLowerCase().includes(q)) ||
+          (r.customerEmail && r.customerEmail.toLowerCase().includes(q)) ||
           (r.contactNumber && r.contactNumber.toLowerCase().includes(q)) ||
           (r.eventType && r.eventType.toLowerCase().includes(q)),
       )
-      // eventDate is an ISO "YYYY-MM-DD" from the DateOnly converter, which sorts
-      // correctly as a plain string — no Date parsing, so a malformed value can't
-      // produce a NaN comparison and scramble the order.
-      .sort((a, b) => {
-        const d = a.eventDate.localeCompare(b.eventDate);
-        return resSort === 'date_asc' ? d : -d;
-      });
-  }, [reservations, resFilter, resTypeFilter, resSearch, resSort]);
+      // Ordering belongs to BookingsTable now — it sorts per column, per group.
+  }, [reservations, resFilter, resTypeFilter, resSearch]);
 
-  const filteredPayments = payments
-    .filter((p) => paymentFilter === 'all' || p.status === paymentFilter)
-    .filter((p) => paymentTypeFilter === 'all' || p.bookingType === paymentTypeFilter);
+  /* Status / method / booking-type / free-text, over the day the server already
+     narrowed to. The date itself is NOT filtered here — doing that over a `take`-capped
+     page would report an empty day for any date older than the newest 50 payments. */
+  const filteredPayments = useMemo(() => {
+    const q = paymentSearch.trim().toLowerCase();
+    return datedPayments
+      .filter((p) => paymentFilter === 'all' || p.status === paymentFilter)
+      .filter((p) => paymentTypeFilter === 'all' || p.bookingType === paymentTypeFilter)
+      .filter((p) => paymentMethodFilter === 'all' || p.method === paymentMethodFilter)
+      .filter(
+        (p) =>
+          q === '' ||
+          p.invoiceId.toLowerCase().includes(q) ||
+          p.customerName.toLowerCase().includes(q) ||
+          p.customerEmail.toLowerCase().includes(q) ||
+          p.bookingName.toLowerCase().includes(q) ||
+          (p.transactionReference ?? '').toLowerCase().includes(q),
+      );
+  }, [datedPayments, paymentFilter, paymentTypeFilter, paymentMethodFilter, paymentSearch]);
+
+  /** Bookings that can still take a cash payment — the Log Cash dropdown's source. */
+  const cashCandidates = useMemo(
+    () => reservations.filter(
+      (b) => (b.status === 'Pending' || b.status === 'Confirmed') && b.depositStatus !== 'Paid',
+    ),
+    [reservations],
+  );
+
+  /** The open refund request for a payment, if the queue has one. */
+  const findRefundRequest = (paymentId: string) =>
+    refundQueue.find((r) => r.paymentId === paymentId);
 
   const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
 
@@ -1599,12 +1905,56 @@ export function AdminDashboardPage() {
     }
   };
 
+  /**
+   * Switch tabs and record it in the URL, so refresh/back/bookmark all work.
+   *
+   * Tab changes PUSH a history entry; status changes within the Bookings tab replace
+   * (see selectBookingStatus), so clicking through five statuses doesn't cost five
+   * presses of Back to leave the page.
+   */
   const openTab = (t: Tab) => {
     setTab(t);
     setSidebarOpen(false);
+
+    const params = new URLSearchParams(searchParams);
+    if (isUrlTab(t)) params.set('tab', t); else params.delete('tab');
+    // The status filter belongs to the Bookings tab; carrying it elsewhere would
+    // leave a stale param to be restored on the next visit.
+    if (t !== 'bookings') params.delete('status');
+
     // Booking Histories owns a URL of its own; leaving it must drop that URL, or the
     // address bar would keep claiming we're on a page we've navigated away from.
-    if (t !== 'histories' && location.pathname === HISTORIES_PATH) navigate('/admin');
+    if (t !== 'histories' && location.pathname === HISTORIES_PATH) {
+      navigate({ pathname: '/admin', search: params.toString() });
+      return;
+    }
+    setSearchParams(params);
+  };
+
+  /**
+   * The single writer for `resFilter`. Selects the Bookings tab, sets the status,
+   * expands the sidebar group and closes the mobile drawer — every entry point goes
+   * through here (sidebar children, the table's View All, and the three hand-offs
+   * from Overview and the notification feed), so state and URL can't drift apart.
+   */
+  const selectBookingStatus = (next: 'all' | ResStatus) => {
+    setResFilter(next);
+    // Remembered separately from the URL: leaving the tab drops ?status=, so the URL
+    // can't be what restores the last-used filter on the way back.
+    lastBookingStatus.current = next;
+    setBookingsNavOpen(true);
+    setTab('bookings');
+    setSidebarOpen(false);
+
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', 'bookings');
+    if (next === 'all') params.delete('status'); else params.set('status', next);
+
+    if (location.pathname === HISTORIES_PATH) {
+      navigate({ pathname: '/admin', search: params.toString() });
+      return;
+    }
+    setSearchParams(params, { replace: true });
   };
 
   /* ── menus & dishes: fetch ── */
@@ -2264,14 +2614,25 @@ export function AdminDashboardPage() {
 
     switch (notificationTarget(n)) {
       case 'booking':
-        setResFilter('all');   // the booking may not match the current status filter
+        // 'all' because the booking may not match the current status filter.
         setResSearch(n.bookingName ?? '');
-        openTab('bookings');
+        selectBookingStatus('all');
         break;
       case 'payment':
-        // The admin list expands by payment id, so targetId drops straight in.
-        if (n.targetId) setExpandedPayment(n.targetId);
+        /* The old list expanded a row by payment id; the table has no expandable row,
+           so the hand-off is a search instead — the same shape as the booking case.
+           The date is reset to today because the table is scoped to a single day and a
+           payment notification is, by definition, about one that just happened. */
+        setPaymentSearch(n.bookingName ?? '');
         setPaymentFilter('all');
+        setPaymentMethodFilter('all');
+        setPaymentTypeFilter('all');
+        {
+          const d = new Date();
+          const todayIso = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+          setPaymentDate(todayIso);
+          void loadDatedPayments(todayIso);
+        }
         openTab('payments');
         break;
       case 'chat':
@@ -2373,9 +2734,39 @@ export function AdminDashboardPage() {
     }
   };
 
+  /* Row counts per status for the bookings tree-menu. Counted off `reservations`, not
+     `filteredRes`, so the numbers don't collapse to the group you already picked. */
+  const resCounts = useMemo(() => {
+    const out: Record<BookingGroupKey, number> = {
+      Draft: 0, Pending: 0, Confirmed: 0, Completed: 0, Cancelled: 0,
+    };
+    for (const r of reservations) {
+      if (r.status in out) out[r.status as BookingGroupKey] += 1;
+    }
+    return out;
+  }, [reservations]);
+
+  /* The bookings table's action menu, wired to the handlers that already exist above.
+     Every entry is a pass-through — the dropdown and the old button row drove the same
+     calls, so nothing here changes what a click does. */
+  const bookingActions: BookingRowActions = {
+    onSubmitDraft: (b) => void submitDraftFor(b),
+    onOpenDetail: (b) => void openBookingDetail(b),
+    onLogCash: (b) => setCashTarget({ bookingId: b.id, bookingName: b.bookingName }),
+    onConfirm: (b) => void setResStatus(b.id, 'Confirmed'),
+    onMarkCompleted: (b) => void setResStatus(b.id, 'Completed'),
+    onOpenInvoice: (b) => void openInvoiceFor(b),
+    onGenerateContract: (b) => void openContract(b),
+    onAllocateResources: (b) => setResourcesResId(b.id),
+    onEditNote: (b) => (noteResId === b.id ? setNoteResId(null) : openNoteEditor(b)),
+    onViewHistory: (b) => { openTab('histories'); void openHistory(b.id); },
+    onCancel: (b) => { setCancelResId(b.id); setCancelReason(''); },
+  };
+
   /* refetch every time the tab is opened so admin edits elsewhere show up */
   useEffect(() => {
     if (tab === 'overview' || tab === 'payments') void loadPayments();
+    if (tab === 'payments') void loadDatedPayments(paymentDate);
     if (tab === 'overview') void loadSalesReport();
     if (tab === 'audit') void loadAuditLogs(1);
     // Overview needs them too: the calendar cells, the day-detail modal and the
@@ -2389,7 +2780,7 @@ export function AdminDashboardPage() {
     }
     if (tab === 'services') void loadServiceCatalog();
     if (tab === 'testimonials') void loadTestimonials();
-    if (tab === 'announcements') void loadAnnouncements();
+    if (tab === 'announcements') { void loadAnnouncements(); void loadGallery(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
@@ -2428,12 +2819,32 @@ export function AdminDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Booking Histories is a real route (the sidebar has always linked to it — until
+  /* The URL is the source of truth for which tab and status are showing, so refresh,
+     Back and a pasted link all land where they say they will.
+
+     Booking Histories is a real route (the sidebar has always linked to it — until
      now there was no matching <Route>, so the link bounced admins to the landing
-     page). Keep the tab in step with the URL so deep links and Back work. */
+     page) and wins over any ?tab=.
+
+     Unknown or missing values fall back to overview/'all' rather than being trusted
+     into state — a hand-edited ?status=Foo would otherwise strand the admin on a view
+     with no rows and no obvious way out. */
   useEffect(() => {
-    if (location.pathname === HISTORIES_PATH) setTab('histories');
-  }, [location.pathname]);
+    if (location.pathname === HISTORIES_PATH) {
+      setTab('histories');
+      return;
+    }
+    const t = searchParams.get('tab');
+    setTab(isUrlTab(t) ? t : 'overview');
+
+    const s = searchParams.get('status');
+    setResFilter(isResStatusParam(s) ? s : 'all');
+    if (isResStatusParam(s)) {
+      // A deep link counts as choosing that status.
+      lastBookingStatus.current = s;
+      setBookingsNavOpen(true);
+    }
+  }, [location.pathname, searchParams]);
 
   const menuCategories = useMemo(
     () => [...new Set(menuItems.map((m) => m.itemCategory))].sort(),
@@ -2455,7 +2866,7 @@ export function AdminDashboardPage() {
    */
   const DELIVERY_STATUS_STYLE: Record<DeliveryStatusName, { color: string; label: string }> = {
     Pending: { color: 'var(--text-dim)', label: 'Not yet out' },
-    Delivered: { color: 'var(--warning, #d98324)', label: 'Out' },
+    Delivered: { color: 'var(--warning)', label: 'Out' },
     Damaged: { color: 'var(--danger)', label: 'Needs maintenance' },
     Returned: { color: 'var(--primary)', label: 'Back in stock' },
   };
@@ -2522,10 +2933,53 @@ export function AdminDashboardPage() {
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
 
-  /* Tallest bar in the trend chart. Guarded against an all-zero window, which would
-     otherwise divide every bar height by zero. */
   const salesMonths = salesReport?.months ?? [];
-  const maxRevenue = Math.max(1, ...salesMonths.map((m) => m.net));
+  /* Chart scale. Net and refunds share one axis so a heavy refund month isn't
+     clipped, and the ceiling is rounded up to a readable step. Guarded against an
+     all-zero window, which would otherwise divide every bar height by zero. */
+  const chartTop = niceCeil(Math.max(0, ...salesMonths.map((m) => Math.max(m.net, m.refunds))));
+  const chartTicks = [4, 3, 2, 1, 0].map((i) => (chartTop / 4) * i);
+  const barPct = (v: number) => (chartTop > 0 ? Math.round((v / chartTop) * 100) : 0);
+
+  /* KPI cards. Only revenue has a real historical series behind it (netChangeRatio
+     = first vs. last month); the other three report the share of their queue that
+     needs attention, which is the closest honest figure the API exposes. All four
+     read 0% on an empty dataset. */
+  const share = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+  const revenueTrend = Math.round((salesReport?.netChangeRatio ?? 0) * 100);
+  const activeRes = reservations.filter((r) => r.status === 'Pending' || r.status === 'Confirmed').length;
+
+  const ovMetrics: {
+    label: string; value: string; sub: string;
+    icon: 'wallet' | 'clock' | 'calendar' | 'inbox';
+    accent: boolean; trend: number; dir: 'up' | 'down'; trendHint: string;
+  }[] = [
+    {
+      label: 'Total Revenue', value: fmt(totalRevenue), sub: 'from confirmed payments',
+      icon: 'wallet', accent: true,
+      trend: revenueTrend, dir: revenueTrend < 0 ? 'down' : 'up',
+      trendHint: `Net collected, first vs. last of the past ${SALES_MONTHS} months`,
+    },
+    {
+      label: 'Pending Payments', value: String(pendingPayments.length),
+      sub: `${fmt(pendingPayTotal)} awaiting confirmation`,
+      icon: 'clock', accent: false,
+      trend: share(pendingPayments.length, payments.length), dir: 'down',
+      trendHint: 'Share of all payments still unconfirmed',
+    },
+    {
+      label: 'Upcoming Events', value: String(upcomingCount), sub: 'within the next 30 days',
+      icon: 'calendar', accent: false,
+      trend: share(upcomingCount, activeRes), dir: 'up',
+      trendHint: 'Share of active bookings landing in the next 30 days',
+    },
+    {
+      label: 'Pending Reservations', value: String(pendingRes.length), sub: 'awaiting your review',
+      icon: 'inbox', accent: false,
+      trend: share(pendingRes.length, reservations.length), dir: 'up',
+      trendHint: 'Share of all reservations still waiting on a decision',
+    },
+  ];
 
   const NAV: { id: Tab; label: string; icon: string; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: '▦' },
@@ -2593,6 +3047,44 @@ export function AdminDashboardPage() {
           border-color: var(--border-accent);
           color: var(--primary);
         }
+        .adm-nav-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+        /* ── bookings accordion in the sidebar ──
+           Children reuse .adm-nav-item wholesale, so the active treatment is the same
+           rule every other nav entry uses rather than a lookalike that drifts. Only
+           the indent, the tree lines and the type scale are new. */
+        .adm-nav-tree { display: flex; flex-direction: column; }
+        .adm-nav-label { flex: 1; }
+        .adm-nav-caret { flex-shrink: 0; color: var(--text-dim); }
+        .adm-nav-item.active .adm-nav-caret { color: var(--primary); }
+
+        .adm-nav-children {
+          list-style: none; margin: 0.2rem 0 0; padding: 0 0 0 1.25rem;
+          display: flex; flex-direction: column; gap: 0.12rem;
+        }
+        .adm-nav-children > li { position: relative; padding-left: 0.95rem; }
+        /* Elbow: down from the trunk, then curving right into the child. */
+        .adm-nav-children > li::before {
+          content: ''; position: absolute; left: 0; top: 0;
+          width: 0.62rem; height: calc(50% + 1px);
+          border-left: 1px solid var(--border);
+          border-bottom: 1px solid var(--border);
+          border-bottom-left-radius: 9px;
+          pointer-events: none;
+        }
+        /* Trunk continuation — unbroken between children, stops at the last one. */
+        .adm-nav-children > li:not(:last-child)::after {
+          content: ''; position: absolute; left: 0; top: 50%; bottom: 0;
+          border-left: 1px solid var(--border);
+          pointer-events: none;
+        }
+        .adm-nav-child { padding: 0.46rem 0.7rem; font-size: 0.62rem; gap: 0.5rem; }
+        .adm-nav-child-label { flex: 1; }
+        .adm-nav-count {
+          font-size: 0.58rem; font-weight: 600;
+          color: var(--text-dim); font-variant-numeric: tabular-nums;
+        }
+        .adm-nav-item.active .adm-nav-count { color: var(--primary); }
         .adm-nav-icon {
           width: 27px; height: 27px; flex-shrink: 0;
           border-radius: var(--r-sm);
@@ -2729,9 +3221,9 @@ export function AdminDashboardPage() {
         .adm-btn.outline { background: transparent; color: var(--text-muted); border-color: var(--border); }
         .adm-btn.outline:hover:not(:disabled) { color: var(--primary); border-color: var(--border-accent); background: var(--primary-muted); }
         .adm-btn.danger { background: var(--danger-muted); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
-        .adm-btn.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
-        .adm-btn.info { background: color-mix(in srgb, #4a90d9 12%, transparent); color: #4a90d9; border-color: color-mix(in srgb, #4a90d9 30%, transparent); }
-        .adm-btn.info:hover:not(:disabled) { background: #4a90d9; color: #fff; }
+        .adm-btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-text); }
+        .adm-btn.info { background: color-mix(in srgb, var(--status-info) 12%, transparent); color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 30%, transparent); }
+        .adm-btn.info:hover:not(:disabled) { background: var(--status-info); color: var(--primary-text); }
 
         /* inputs */
         .adm-input {
@@ -2823,6 +3315,214 @@ export function AdminDashboardPage() {
           padding: 0.08rem 0.3rem; border-radius: 3px; margin-bottom: 1px;
         }
 
+
+        /* ── overview redesign ──
+           Self-contained token set so the lime/charcoal dashboard skin stays on the
+           overview tab and doesn't leak into the others, which still run on the
+           house palette. */
+        .adm-ov {
+          --ov-lime: #c0ff00;
+          --ov-lime-2: #a8e400;
+          --ov-lime-soft: #eaffb3;
+          --ov-lime-ink: #4a6b00;
+          --ov-charcoal: #1c1c1c;
+          --ov-ink: #171717;
+          --ov-muted: #8c8c8c;
+          --ov-card: #ffffff;
+          --ov-chip: #f4f4f3;
+          --ov-line: #ececea;
+          --ov-dash: #e2e2df;
+          --ov-neg: #ffe3e7;
+          --ov-neg-ink: #cf3f57;
+          --ov-r: 22px;
+          --ov-font: "Inter", "Jost", system-ui, -apple-system, sans-serif;
+          font-family: var(--ov-font);
+          gap: 1.15rem !important;
+        }
+        .dark .adm-ov {
+          --ov-charcoal: #efeae3;
+          --ov-ink: #f5f0eb;
+          --ov-muted: #9c948a;
+          --ov-card: #17140f;
+          --ov-chip: rgba(245, 240, 235, 0.055);
+          --ov-line: rgba(245, 240, 235, 0.12);
+          --ov-dash: rgba(245, 240, 235, 0.16);
+          --ov-lime-soft: rgba(192, 255, 0, 0.16);
+          --ov-lime-ink: #c0ff00;
+          --ov-neg: rgba(207, 63, 87, 0.18);
+          --ov-neg-ink: #ff8fa1;
+        }
+        .adm-ov .adm-title {
+          font-family: var(--ov-font); font-weight: 600;
+          letter-spacing: -0.03em; color: var(--ov-ink);
+        }
+        .adm-ov .adm-title em { color: var(--ov-lime-ink) !important; font-style: normal !important; }
+        .adm-ov .adm-greet { font-family: var(--ov-font); font-size: 0.8rem; font-weight: 400; color: var(--ov-muted); margin-top: 0.3rem; }
+        .adm-ov .adm-iconbtn {
+          border-radius: 50%; background: var(--ov-chip);
+          border-color: transparent; color: var(--ov-muted);
+        }
+        .adm-ov .adm-iconbtn:hover { background: var(--ov-lime); border-color: transparent; color: #1c1c1c; }
+
+        /* top region — 2x2 KPI grid on the left, sales panel on the right */
+        .adm-ov-top {
+          display: grid;
+          grid-template-columns: minmax(280px, 4.4fr) minmax(340px, 5.6fr);
+          gap: 1.15rem; align-items: stretch;
+        }
+        .adm-ov-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 1.15rem; }
+        @media (max-width: 1080px) { .adm-ov-top { grid-template-columns: 1fr; } }
+        @media (max-width: 560px)  { .adm-ov-kpis { grid-template-columns: 1fr; } }
+
+        .adm-ov-surface {
+          background: var(--ov-card);
+          border: 1px solid var(--ov-line);
+          border-radius: var(--ov-r);
+        }
+
+        .adm-ov-kpi {
+          position: relative; overflow: hidden;
+          padding: 1.15rem 1.2rem 1.2rem;
+          min-height: 152px;
+          display: flex; flex-direction: column;
+          transition: transform 0.28s ease, box-shadow 0.28s ease;
+        }
+        .adm-ov-kpi:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(20, 20, 20, 0.09); }
+        .adm-ov-kpi .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; }
+        .adm-ov-kpi .lbl { font-size: 0.775rem; font-weight: 500; letter-spacing: -0.01em; color: var(--ov-muted); }
+        .adm-ov-kpi .ico {
+          width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+          background: var(--ov-chip); color: var(--ov-muted);
+          display: flex; align-items: center; justify-content: center;
+        }
+        .adm-ov-kpi .num {
+          margin-top: auto;
+          font-size: clamp(1.55rem, 2.5vw, 2.05rem);
+          font-weight: 700; letter-spacing: -0.035em; line-height: 1.05;
+          color: var(--ov-ink);
+        }
+        .adm-ov-kpi .foot {
+          display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+          margin-top: 0.5rem; font-size: 0.685rem; font-weight: 400; color: var(--ov-muted);
+        }
+
+        /* the single accent card — rich green with a lime bloom in the corner */
+        .adm-ov-kpi.accent {
+          border-color: transparent;
+          background:
+            radial-gradient(120% 95% at 92% 4%, rgba(192, 255, 0, 0.55) 0%, rgba(192, 255, 0, 0) 58%),
+            linear-gradient(142deg, #37ad63 0%, #16794a 52%, #073f2c 100%);
+          box-shadow: 0 10px 30px rgba(11, 82, 55, 0.24);
+        }
+        .adm-ov-kpi.accent .lbl { color: rgba(255, 255, 255, 0.9); }
+        .adm-ov-kpi.accent .num { color: #ffffff; }
+        .adm-ov-kpi.accent .foot { color: rgba(255, 255, 255, 0.84); }
+        .adm-ov-kpi.accent .ico { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
+
+        .adm-ov-badge {
+          display: inline-flex; align-items: center; gap: 0.15rem;
+          padding: 0.16rem 0.44rem; border-radius: 999px;
+          font-size: 0.655rem; font-weight: 600; letter-spacing: -0.01em;
+          white-space: nowrap;
+        }
+        .adm-ov-badge.up   { background: var(--ov-lime-soft); color: var(--ov-lime-ink); }
+        .adm-ov-badge.down { background: var(--ov-neg); color: var(--ov-neg-ink); }
+        .adm-ov-kpi.accent .adm-ov-badge { background: rgba(192, 255, 0, 0.22); color: var(--ov-lime); }
+
+        /* sales panel */
+        .adm-ov-panel { padding: 1.3rem 1.4rem 1.2rem; display: flex; flex-direction: column; }
+        .adm-ov-panel h3 {
+          font-family: var(--ov-font); font-size: 1.06rem; font-weight: 600;
+          letter-spacing: -0.025em; color: var(--ov-ink); margin: 0;
+        }
+        .adm-ov-panel .sub { font-size: 0.71rem; font-weight: 400; color: var(--ov-muted); margin: 0.25rem 0 0; }
+        .adm-ov-panel .sub b { font-weight: 600; color: var(--ov-ink); }
+        .adm-ov-legend { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+        .adm-ov-legend span {
+          display: inline-flex; align-items: center; gap: 0.35rem;
+          font-size: 0.66rem; font-weight: 500; color: var(--ov-muted);
+        }
+        .adm-ov-legend i { width: 9px; height: 9px; border-radius: 3px; display: block; }
+
+        .adm-ov-chart { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 0.7rem; margin-top: 1.15rem; }
+        .adm-ov-chart .ax {
+          display: flex; flex-direction: column; justify-content: space-between;
+          height: 178px; min-width: 30px; text-align: right;
+          font-size: 0.6rem; font-weight: 500; color: var(--ov-muted);
+        }
+        .adm-ov-chart .ax span { transform: translateY(-0.35em); line-height: 1; }
+        .adm-ov-plot { position: relative; height: 178px; }
+        .adm-ov-plot .grid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; }
+        .adm-ov-plot .grid i { display: block; border-top: 1px dashed var(--ov-dash); }
+        .adm-ov-plot .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; }
+        .adm-ov-grp { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; }
+        .adm-ov-bar {
+          width: clamp(9px, 26%, 19px); min-height: 3px;
+          border-radius: 5px 5px 2px 2px;
+          transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .adm-ov-bar.net { background: repeating-linear-gradient(135deg, var(--ov-lime) 0 5px, var(--ov-lime-2) 5px 10px); }
+        .adm-ov-bar.ref { background: var(--ov-charcoal); }
+        .adm-ov-months { grid-column: 2; display: flex; margin-top: 0.55rem; }
+        .adm-ov-months span {
+          flex: 1; text-align: center;
+          font-size: 0.585rem; font-weight: 500; letter-spacing: 0.14em;
+          text-transform: uppercase; color: var(--ov-muted);
+        }
+
+        .adm-ov-ai { margin-top: auto; padding-top: 0.95rem; border-top: 1px solid var(--ov-line); }
+        .adm-ov-ai .cap {
+          font-size: 0.55rem; font-weight: 600; letter-spacing: 0.2em;
+          text-transform: uppercase; color: var(--ov-muted);
+        }
+        .adm-ov-ai p { font-size: 0.745rem; font-weight: 400; line-height: 1.65; color: var(--ov-ink); margin: 0.35rem 0 0.7rem; }
+        .adm-ov-btn {
+          font-family: var(--ov-font); font-size: 0.7rem; font-weight: 500;
+          padding: 0.5rem 0.95rem; border-radius: 999px;
+          border: 1px solid var(--ov-line); background: var(--ov-chip);
+          color: var(--ov-ink); cursor: pointer;
+          transition: background 0.2s, color 0.2s, border-color 0.2s;
+        }
+        .adm-ov-btn:hover:not(:disabled) { background: var(--ov-lime); border-color: var(--ov-lime); color: #1c1c1c; }
+        .adm-ov-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+        /* full-width calendar, anchored below both */
+        .adm-ov-cal { overflow: hidden; }
+        .adm-ov-cal .adm-cal-head {
+          background: var(--ov-chip); border-bottom: 1px solid var(--ov-line);
+          border-radius: 0; padding: 0.95rem 1.25rem;
+        }
+        .adm-ov-cal .adm-cal-title {
+          font-family: var(--ov-font); font-size: 0.94rem; font-weight: 600;
+          letter-spacing: -0.02em; color: var(--ov-ink);
+        }
+        .adm-ov-cal .adm-cal-grid { gap: 6px; padding: 0.5rem 1rem 0.9rem; }
+        .adm-ov-cal .adm-cal-grid:first-of-type { padding-bottom: 0; }
+        .adm-ov-cal .adm-cal-dow {
+          font-family: var(--ov-font); font-size: 0.575rem; font-weight: 600;
+          letter-spacing: 0.16em; color: var(--ov-muted);
+        }
+        .adm-ov-cal .adm-cal-cell {
+          min-height: 78px; padding: 0.45rem 0.5rem;
+          border-radius: 14px; border: 1px solid transparent;
+          transition: background 0.18s, border-color 0.18s, transform 0.18s;
+        }
+        .adm-ov-cal .adm-cal-cell:hover { transform: translateY(-1px); border-color: var(--ov-dash); }
+        .adm-ov-cal .adm-cal-cell .d {
+          font-family: var(--ov-font); font-size: 0.75rem; font-weight: 600;
+          color: var(--ov-ink); margin-bottom: 0.25rem;
+        }
+        .adm-ov-cal .adm-cal-ev {
+          font-family: var(--ov-font); font-size: 0.55rem; font-weight: 500;
+          border-radius: 5px; padding: 0.1rem 0.32rem;
+        }
+        .adm-ov-cal .adm-cal-foot {
+          border-top: 1px solid var(--ov-line); padding: 0.9rem 1.25rem;
+          display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap;
+          font-family: var(--ov-font); font-size: 0.73rem; color: var(--ov-muted);
+        }
+
+        /* bookings tab — tree-menu column beside the grouped table */
         /* rows */
         .adm-row { border-bottom: 1px solid var(--border); }
         .adm-row:last-child { border-bottom: none; }
@@ -3210,7 +3910,7 @@ export function AdminDashboardPage() {
                   </h3>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? '#999'} />
+                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? 'var(--text-muted)'} />
                   <button type="button" className="adm-iconbtn" aria-label="Close" onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}>✕</button>
                 </div>
               </div>
@@ -3547,16 +4247,37 @@ export function AdminDashboardPage() {
           <nav className="adm-nav" aria-label="Admin navigation">
             <span className="adm-nav-caption">Operations</span>
             {NAV.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`adm-nav-item${tab === item.id ? ' active' : ''}`}
-                onClick={() => openTab(item.id)}
-              >
-                <span className="adm-nav-icon">{item.icon}</span>
-                {item.label}
-                {item.badge != null && item.badge > 0 && <span className="adm-badge">{item.badge}</span>}
-              </button>
+              /* Bookings is an accordion over its status filters rather than a flat
+                 entry; the rest of NAV renders as it always has. */
+              item.id === 'bookings' ? (
+                <BookingsTreeMenu
+                  key={item.id}
+                  expanded={bookingsNavOpen}
+                  onToggleExpanded={() => {
+                    // Expand AND select, so one click always puts something on screen.
+                    // Collapsing while already on Bookings leaves the tab selected.
+                    if (tab === 'bookings') setBookingsNavOpen((o) => !o);
+                    else selectBookingStatus(lastBookingStatus.current);
+                  }}
+                  active={tab === 'bookings'}
+                  value={resFilter}
+                  onSelect={selectBookingStatus}
+                  counts={resCounts}
+                  totalCount={reservations.length}
+                  badge={item.badge}
+                />
+              ) : (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`adm-nav-item${tab === item.id ? ' active' : ''}`}
+                  onClick={() => openTab(item.id)}
+                >
+                  <span className="adm-nav-icon">{item.icon}</span>
+                  {item.label}
+                  {item.badge != null && item.badge > 0 && <span className="adm-badge">{item.badge}</span>}
+                </button>
+              )
             ))}
 
             <span className="adm-nav-caption" style={{ marginTop: '0.9rem' }}>Management</span>
@@ -3630,6 +4351,9 @@ export function AdminDashboardPage() {
           </nav>
 
           <div className="adm-sidebar-foot">
+            {/* The admin dashboard had a full `.dark` styling path but no way to reach
+                it — an admin had to visit the landing page to change theme. */}
+            <ThemeToggle className="adm-foot-btn" showLabel size={14} />
             <button type="button" className="adm-foot-btn danger" onClick={() => void logout()}>
               ⎋ Logout
             </button>
@@ -3670,7 +4394,7 @@ export function AdminDashboardPage() {
                     style={{
                       position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
                       padding: '0 3px', borderRadius: 'var(--r-full)', background: 'var(--danger)',
-                      color: '#fff', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
+                      color: 'var(--accent-text)', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
                       display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
                     }}
                   >
@@ -3747,7 +4471,7 @@ export function AdminDashboardPage() {
 
             {/* ══════════ OVERVIEW ══════════ */}
             {tab === 'overview' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.4rem' }}>
+              <div className="fade-up adm-ov" style={{ display: 'flex', flexDirection: 'column', gap: '1.4rem' }}>
                 <div>
                   <h1 className="adm-title" style={{ fontSize: 'clamp(1.5rem, 2.6vw, 2.1rem)' }}>
                     Good day,{' '}
@@ -3758,84 +4482,102 @@ export function AdminDashboardPage() {
                   </p>
                 </div>
 
-                {/* metrics */}
-                <div className="adm-metrics">
-                  {[
-                    { label: 'Total Revenue', value: fmt(totalRevenue), sub: 'from confirmed payments', color: 'var(--primary)' },
-                    { label: 'Pending Payments', value: String(pendingPayments.length), sub: `${fmt(pendingPayTotal)} awaiting confirmation`, color: 'var(--accent)' },
-                    { label: 'Upcoming Events', value: String(upcomingCount), sub: 'within the next 30 days', color: '#4a90d9' },
-                    { label: 'Pending Reservations', value: String(pendingRes.length), sub: 'awaiting your review', color: 'var(--accent)' },
-                  ].map((m) => (
-                    <div key={m.label} className="adm-card adm-metric">
-                      <div className="head">
-                        <span className="dot" style={{ background: m.color }} />
-                        <span className="lbl">{m.label}</span>
-                      </div>
-                      <div className="num" style={{ color: m.color === 'var(--primary)' ? 'var(--primary)' : 'var(--text-primary)' }}>{m.value}</div>
-                      <div className="sub">{m.sub}</div>
-                    </div>
-                  ))}
-                </div>
+                {/* ── top region: KPI grid + sales panel ── */}
+                <div className="adm-ov-top">
 
-                {/* chart + calendar */}
-                <div className="adm-overview-cols" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 5fr) minmax(340px, 7fr)', gap: '1.4rem', alignItems: 'start' }}>
+                  {/* metrics — 2x2 */}
+                  <div className="adm-ov-kpis">
+                    {ovMetrics.map((m) => (
+                      <div key={m.label} className={`adm-ov-surface adm-ov-kpi${m.accent ? ' accent' : ''}`}>
+                        <div className="top">
+                          <span className="lbl">{m.label}</span>
+                          <span className="ico"><OvIcon name={m.icon} /></span>
+                        </div>
+                        <div className="num">{m.value}</div>
+                        <div className="foot">
+                          <span className={`adm-ov-badge ${m.dir}`} title={m.trendHint}>
+                            {m.dir === 'up' ? '↑' : '↓'} {Math.abs(m.trend)}%
+                          </span>
+                          <span>{m.sub}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* monthly sales report — real collected money, net of refunds */}
-                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.8rem' }}>
+                  <div className="adm-ov-surface adm-ov-panel">
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.9rem', flexWrap: 'wrap' }}>
                       <div>
-                        <FieldLabel text={`Last ${SALES_MONTHS} Months`} />
-                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.2rem' }}>
-                          Monthly Sales
-                        </h3>
+                        <h3>Monthly Sales</h3>
+                        <p className="sub">
+                          Net collected: <b>{fmt(Math.round(salesReport?.totalNet ?? 0))}</b>
+                          {'  |  '}
+                          Refunded: <b>{fmt(Math.round(salesReport?.totalRefunds ?? 0))}</b>
+                        </p>
                       </div>
-                      <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Refresh sales report" onClick={() => void loadSalesReport()} disabled={salesLoading}>
-                        ↻
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+                        <div className="adm-ov-legend">
+                          <span><i style={{ background: 'var(--ov-lime)' }} />Net Collected</span>
+                          <span><i style={{ background: 'var(--ov-charcoal)' }} />Refunded</span>
+                        </div>
+                        <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Refresh sales report" onClick={() => void loadSalesReport()} disabled={salesLoading}>
+                          ↻
+                        </button>
+                      </div>
                     </div>
 
                     {salesError && (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', color: 'var(--danger)', margin: '0.6rem 0 0' }}>
+                      <p style={{ fontSize: '0.74rem', color: 'var(--danger)', margin: '0.7rem 0 0' }}>
                         {salesError}
                       </p>
                     )}
 
                     {salesLoading && !salesReport && (
-                      <div className="adm-skel" style={{ height: 150, marginTop: '1rem' }} aria-hidden="true" />
+                      <div className="adm-skel" style={{ height: 178, marginTop: '1.15rem', borderRadius: 14 }} aria-hidden="true" />
                     )}
 
                     {salesReport && (
                       <>
-                        <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap', margin: '0.5rem 0 1rem', fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                          <span>Net collected: <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(Math.round(salesReport.totalNet))}</strong></span>
-                          <span>Refunded: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(Math.round(salesReport.totalRefunds))}</strong></span>
-                          {salesReport.bestMonthLabel && <span>Best: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{salesReport.bestMonthLabel}</strong></span>}
-                        </div>
-
-                        <div className="adm-chart">
-                          {salesMonths.map((m) => (
-                            <div key={`${m.year}-${m.month}`} className="col" title={`${m.label}: ${fmt(Math.round(m.net))} from ${m.paymentCount} payment(s) across ${m.bookingCount} booking(s)`}>
-                              <span className="val">₱{Math.round(m.net / 1000)}k</span>
-                              <div className="bar" style={{ height: `${Math.round((m.net / maxRevenue) * 100)}%` }} />
-                              <span className="mon">{m.label.split(' ')[0]}</span>
+                        <div className="adm-ov-chart">
+                          <div className="ax">
+                            {chartTicks.map((t, i) => <span key={i}>{fmtCompact(t)}</span>)}
+                          </div>
+                          <div className="adm-ov-plot">
+                            <div className="grid" aria-hidden="true">
+                              {chartTicks.map((_, i) => <i key={i} />)}
                             </div>
-                          ))}
+                            <div className="bars">
+                              {salesMonths.map((m) => (
+                                <div
+                                  key={`${m.year}-${m.month}`}
+                                  className="adm-ov-grp"
+                                  title={`${m.label} — net ${fmt(Math.round(m.net))}, refunded ${fmt(Math.round(m.refunds))}, from ${m.paymentCount} payment(s) across ${m.bookingCount} booking(s)`}
+                                >
+                                  <div className="adm-ov-bar net" style={{ height: `${barPct(m.net)}%` }} />
+                                  <div className="adm-ov-bar ref" style={{ height: `${barPct(m.refunds)}%` }} />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="adm-ov-months">
+                            {salesMonths.map((m) => <span key={`${m.year}-${m.month}`}>{m.label.split(' ')[0]}</span>)}
+                          </div>
                         </div>
 
                         {/* AI summary — on demand, because each fresh window costs a Gemini call */}
-                        <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid var(--border)' }}>
+                        <div className="adm-ov-ai">
                           {salesSummary ? (
                             <>
-                              <FieldLabel text={salesSummary.generated ? 'AI Summary' : 'Summary Unavailable'} />
-                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, lineHeight: 1.65, color: salesSummary.generated ? 'var(--text-secondary)' : 'var(--text-dim)', margin: '0.3rem 0 0.6rem' }}>
+                              <span className="cap">{salesSummary.generated ? 'AI Summary' : 'Summary Unavailable'}</span>
+                              <p style={{ color: salesSummary.generated ? undefined : 'var(--ov-muted)' }}>
                                 {salesSummary.summary}
                               </p>
-                              <button type="button" className="adm-btn outline" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
+                              <button type="button" className="adm-ov-btn" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
                                 {summaryLoading ? 'Thinking…' : '↻ Regenerate'}
                               </button>
                             </>
                           ) : (
-                            <button type="button" className="adm-btn outline" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
+                            <button type="button" className="adm-ov-btn" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
                               {summaryLoading ? 'Thinking…' : '✦ Summarize these numbers'}
                             </button>
                           )}
@@ -3843,115 +4585,115 @@ export function AdminDashboardPage() {
                       </>
                     )}
                   </div>
+                </div>
 
-                  {/* event calendar */}
-                  <div className="adm-card" style={{ overflow: 'hidden' }}>
-                    <div className="adm-cal-head">
-                      <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Previous month" onClick={() => setCalMonth(new Date(calYear, calMo - 1, 1))}>
-                        ‹
-                      </button>
-                      <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                        {calMonth.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
-                      </span>
-                      <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Next month" onClick={() => setCalMonth(new Date(calYear, calMo + 1, 1))}>
-                        ›
-                      </button>
-                    </div>
-                    <div className="adm-cal-grid" style={{ paddingBottom: 0 }}>
-                      {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => <div key={d} className="adm-cal-dow">{d}</div>)}
-                    </div>
-                    <div className="adm-cal-grid" style={{ paddingTop: 0 }}>
-                      {calCells.map((day, i) => {
-                        if (day === null) return <div key={`e${i}`} />;
-                        const dateStr = `${calYear}-${pad(calMo + 1)}-${pad(day)}`;
-                        const dayEvents = reservations.filter(
-                          (r) => r.eventDate === dateStr && (r.status === 'Pending' || r.status === 'Confirmed'),
-                        );
-                        // Real backend state. A date with no row has never been booked.
-                        const cal = calendarDays.get(dateStr);
-                        const locked = cal?.isLocked ?? false;
-                        const manual = cal?.isManuallyLocked ?? false;
-                        const isToday = dateStr === todayISO;
-                        const capacityLabel = cal ? `${cal.confirmedCount}/${cal.maxCapacity} confirmed` : 'no bookings';
-                        return (
-                          <div
-                            key={dateStr}
-                            className="adm-cal-cell"
-                            role="button"
-                            tabIndex={0}
-                            title={`${fmtDate(dateStr)} — ${capacityLabel}${manual ? ' · manually locked' : locked ? ' · full' : ''}. Click to ${locked && manual ? 'unlock' : 'lock'}, double-click for the day's schedule.`}
-                            onClick={() => setLockTargetDate(dateStr)}
-                            onDoubleClick={() => setDayDetailDate(dateStr)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLockTargetDate(dateStr); }
-                              // Keyboard equivalent of the double-click, so the schedule
-                              // isn't mouse-only.
-                              if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setDayDetailDate(dateStr); }
-                            }}
-                            style={{
-                              cursor: 'pointer',
-                              background: manual
-                                ? 'color-mix(in srgb, var(--danger) 12%, transparent)'
-                                : locked ? 'var(--accent-muted)'
-                                : isToday ? 'var(--primary-muted)' : 'transparent',
-                              outline: lockTargetDate === dateStr
-                                ? '1px solid var(--accent)'
-                                : isToday ? '1px solid var(--primary)' : 'none',
-                            }}
-                          >
-                            <div className="d" style={{ color: isToday ? 'var(--primary)' : undefined }}>{day}</div>
-                            {dayEvents.slice(0, 2).map((ev) => {
-                              const c = RES_STATUS[ev.status as ResStatus]?.color || '#999';
-                              return (
-                                <span key={ev.id} className="adm-cal-ev" style={{ color: c, background: `color-mix(in srgb, ${c} 14%, transparent)` }}>
-                                  {ev.bookingName}
-                                </span>
-                              );
-                            })}
-                            {manual ? (
-                              <span className="adm-cal-ev" style={{ color: 'var(--danger)', fontWeight: 600 }}>🔒 locked</span>
-                            ) : locked ? (
-                              <span className="adm-cal-ev" style={{ color: 'var(--accent)', fontWeight: 600 }}>● full</span>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {calendarError && (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--danger)', padding: '0 1rem 0.8rem', margin: 0 }}>
-                        {calendarError}
-                      </p>
-                    )}
-
-                    {/* manual lock/unlock — the admin action the backend has always
-                        supported (SetDayLockDto) but nothing in the UI ever called */}
-                    {lockTargetDate && (() => {
-                      const cal = calendarDays.get(lockTargetDate);
+                {/* ── event calendar — spans the full width beneath both ── */}
+                <div className="adm-ov-surface adm-ov-cal">
+                  <div className="adm-cal-head">
+                    <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Previous month" onClick={() => setCalMonth(new Date(calYear, calMo - 1, 1))}>
+                      ‹
+                    </button>
+                    <span className="adm-cal-title">
+                      {calMonth.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' })}
+                    </span>
+                    <button type="button" className="adm-iconbtn" style={{ width: 30, height: 30 }} aria-label="Next month" onClick={() => setCalMonth(new Date(calYear, calMo + 1, 1))}>
+                      ›
+                    </button>
+                  </div>
+                  <div className="adm-cal-grid">
+                    {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => <div key={d} className="adm-cal-dow">{d}</div>)}
+                  </div>
+                  <div className="adm-cal-grid" style={{ paddingTop: 0 }}>
+                    {calCells.map((day, i) => {
+                      if (day === null) return <div key={`e${i}`} />;
+                      const dateStr = `${calYear}-${pad(calMo + 1)}-${pad(day)}`;
+                      const dayEvents = reservations.filter(
+                        (r) => r.eventDate === dateStr && (r.status === 'Pending' || r.status === 'Confirmed'),
+                      );
+                      // Real backend state. A date with no row has never been booked.
+                      const cal = calendarDays.get(dateStr);
+                      const locked = cal?.isLocked ?? false;
                       const manual = cal?.isManuallyLocked ?? false;
-                      const busy = lockBusyDate === lockTargetDate;
+                      const isToday = dateStr === todayISO;
+                      const capacityLabel = cal ? `${cal.confirmedCount}/${cal.maxCapacity} confirmed` : 'no bookings';
                       return (
-                        <div style={{ borderTop: '1px solid var(--border)', padding: '0.9rem 1rem', display: 'flex', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <div style={{ flex: 1, minWidth: 180, fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                            <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(lockTargetDate)}</strong>
-                            {' — '}
-                            {cal ? `${cal.confirmedCount} of ${cal.maxCapacity} confirmed` : 'nothing booked yet'}
-                            {manual && ' · manually locked'}
-                            {!manual && (cal?.isLocked ?? false) && ' · at capacity'}
-                          </div>
-                          <button
-                            type="button"
-                            className={manual ? 'adm-btn success' : 'adm-btn danger'}
-                            disabled={busy}
-                            onClick={() => void toggleDayLock(lockTargetDate, !manual)}
-                          >
-                            {busy ? 'Saving…' : manual ? 'Unlock this day' : 'Lock this day'}
-                          </button>
-                          <button type="button" className="adm-btn outline" onClick={() => setLockTargetDate(null)}>Close</button>
+                        <div
+                          key={dateStr}
+                          className="adm-cal-cell"
+                          role="button"
+                          tabIndex={0}
+                          title={`${fmtDate(dateStr)} — ${capacityLabel}${manual ? ' · manually locked' : locked ? ' · full' : ''}. Click to ${locked && manual ? 'unlock' : 'lock'}, double-click for the day's schedule.`}
+                          onClick={() => setLockTargetDate(dateStr)}
+                          onDoubleClick={() => setDayDetailDate(dateStr)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLockTargetDate(dateStr); }
+                            // Keyboard equivalent of the double-click, so the schedule
+                            // isn't mouse-only.
+                            if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setDayDetailDate(dateStr); }
+                          }}
+                          style={{
+                            cursor: 'pointer',
+                            // Longhand rather than the `background` shorthand, which
+                            // would also reset background-image/position on every cell.
+                            backgroundColor: manual
+                              ? 'var(--ov-neg)'
+                              : locked ? 'var(--ov-lime-soft)'
+                              : isToday ? 'var(--ov-lime)' : 'var(--ov-chip)',
+                            borderColor: lockTargetDate === dateStr ? 'var(--ov-charcoal)' : 'transparent',
+                          }}
+                        >
+                          <div className="d" style={{ color: isToday ? 'var(--ov-charcoal)' : undefined }}>{day}</div>
+                          {dayEvents.slice(0, 2).map((ev) => {
+                            const c = RES_STATUS[ev.status as ResStatus]?.color || 'var(--text-muted)';
+                            return (
+                              <span key={ev.id} className="adm-cal-ev" style={{ color: c, background: `color-mix(in srgb, ${c} 14%, transparent)` }}>
+                                {ev.bookingName}
+                              </span>
+                            );
+                          })}
+                          {manual ? (
+                            <span className="adm-cal-ev" style={{ color: 'var(--ov-neg-ink)', fontWeight: 600 }}>🔒 locked</span>
+                          ) : locked ? (
+                            <span className="adm-cal-ev" style={{ color: 'var(--ov-lime-ink)', fontWeight: 600 }}>● full</span>
+                          ) : null}
                         </div>
                       );
-                    })()}
+                    })}
                   </div>
+
+                  {calendarError && (
+                    <p style={{ fontSize: '0.7rem', color: 'var(--danger)', padding: '0 1.25rem 0.8rem', margin: 0 }}>
+                      {calendarError}
+                    </p>
+                  )}
+
+                  {/* manual lock/unlock — the admin action the backend has always
+                      supported (SetDayLockDto) but nothing in the UI ever called */}
+                  {lockTargetDate && (() => {
+                    const cal = calendarDays.get(lockTargetDate);
+                    const manual = cal?.isManuallyLocked ?? false;
+                    const busy = lockBusyDate === lockTargetDate;
+                    return (
+                      <div className="adm-cal-foot">
+                        <div style={{ flex: 1, minWidth: 180 }}>
+                          <strong style={{ color: 'var(--ov-ink)', fontWeight: 600 }}>{fmtDate(lockTargetDate)}</strong>
+                          {' — '}
+                          {cal ? `${cal.confirmedCount} of ${cal.maxCapacity} confirmed` : 'nothing booked yet'}
+                          {manual && ' · manually locked'}
+                          {!manual && (cal?.isLocked ?? false) && ' · at capacity'}
+                        </div>
+                        <button
+                          type="button"
+                          className={manual ? 'adm-btn success' : 'adm-btn danger'}
+                          disabled={busy}
+                          onClick={() => void toggleDayLock(lockTargetDate, !manual)}
+                        >
+                          {busy ? 'Saving…' : manual ? 'Unlock this day' : 'Lock this day'}
+                        </button>
+                        <button type="button" className="adm-ov-btn" onClick={() => setLockTargetDate(null)}>Close</button>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* day schedule — double-click a calendar cell. Built entirely from the
@@ -4011,7 +4753,7 @@ export function AdminDashboardPage() {
                                   </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  <StatusBadge label={st?.label ?? r.status} color={st?.color ?? '#999'} />
+                                  <StatusBadge label={st?.label ?? r.status} color={st?.color ?? 'var(--text-muted)'} />
                                   <button
                                     type="button"
                                     className="adm-btn outline"
@@ -4020,7 +4762,10 @@ export function AdminDashboardPage() {
                                       // Bookings tab for this booking by name.
                                       setDayDetailDate(null);
                                       setResSearch(r.bookingName);
-                                      openTab('bookings');
+                                      // Clears the status filter too: without it, opening a
+                                      // Confirmed booking while the filter sat on Draft landed
+                                      // on an empty table.
+                                      selectBookingStatus('all');
                                     }}
                                   >
                                     Open
@@ -4044,7 +4789,7 @@ export function AdminDashboardPage() {
                         Pending Reservations
                       </h3>
                     </div>
-                    <button type="button" className="adm-btn outline" onClick={() => openTab('bookings')}>Review All →</button>
+                    <button type="button" className="adm-btn outline" onClick={() => selectBookingStatus('Pending')}>Review All →</button>
                   </div>
                   {pendingRes.length === 0 ? (
                     <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1rem 0' }}>
@@ -4075,30 +4820,18 @@ export function AdminDashboardPage() {
 
             {/* ══════════ BOOKINGS ══════════ */}
             {tab === 'bookings' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                  <h2 className="adm-title">Bookings</h2>
-                  <input
-                    className="adm-input"
-                    type="search"
-                    placeholder="Search name, email, or event…"
-                    value={resSearch}
-                    onChange={(e) => setResSearch(e.target.value)}
-                    style={{ flex: '0 1 300px' }}
-                    aria-label="Search bookings"
-                  />
-                  <select
-                    className="adm-input"
-                    style={{ flex: '0 1 190px' }}
-                    value={resSort}
-                    onChange={(e) => setResSort(e.target.value as ResSort)}
-                    aria-label="Sort bookings by event date"
-                  >
-                    <option value="date_asc">Event date · soonest first</option>
-                    <option value="date_desc">Event date · latest first</option>
-                  </select>
-                  <button type="button" className="adm-btn primary" onClick={() => setNewBookingOpen(true)}>+ New Booking</button>
-                </div>
+              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+                <h2 className="adm-title">Bookings</h2>
+
+                <BookingsToolbar
+                  search={resSearch}
+                  onSearchChange={setResSearch}
+                  typeFilter={resTypeFilter}
+                  onTypeFilterChange={setResTypeFilter}
+                  filterOpen={resFilterOpen}
+                  onToggleFilter={() => setResFilterOpen((o) => !o)}
+                  onAddBooking={() => setNewBookingOpen(true)}
+                />
 
                 {newBookingOpen && (
                   <NewBookingModal
@@ -4108,310 +4841,120 @@ export function AdminDashboardPage() {
                   />
                 )}
 
-                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'Draft', 'Pending', 'Confirmed', 'Completed', 'Cancelled'] as const).map((k) => {
-                    const count = k === 'all' ? reservations.length : reservations.filter((r) => r.status === k).length;
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', minWidth: 0 }}>
+                  {/* Cancellation requests are the one thing that has to be visible
+                      without opening a row — the customer is waiting on a decision. */}
+                  {filteredRes.some((r) => r.cancellationRequested) && (
+                    <div className="adm-card" style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <FieldLabel text="Cancellation requested" />
+                      {filteredRes.filter((r) => r.cancellationRequested).map((r) => (
+                        <p key={r.id} style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', margin: 0 }}>
+                          <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.bookingName}</strong>
+                          {' — '}{r.cancellationRequestReason || 'no reason given'}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Staff-note editor. Opened from the row menu; kept out of the table
+                      so a 2000-character textarea can't stretch a cell. */}
+                  {noteResId && (() => {
+                    const target = reservations.find((r) => r.id === noteResId);
+                    if (!target) return null;
                     return (
-                      <button key={k} type="button" className={`adm-pill${resFilter === k ? ' active' : ''}`} onClick={() => setResFilter(k)}>
-                        {k === 'all' ? 'All' : k}
-                        <span className="count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Booking type — a second, independent axis from status. Filters the
-                    already-fetched rows client-side; no extra request. */}
-                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'FullService', 'FoodDelivery', 'RentalService'] as const).map((k) => {
-                    const count = k === 'all' ? reservations.length : reservations.filter((r) => r.bookingType === k).length;
-                    return (
-                      <button key={k} type="button" className={`adm-pill${resTypeFilter === k ? ' active' : ''}`} onClick={() => setResTypeFilter(k)}>
-                        {k === 'all' ? 'All Types' : BOOKING_TYPE_LABELS[k]}
-                        <span className="count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {filteredRes.length === 0 ? (
-                  <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                    No bookings match the current view.
-                  </div>
-                ) : (
-                  filteredRes.map((r) => {
-                    const cancelling = cancelResId === r.id;
-                    return (
-                      <div key={r.id} className="adm-card" style={{ padding: '1.35rem 1.5rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
-                          <div style={{ flex: 1, minWidth: 240 }}>
-                            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
-                              {r.bookingName}
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.3rem 1.4rem', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                              <span>Event: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.eventType || r.bookingType}</strong></span>
-                              <span>Starts: <strong style={{ color: 'var(--primary)', fontWeight: 500 }}>{fmtDate(r.eventDate)} · {fmtTime(r.startTime)}</strong></span>
-                              {/* A FoodDelivery order has no end date/time by design. */}
-                              {r.bookingType !== 'FoodDelivery' && (
-                                <span>Ends: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  {r.endDate ? fmtDate(r.endDate) : '—'} · {fmtTime(r.endTime)}
-                                </strong></span>
-                              )}
-                              <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.guestCount || 'N/A'}</strong></span>
-                              <span>Email: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Not provided</strong></span>
-                              <span>Phone: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.contactNumber || 'N/A'}</strong></span>
-                              {r.menuPackageId && <span>Package: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package Selected</strong></span>}
-                            </div>
-                            {r.cancellationRequested && (
-                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.65rem', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.5rem 0.8rem', borderLeft: '2px solid var(--border-accent)' }}>
-                                ⚠ Cancellation Requested: {r.cancellationRequestReason}
-                              </p>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.45rem' }}>
-                            {lockedDates.has(r.eventDate) && (r.status === 'Pending' || r.status === 'Confirmed') && (
-                              <StatusBadge
-                                label={calendarDays.get(r.eventDate)?.isManuallyLocked ? '🔒 Date locked' : '● Date full'}
-                                color={calendarDays.get(r.eventDate)?.isManuallyLocked ? 'var(--danger)' : 'var(--accent)'}
-                              />
-                            )}
-                            <StatusBadge label={RES_STATUS[r.status as ResStatus]?.label || r.status} color={RES_STATUS[r.status as ResStatus]?.color || '#999'} />
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
-                          {r.status === 'Draft' && (
-                            <button type="button" className="adm-btn success" disabled={submitBusyId === r.id} onClick={() => void submitDraftFor(r)}>
-                              {submitBusyId === r.id ? 'Submitting…' : 'Submit for Customer'}
-                            </button>
-                          )}
-                          {/* Sits immediately before Confirm on purpose: logging cash is
-                              what makes Confirm usable, and the deposit hint says so. */}
-                          {r.status === 'Pending' && (
-                            <button
-                              type="button"
-                              className={r.depositStatus === 'Unpaid' ? 'adm-btn primary' : 'adm-btn outline'}
-                              onClick={() => setCashTarget({ bookingId: r.id, bookingName: r.bookingName })}
-                            >
-                              💵 Log Cash
-                            </button>
-                          )}
-                          {r.status === 'Pending' && (
-                            <button
-                              type="button"
-                              className="adm-btn success"
-                              // Mirrors ConfirmBookingAsync's own guard, so the reason is
-                              // visible before the click rather than as a 400 after it.
-                              disabled={r.depositStatus === 'Unpaid'}
-                              title={r.depositStatus === 'Unpaid'
-                                ? 'No payment recorded yet — log the deposit first.'
-                                : undefined}
-                              onClick={() => setResStatus(r.id, 'Confirmed')}
-                            >
-                              Confirm
-                            </button>
-                          )}
-                          {r.status === 'Confirmed' && (
-                            <button type="button" className="adm-btn info" onClick={() => setResStatus(r.id, 'Completed')}>Mark Completed</button>
-                          )}
-                          {/* Submit issues the invoice, so it exists from Pending
-                              onward — viewing it is useful at both stages, and there is
-                              nothing to "generate". */}
-                          {(r.status === 'Pending' || r.status === 'Confirmed') && (
-                            <button
-                              type="button"
-                              className="adm-btn outline"
-                              disabled={invoiceBusyId === r.id}
-                              onClick={() => void openInvoiceFor(r)}
-                            >
-                              {invoiceBusyId === r.id ? 'Loading…' : '🧾 Invoice'}
-                            </button>
-                          )}
-                          {/* Draft gets it too, and leads with it: the detail view is
-                              where items are added, which is the whole point of a Draft.
-                              "Submit for Customer" above is useless until that's done. */}
-                          {(r.status === 'Confirmed' || r.status === 'Draft') && (
-                            <button
-                              type="button"
-                              className={r.status === 'Draft' ? 'adm-btn primary' : 'adm-btn outline'}
-                              disabled={detailBusyId === r.id}
-                              onClick={() => void openBookingDetail(r)}
-                            >
-                              {detailBusyId === r.id
-                                ? 'Loading…'
-                                : r.status === 'Draft' ? '🍽 Add Items' : '🔍 View Details'}
-                            </button>
-                          )}
-                          {r.status === 'Confirmed' && (
-                            <button
-                              type="button"
-                              className="adm-btn outline"
-                              disabled={contractBusyId === r.id}
-                              onClick={() => void openContract(r)}
-                            >
-                              {contractBusyId === r.id ? 'Preparing…' : 'Generate Contract'}
-                            </button>
-                          )}
-                          {r.status === 'Confirmed' && (
-                            <button
-                              type="button"
-                              className="adm-btn outline"
-                              onClick={() => (noteResId === r.id ? setNoteResId(null) : openNoteEditor(r))}
-                            >
-                              {r.adminNote ? '📝 Edit Note' : '📝 Add Note'}
-                            </button>
-                          )}
-                          {/* Sits BESIDE the note button rather than replacing it — the
-                              note is a separate capability (allergies, site access) with
-                              its own endpoint, and it is most useful on exactly these
-                              bookings.
-
-                              Shown from Confirmed onward, and deliberately still shown
-                              once Completed: a booking spends the rest of its life in
-                              that state, and "what did we actually send to that event?"
-                              is precisely what staff look back for. Hiding it there
-                              would make the record permanently unreachable in the UI, so
-                              Completed opens the same modal read-only instead.
-
-                              Draft/Pending are hidden because nothing is committed yet,
-                              and Cancelled because the server refuses it outright. */}
-                          {(r.status === 'Confirmed' || r.status === 'Completed') && (
-                            <button
-                              type="button"
-                              className="adm-btn outline"
-                              onClick={() => setResourcesResId(r.id)}
-                            >
-                              {/* One label, always. The affordance for "already has a
-                                  plan" is the ✓ suffix, not a different verb — the button
-                                  changing its name based on state is what made this
-                                  control hard to find across revisions. */}
-                              🧰 Allocate Resources{r.resourceAllocation?.isApproved ? ' ✓' : ''}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="adm-btn outline"
-                            onClick={() => { openTab('histories'); void openHistory(r.id); }}
-                          >
-                            View History
+                      <div className="adm-card" style={{ padding: '1rem 1.15rem' }}>
+                        <FieldLabel text={`Internal staff note · ${target.bookingName} — not shown to the customer`} />
+                        <textarea
+                          className="adm-input"
+                          style={{ width: '100%', minHeight: 80, marginTop: '0.35rem', resize: 'vertical' }}
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          maxLength={2000}
+                          placeholder="Allergies, venue access, who to call on site…"
+                        />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                          <button type="button" className="adm-btn primary" disabled={noteBusyId === noteResId} onClick={() => void saveAdminNote(noteResId)}>
+                            {noteBusyId === noteResId ? 'Saving…' : 'Save Note'}
                           </button>
-                          {(r.status === 'Pending' || r.status === 'Confirmed') && !cancelling && (
-                            <button type="button" className="adm-btn danger" onClick={() => { setCancelResId(r.id); setCancelReason(''); }}>Cancel</button>
-                          )}
+                          <button type="button" className="adm-btn outline" onClick={() => setNoteResId(null)}>Cancel</button>
                         </div>
-
-                        {/* Internal staff note. Shown read-only when set and the editor
-                            is closed, so it's visible at a glance without a click. */}
-                        {r.status === 'Confirmed' && r.adminNote && noteResId !== r.id && (
-                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.8rem', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.55rem 0.8rem', borderLeft: '2px solid var(--border-accent)', whiteSpace: 'pre-wrap' }}>
-                            <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Staff note:</strong> {r.adminNote}
-                          </p>
-                        )}
-
-                        {noteResId === r.id && (
-                          <div style={{ marginTop: '0.9rem' }}>
-                            <FieldLabel text="Internal staff note — not shown to the customer" />
-                            <textarea
-                              className="adm-input"
-                              style={{ width: '100%', minHeight: 80, marginTop: '0.35rem', resize: 'vertical' }}
-                              value={noteDraft}
-                              onChange={(e) => setNoteDraft(e.target.value)}
-                              maxLength={2000}
-                              placeholder="Allergies, venue access, who to call on site…"
-                            />
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                              <button type="button" className="adm-btn primary" disabled={noteBusyId === r.id} onClick={() => void saveAdminNote(r.id)}>
-                                {noteBusyId === r.id ? 'Saving…' : 'Save Note'}
-                              </button>
-                              <button type="button" className="adm-btn outline" onClick={() => setNoteResId(null)}>Cancel</button>
-                            </div>
-                          </div>
-                        )}
-
-                        {cancelling && (
-                          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.9rem' }}>
-                            <div style={{ flex: 1, minWidth: 220 }}>
-                              <FieldLabel text="Reason for cancellation" />
-                              <input className="adm-input square" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Required" />
-                            </div>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <button type="button" className="adm-btn danger" disabled={!cancelReason.trim()} onClick={() => cancelReservation(r.id)}>
-                                Confirm Cancel
-                              </button>
-                              <button type="button" className="adm-btn outline" onClick={() => setCancelResId(null)}>Back</button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
-                  })
-                )}
+                  })()}
+
+                  {/* Cancel still routes through the existing reason prompt — the
+                      server requires one, so the menu item opens this rather than
+                      firing cancelReservation straight off a click. */}
+                  {cancelResId && (() => {
+                    const target = reservations.find((r) => r.id === cancelResId);
+                    if (!target) return null;
+                    return (
+                      <div className="adm-card" style={{ padding: '1rem 1.15rem', display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: 220 }}>
+                          <FieldLabel text={`Reason for cancelling ${target.bookingName}`} />
+                          <input className="adm-input square" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Required" />
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button type="button" className="adm-btn danger" disabled={!cancelReason.trim()} onClick={() => cancelReservation(cancelResId)}>
+                            Confirm Cancel
+                          </button>
+                          <button type="button" className="adm-btn outline" onClick={() => setCancelResId(null)}>Back</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <BookingsTable
+                    rows={filteredRes}
+                    activeGroup={resFilter}
+                    actions={bookingActions}
+                    busy={{ submitBusyId, detailBusyId, invoiceBusyId, contractBusyId }}
+                    onViewAll={(g) => selectBookingStatus(g)}
+                  />
+                </div>
               </div>
             )}
 
             {/* ══════════ PAYMENTS (live backend data) ══════════ */}
             {tab === 'payments' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                  <div>
-                    <h2 className="adm-title">Payments</h2>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    {/* Cash is logged against a booking, and the picker below lists the
-                        ones that can still take one — Pending or Confirmed but not yet
-                        fully paid. A Draft has no invoice to pay against. */}
-                    <select
-                      className="adm-input"
-                      style={{ flex: '0 1 260px' }}
-                      value=""
-                      aria-label="Log cash payment for a booking"
-                      onChange={(e) => {
-                        const b = reservations.find((x) => x.id === e.target.value);
-                        if (b) setCashTarget({ bookingId: b.id, bookingName: b.bookingName });
-                      }}
-                    >
-                      <option value="">💵 Log cash payment for…</option>
-                      {reservations
-                        .filter((b) => (b.status === 'Pending' || b.status === 'Confirmed') && b.depositStatus !== 'Paid')
-                        .map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.bookingName} — {fmtDate(b.eventDate)} ({b.depositStatus})
-                          </option>
-                        ))}
-                    </select>
-                    <button type="button" className="adm-btn outline" onClick={() => void loadPayments()} disabled={paymentsLoading}>
-                      {paymentsLoading ? 'Refreshing…' : '↻ Refresh'}
-                    </button>
-                  </div>
+              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+                <div>
+                  <h2 className="adm-title">Payments</h2>
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                    Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
+                  </p>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'Pending', 'Success', 'Failed', 'PartiallyRefunded', 'Refunded'] as const).map((k) => {
-                    const count = k === 'all' ? payments.length : payments.filter((p) => p.status === k).length;
-                    return (
-                      <button key={k} type="button" className={`adm-pill${paymentFilter === k ? ' active' : ''}`} onClick={() => setPaymentFilter(k)}>
-                        {k === 'all' ? 'All Payments' : PAYMENT_STATUS[k].label}
-                        <span className="count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <PaymentsToolbar
+                  search={paymentSearch}
+                  onSearchChange={setPaymentSearch}
+                  statusFilter={paymentFilter}
+                  onStatusFilterChange={(k) => setPaymentFilter(k as 'all' | PaymentStatusKey)}
+                  typeFilter={paymentTypeFilter}
+                  onTypeFilterChange={setPaymentTypeFilter}
+                  methodFilter={paymentMethodFilter}
+                  onMethodFilterChange={setPaymentMethodFilter}
+                  filterOpen={paymentFilterOpen}
+                  onToggleFilter={() => setPaymentFilterOpen((o) => !o)}
+                  date={paymentDate}
+                  onDateChange={(d) => { setPaymentDate(d); void loadDatedPayments(d); }}
+                  cashCandidates={cashCandidates}
+                  onLogCash={(b) => setCashTarget({ bookingId: b.id, bookingName: b.bookingName })}
+                />
 
-                {/* Booking type of the payment's booking — carried on the list DTO. */}
-                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                  {(['all', 'FullService', 'FoodDelivery', 'RentalService'] as const).map((k) => {
-                    const count = k === 'all' ? payments.length : payments.filter((p) => p.bookingType === k).length;
-                    return (
-                      <button key={k} type="button" className={`adm-pill${paymentTypeFilter === k ? ' active' : ''}`} onClick={() => setPaymentTypeFilter(k)}>
-                        {k === 'all' ? 'All Types' : BOOKING_TYPE_LABELS[k]}
-                        <span className="count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Failure of the UNDATED load — the refund queue and the Overview
+                    totals ride on it. The table reports its own dated load separately,
+                    so without this a broken queue fetch would fail silently. */}
+                {paymentsError && (
+                  <div className="adm-card" style={{ padding: '0.85rem 1.1rem', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)', display: 'flex', gap: '0.7rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', color: 'var(--danger)', flex: 1, minWidth: 200 }}>
+                      Refund queue unavailable — {paymentsError}
+                    </span>
+                    {paymentsAuthError
+                      ? <Link to="/login" className="adm-btn primary">Go to Sign In</Link>
+                      : <button type="button" className="adm-btn outline" onClick={() => void loadPayments()}>Try Again</button>}
+                  </div>
+                )}
 
                 {/* ── refund request queue ── */}
                 {!paymentsLoading && !paymentsError && refundQueue.length > 0 && (
@@ -4475,138 +5018,58 @@ export function AdminDashboardPage() {
                   </div>
                 )}
 
-                {/* ── error state ── */}
-                {paymentsError && !paymentsLoading && (
-                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                      Couldn't load payments
-                    </h3>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
-                      {paymentsError}
-                    </p>
-                    <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                      <button type="button" className="adm-btn outline" onClick={() => void loadPayments()}>Try Again</button>
-                      {paymentsAuthError && <Link to="/login" className="adm-btn primary">Go to Sign In</Link>}
+                <PaymentsTable
+                  rows={filteredPayments}
+                  busyId={paymentActionBusy}
+                  loading={datedLoading}
+                  error={datedError}
+                  isAuthError={datedAuthError}
+                  onRetry={() => void loadDatedPayments(paymentDate)}
+                  findRequest={findRefundRequest}
+                  statusMeta={paymentStatusMeta}
+                  actions={{
+                    onConfirm: (p) => void runPaymentAction(p.id, 'confirm'),
+                    onReject: (p) => void runPaymentAction(p.id, 'reject'),
+                    // Never straight to the endpoint — the modal is the confirmation step.
+                    onRefund: (p) => setRefundTarget(p),
+                    onDenyRefund: (p) => { setDenyTargetId(p.id); setDenyReason(''); },
+                  }}
+                />
+
+                {/* Deny prompt for a row-menu denial. The queue panel above has its own
+                    inline version; both call the same handler. */}
+                {denyTargetId && !refundQueue.some((r) => r.paymentId === denyTargetId) && (
+                  <div className="adm-card" style={{ padding: '1rem 1.15rem', display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <FieldLabel text="Reason shown to the customer" />
+                      <input className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        type="button"
+                        className="adm-btn danger"
+                        disabled={!denyReason.trim() || paymentActionBusy === denyTargetId}
+                        onClick={() => void runPaymentAction(denyTargetId, 'deny', { reason: denyReason.trim() })}
+                      >
+                        Confirm Denial
+                      </button>
+                      <button type="button" className="adm-btn outline" onClick={() => setDenyTargetId(null)}>Back</button>
                     </div>
                   </div>
                 )}
 
-                {/* ── loading skeleton ── */}
-                {paymentsLoading && (
-                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
-                    <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
-                    {[0, 1, 2, 3].map((i) => (
-                      <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 3 ? '1px solid var(--border)' : 'none' }}>
-                        <div style={{ flex: 1 }}>
-                          <div className="adm-skel" style={{ height: '0.9rem', width: '40%', marginBottom: '0.45rem' }} />
-                          <div className="adm-skel" style={{ height: '0.6rem', width: '68%' }} />
-                        </div>
-                        <div className="adm-skel" style={{ height: '1.4rem', width: 84, borderRadius: 'var(--r-full)' }} />
-                        <div className="adm-skel" style={{ height: '1.4rem', width: 70, borderRadius: 'var(--r-full)' }} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!paymentsLoading && !paymentsError && (
-                  filteredPayments.length === 0 ? (
-                    <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                      {payments.length === 0 ? 'No customer payments recorded yet.' : 'No payments match this filter.'}
-                    </div>
-                  ) : (
-                    filteredPayments.map((p) => {
-                      const st = paymentStatusMeta(p.status);
-                      const open = expandedPayment === p.id;
-                      return (
-                        <div key={p.id} className="adm-card" style={{ overflow: 'hidden' }}>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedPayment(open ? null : p.id)}
-                            aria-expanded={open}
-                            style={{
-                              all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: '100%',
-                              padding: '1.3rem 1.5rem',
-                              display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
-                            }}
-                          >
-                            <div style={{ flex: 1, minWidth: 220 }}>
-                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                                {p.customerName}
-                              </div>
-                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                                {p.bookingName} · {p.method} · paid {fmtDateTime(p.paymentDateTime)}
-                              </div>
-                            </div>
-                            {p.refundRequested && <StatusBadge label="Refund Requested" color="var(--accent)" />}
-                            <StatusBadge label={st.label} color={st.color} />
-                            <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 600, color: 'var(--primary)' }}>{fmt(p.amountPaid)}</span>
-                            <span style={{ color: 'var(--text-dim)', fontSize: '0.68rem', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.25s' }}>▼</span>
-                          </button>
-
-                          {open && (
-                            <div style={{ borderTop: '1px solid var(--border)', padding: '1.15rem 1.5rem', background: 'var(--bg-subtle)' }}>
-                              {[
-                                { label: 'Customer', value: `${p.customerName} · ${p.customerEmail}` },
-                                { label: 'Booking', value: `${p.bookingName}${p.eventType ? ` · ${p.eventType}` : ''} · event ${fmtDate(p.eventDate)}` },
-                                { label: 'Method', value: p.gatewayProvider ? `${p.method} via ${p.gatewayProvider}` : p.method },
-                                { label: 'Transaction Reference', value: p.transactionReference ?? '—' },
-                                ...(p.refundedAmount > 0 ? [{ label: 'Refunded', value: fmt(p.refundedAmount) }] : []),
-                              ].map((row) => (
-                                <div key={row.label} className="adm-row" style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.45rem 0', fontFamily: 'var(--font-body)', fontSize: '0.78rem' }}>
-                                  <span style={{ color: 'var(--text-muted)', fontWeight: 300 }}>{row.label}</span>
-                                  <span style={{ color: 'var(--text-secondary)', fontWeight: 500, textAlign: 'right' }}>{row.value}</span>
-                                </div>
-                              ))}
-                              {(p.status === 'Pending' ||
-                                ((p.status === 'Success' || p.status === 'PartiallyRefunded') && p.amountPaid - p.refundedAmount > 0)) && (
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
-                                  {p.status === 'Pending' && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="adm-btn success"
-                                        disabled={paymentActionBusy === p.id}
-                                        onClick={() => void runPaymentAction(p.id, 'confirm')}
-                                      >
-                                        {paymentActionBusy === p.id ? 'Working…' : '✓ Confirm Received'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="adm-btn danger"
-                                        disabled={paymentActionBusy === p.id}
-                                        onClick={() => void runPaymentAction(p.id, 'reject')}
-                                      >
-                                        ✕ Reject
-                                      </button>
-                                    </>
-                                  )}
-                                  {/* Refunding requires an open request from the customer —
-                                      the server enforces it, so the button is disabled
-                                      rather than shown and then rejected. */}
-                                  {(p.status === 'Success' || p.status === 'PartiallyRefunded') && p.amountPaid - p.refundedAmount > 0 && (
-                                    <button
-                                      type="button"
-                                      className="adm-btn outline"
-                                      disabled={paymentActionBusy === p.id || !p.refundRequested}
-                                      title={p.refundRequested ? undefined : 'The customer has not requested a refund on this payment.'}
-                                      onClick={() => void runPaymentAction(p.id, 'refund')}
-                                    >
-                                      {paymentActionBusy === p.id
-                                        ? 'Working…'
-                                        : p.refundRequested
-                                          ? `Refund ${fmt(p.amountPaid - p.refundedAmount)}`
-                                          : 'Refund — no request on file'}
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )
+                {refundTarget && (
+                  <RefundConfirmModal
+                    payment={refundTarget}
+                    request={findRefundRequest(refundTarget.id)}
+                    busy={paymentActionBusy === refundTarget.id}
+                    onCancel={() => setRefundTarget(null)}
+                    onConfirm={(amount) => {
+                      const id = refundTarget.id;
+                      setRefundTarget(null);
+                      void runPaymentAction(id, 'refund', { amount });
+                    }}
+                  />
                 )}
               </div>
             )}
@@ -5073,7 +5536,7 @@ export function AdminDashboardPage() {
                               )}
                             </div>
                             <StatusBadge label={m.itemCategory} color="var(--primary)" />
-                            <StatusBadge label={m.courseCategory} color="#4a90d9" />
+                            <StatusBadge label={m.courseCategory} color="var(--status-info)" />
                             <div style={{ textAlign: 'right', minWidth: 96 }}>
                               <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)' }}>
                                 {m.pricePerTray != null ? fmt(m.pricePerTray) : '—'}
@@ -6082,6 +6545,133 @@ export function AdminDashboardPage() {
                           {annPosting ? 'Posting…' : 'Post & Notify Customers'}
                         </button>
                       </div>
+                    </div>
+
+                    {/* ── Event gallery: a separate feature in the same tab ──
+                        Its own form, its own submit, its own endpoint. Nothing here
+                        reads or writes an announcement, and the composer above never
+                        touches these images. */}
+                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                      <FieldLabel text="Event Gallery" />
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.3rem 0 0.9rem' }}>
+                        Photos for the public “Events by King Jegi” gallery. Separate from
+                        announcements — uploading here notifies nobody and posts nothing.
+                      </p>
+
+                      <div className="form-grid full">
+                        <div className="form-row">
+                          <label htmlFor="gal-caption">Caption <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— optional, used as alt text</span></label>
+                          <input
+                            id="gal-caption"
+                            className="adm-input"
+                            maxLength={200}
+                            placeholder="Golden anniversary at Villa Estrella"
+                            value={galCaption}
+                            disabled={galUploading}
+                            onChange={(e) => setGalCaption(e.target.value)}
+                          />
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="gal-images">
+                            Photos <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— JPG/PNG/WebP, 5 MB each</span>
+                          </label>
+                          <input
+                            id="gal-images"
+                            type="file"
+                            multiple
+                            accept="image/jpeg,image/png,image/webp"
+                            className="adm-input square"
+                            disabled={galUploading || galleryImages.length >= GALLERY_MAX_IMAGES}
+                            onChange={uploadGalleryImages}
+                            style={{ padding: '0.45rem' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginRight: 'auto' }}>
+                          {galUploading
+                            ? 'Uploading…'
+                            : `${galleryImages.length} of ${GALLERY_MAX_IMAGES} images in the gallery`}
+                        </span>
+                        <button type="button" className="adm-btn outline" disabled={galLoading || galUploading} onClick={() => void loadGallery()}>
+                          {galLoading ? 'Refreshing…' : 'Refresh'}
+                        </button>
+                      </div>
+
+                      {galError && (
+                        <div
+                          role="alert"
+                          style={{
+                            marginTop: '0.7rem', padding: '0.6rem 0.8rem',
+                            border: '1px solid color-mix(in srgb, var(--danger) 35%, transparent)',
+                            borderRadius: 'var(--r-lg)', background: 'var(--danger-muted)',
+                            fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--danger)', lineHeight: 1.5,
+                          }}
+                        >
+                          {galError}
+                        </div>
+                      )}
+
+                      {galLoading && galleryImages.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>
+                          Loading the gallery…
+                        </p>
+                      ) : galleryImages.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>
+                          No gallery photos yet. The public gallery section stays hidden until you add one.
+                        </p>
+                      ) : (
+                        <div
+                          style={{
+                            marginTop: '0.9rem', display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.7rem',
+                          }}
+                        >
+                          {galleryImages.map((img, i) => (
+                            <div
+                              key={img.id}
+                              style={{
+                                border: '1px solid var(--border)', borderRadius: 'var(--r-lg)',
+                                overflow: 'hidden', background: 'var(--bg-subtle)',
+                                display: 'flex', flexDirection: 'column',
+                              }}
+                            >
+                              <img
+                                src={getGalleryImageUrl(img.url) ?? undefined}
+                                alt={img.caption ?? `Gallery photo ${i + 1}`}
+                                loading="lazy"
+                                style={{ width: '100%', height: 104, objectFit: 'cover', display: 'block' }}
+                              />
+                              <div style={{ padding: '0.45rem 0.55rem', flex: 1 }}>
+                                <div
+                                  title={img.caption ?? undefined}
+                                  style={{
+                                    fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 500,
+                                    color: img.caption ? 'var(--text-primary)' : 'var(--text-dim)',
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {img.caption ?? 'No caption'}
+                                </div>
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>
+                                  {img.uploadedByName} · {fmtDateTime(img.uploadedAt)}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="adm-btn danger"
+                                disabled={galDeletingId === img.id}
+                                onClick={() => void removeGalleryImage(img.id)}
+                                aria-label={`Remove gallery photo ${i + 1}`}
+                                style={{ width: '100%', fontSize: '0.55rem', padding: '0.32rem', borderRadius: 0 }}
+                              >
+                                {galDeletingId === img.id ? 'Removing…' : 'Remove'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {annError && !annLoading && (

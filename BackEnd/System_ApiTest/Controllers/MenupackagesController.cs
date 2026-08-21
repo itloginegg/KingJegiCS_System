@@ -13,15 +13,21 @@ namespace System_ApiTest.Controllers
     [Authorize]
     public class MenuPackagesController : ControllerBase
     {
+        /// <summary>Gallery cap per package. Each file is separately capped at 5 MB by ImageUploadHelper.</summary>
+        private const int MaxImagesPerPackage = 12;
+
         private readonly AppDbContext _db;
         private readonly Packageservice _packages;
         private readonly Auditlogservice _audit;
+        private readonly IWebHostEnvironment _env;
 
-        public MenuPackagesController(AppDbContext db, Packageservice packages, Auditlogservice audit)
+        public MenuPackagesController(AppDbContext db, Packageservice packages, Auditlogservice audit,
+                                      IWebHostEnvironment env)
         {
             _db = db;
             _packages = packages;
             _audit = audit;
+            _env = env;
         }
 
         [AllowAnonymous]   // guests may browse packages (item 1)
@@ -249,12 +255,87 @@ namespace System_ApiTest.Controllers
             return NoContent();
         }
 
+        // ---------------- Gallery images ----------------
+
+        /// <summary>
+        /// Adds one photo to a package's gallery. Multipart, same shape as the menu-item
+        /// and rental uploads; validation and the 5 MB cap come from ImageUploadHelper.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{packageId:guid}/images")]
+        public async Task<IActionResult> AddImage(Guid packageId, [FromForm] MenuPackageImageInputDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var exists = await _db.MenuPackages.AnyAsync(p => p.Id == packageId);
+            if (!exists) return NotFound();
+
+            if (dto.ImageFile is null || dto.ImageFile.Length == 0)
+                return BadRequest(new { message = "Choose an image to upload." });
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
+
+            var count = await _db.MenuPackageImages.CountAsync(i => i.MenuPackageId == packageId);
+            if (count >= MaxImagesPerPackage)
+                return BadRequest(new { message = $"A package can carry at most {MaxImagesPerPackage} images." });
+
+            var url = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "packages");
+
+            var image = new Menupackageimage
+            {
+                MenuPackageId = packageId,
+                ImageUrl = url,
+                Caption = string.IsNullOrWhiteSpace(dto.Caption) ? null : dto.Caption.Trim(),
+                // Appended to the end of the existing gallery.
+                DisplayOrder = count
+            };
+
+            _db.MenuPackageImages.Add(image);
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                ImageUploadHelper.DeleteImage(_env, url);
+                throw;
+            }
+
+            var result = new MenuPackageImageDto(image.Id, image.ImageUrl, image.Caption, image.DisplayOrder);
+            await _audit.LogAsync(User, AuditAction.CREATE, "MENU_PACKAGE_IMAGE", image.Id.ToString(), null, result);
+            return Ok(result);
+        }
+
+        /// <summary>Removes one gallery photo and deletes the file behind it.</summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpDelete("{packageId:guid}/images/{imageId:guid}")]
+        public async Task<IActionResult> RemoveImage(Guid packageId, Guid imageId)
+        {
+            var image = await _db.MenuPackageImages
+                .FirstOrDefaultAsync(i => i.Id == imageId && i.MenuPackageId == packageId);
+            if (image is null) return NotFound();
+
+            var old = new MenuPackageImageDto(image.Id, image.ImageUrl, image.Caption, image.DisplayOrder);
+
+            _db.MenuPackageImages.Remove(image);
+            await _db.SaveChangesAsync();
+
+            // Only after the row is gone — a file deleted ahead of a failed commit would
+            // leave a gallery entry pointing at nothing.
+            ImageUploadHelper.DeleteImage(_env, image.ImageUrl);
+
+            await _audit.LogAsync(User, AuditAction.DELETE, "MENU_PACKAGE_IMAGE", imageId.ToString(), old, null);
+            return NoContent();
+        }
+
         // ---------------- Helpers ----------------
 
         private IQueryable<Menupackage> LoadGraph() =>
             _db.MenuPackages
                 .Include(p => p.Slots).ThenInclude(s => s.AllowedCategories)
-                .Include(p => p.FixedItems).ThenInclude(f => f.MenuItem);
+                .Include(p => p.FixedItems).ThenInclude(f => f.MenuItem)
+                .Include(p => p.Images);
 
         private async Task<string?> ValidateFixedItemsAsync(List<Guid> ids)
         {
@@ -278,7 +359,10 @@ namespace System_ApiTest.Controllers
             new(p.Id, p.PackageName, p.Description, p.BasePrice, p.MinPax, p.MaxPax, p.PricePerExtraPax,
                 p.Inclusions,
                 p.Slots.OrderBy(s => s.DisplayOrder).Select(SlotToDto).ToList(),
-                p.FixedItems.Select(f => Brief(f.MenuItem)).ToList());
+                p.FixedItems.Select(f => Brief(f.MenuItem)).ToList(),
+                p.Images.OrderBy(i => i.DisplayOrder).ThenBy(i => i.Id)
+                        .Select(i => new MenuPackageImageDto(i.Id, i.ImageUrl, i.Caption, i.DisplayOrder))
+                        .ToList());
     }
 }
  

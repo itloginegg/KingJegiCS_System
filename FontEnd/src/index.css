@@ -7,6 +7,66 @@
 @theme {
   --font-serif: "Cormorant Garamond", Georgia, "Times New Roman", serif;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  /* Brand palette — the five source colours, exposed as Tailwind utilities
+     (bg-teal-deep, text-beige, border-warm-gray, …). */
+  --color-teal-deep: #073a40;
+  --color-teal-deeper: #06323b;
+  --color-beige: #a69076;
+  --color-warm-gray: #a69f97;
+  --color-off-white: #f2f2f2;
+
+  /* ── Semantic tokens as Tailwind utilities ──
+     Each one forwards to the themed custom property defined in :root / .dark
+     below, rather than restating a literal. The indirection is the point: .dark
+     rebinds --bg-card, and every `bg-bg-card` utility follows without Tailwind
+     needing to emit a `dark:` variant for it.
+
+     Names are deliberately verbatim, so the utility reads as the token it uses:
+     bg-bg-card, text-text-muted, border-border, ring-accent.
+
+     Values here are NOT a second source of truth — change a colour in :root/.dark
+     and these follow. Do not paste literals into this block. */
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-card: var(--bg-card);
+  --color-surface: var(--surface);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-dim: var(--text-dim);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-text: var(--primary-text);
+  --color-primary-muted: var(--primary-muted);
+
+  /* Kept distinct from --primary: primary is "action" (buttons, links, Confirmed),
+     accent is "attention" (Pending, decorative rules). Merging them would make a
+     Pending badge indistinguishable from a Confirmed one. */
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--accent-muted);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-accent: var(--border-accent);
+
+  --color-danger: var(--danger);
+  --color-danger-muted: var(--danger-muted);
+  --color-danger-text: var(--danger-text);
+
+  --color-accent-text: var(--accent-text);
+
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-warning-text: var(--warning-text);
+
+  --color-status-info: var(--status-info);
+  --color-status-refund: var(--status-refund);
+  --color-status-unpaid: var(--status-unpaid);
+  --color-status-partial: var(--status-partial);
+  --color-status-paid: var(--status-paid);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -14,38 +74,76 @@
    Consumed by the landing page (and any page that opts into the system).
 ─────────────────────────────────────────────────────────────────────── */
 :root {
-  --bg: #faf6ee;
-  --bg-subtle: #f3ede0;
-  --bg-card: #fffdf8;
+  /* Palette: #073A40 / #06323B deep teal · #A69076 beige · #A69F97 warm gray · #F2F2F2 off-white */
+
+  --bg: #f2f2f2;
+  --bg-subtle: #ebebea;   /* off-white pulled toward the warm gray */
+  --bg-card: #fbfbfa;
   --surface: #ffffff;
 
-  --text-primary: #211a13;
-  --text-secondary: #40382e;
-  --text-muted: #6b6254;
-  --text-dim: #a39a8a;
+  /* Text is the deep teal, stepped toward the warm gray as it recedes. */
+  --text-primary: #06323b;   /* 12.3:1 on --bg */
+  --text-secondary: #2b4f55; /*  8.0:1 */
+  --text-muted: #56696d;     /*  5.2:1 */
+  /* Darkened from the palette warm gray #a69f97, which measured 2.5:1 on --surface.
+     The "decorative only" intent never held: this token carries table counts, field
+     captions and calendar numerals — real text. Same warm-gray hue, enough darker to
+     clear 4.5:1. Adjusting the token fixes ~500 call sites without touching one. */
+  --text-dim: #6b6259;       /* 6.0:1 on --surface */
 
-  --primary: #0f766e;
-  --primary-hover: #115e59;
-  --primary-text: #ffffff;
-  --primary-muted: rgba(15, 118, 110, 0.10);
+  --primary: #073a40;
+  --primary-hover: #06323b;
+  --primary-text: #f2f2f2;
+  --primary-muted: rgba(7, 58, 64, 0.10);
 
-  --secondary: #0f766e;
-  --secondary-muted: rgba(15, 118, 110, 0.07);
+  --secondary: #073a40;
+  --secondary-muted: rgba(7, 58, 64, 0.07);
 
-  --accent: #b07d2b;
-  --accent-muted: rgba(176, 125, 43, 0.10);
+  /* The palette beige reads at only 2.7:1 on the off-white, so text-weight
+     accents use it darkened to the same hue (hsl 32.5° 21%); the literal
+     #A69076 carries the borders and washes below, where contrast is moot. */
+  --accent: #79654e;
+  --accent-muted: rgba(166, 144, 118, 0.16);
 
-  --border: rgba(33, 26, 19, 0.12);
-  --border-strong: rgba(33, 26, 19, 0.30);
-  --border-accent: rgba(176, 125, 43, 0.35);
+  --border: rgba(6, 50, 59, 0.14);
+  --border-strong: rgba(6, 50, 59, 0.32);
+  --border-accent: rgba(166, 144, 118, 0.55);
 
   --danger: #dc2626;
   --danger-muted: rgba(220, 38, 38, 0.12);
+  /* Text/icon colour to place ON a --danger fill. Mirrors --primary-text, which has
+     always done this for --primary; danger and accent never got the equivalent, so
+     buttons hardcoded #fff and dropped to 2.77:1 once .dark lightened the fill. */
+  --danger-text: #ffffff;
 
-  --shadow-md: 0 8px 24px rgba(33, 26, 19, 0.10);
-  --shadow-lg: 0 16px 44px rgba(33, 26, 19, 0.14);
-  --shadow-green: 0 10px 30px rgba(15, 118, 110, 0.30);
-  --shadow-gold: 0 10px 34px rgba(176, 125, 43, 0.22);
+  /* Amber "needs attention, not yet a failure". Previously referenced as
+     var(--warning, #d98324) with no definition anywhere, so every consumer silently
+     rendered the fallback and ignored the theme. */
+  --warning: #8a5410;          /* 6.3:1 on --surface */
+  --warning-muted: rgba(138, 84, 16, 0.12);
+  --warning-text: #ffffff;
+
+  --accent-text: #ffffff;
+
+  /* ── Status ramp ──
+     Booking / payment / deposit states, which need to stay distinguishable from each
+     other rather than collapse into --primary and --accent. Each value is chosen to
+     clear 4.5:1 against --surface in ITS OWN theme, which is why the light and dark
+     entries are not the same hue lightness.
+
+     Refund is deliberately NOT the same blue as complete: "Completed", "Refunded" and
+     "Partially Refunded" all shared #4a90d9, so three unrelated outcomes rendered
+     identically. */
+  --status-info: #2b6ba6;      /* Completed              — 5.6:1 */
+  --status-refund: #146b80;    /* Refunded / Partially   — 6.1:1 */
+  --status-unpaid: #c2255c;    /* Deposit Unpaid         — 5.5:1 */
+  --status-partial: #7048e8;   /* Deposit Partial        — 5.4:1 */
+  --status-paid: #1f7a33;      /* Deposit Paid           — 5.4:1 */
+
+  --shadow-md: 0 8px 24px rgba(6, 50, 59, 0.10);
+  --shadow-lg: 0 16px 44px rgba(6, 50, 59, 0.14);
+  --shadow-green: 0 10px 30px rgba(7, 58, 64, 0.28);
+  --shadow-gold: 0 10px 34px rgba(166, 144, 118, 0.34);
 
   --r-sm: 8px;
   --r-lg: 14px;
@@ -59,15 +157,22 @@
   --text-on-bg: var(--text-primary);
   --text-on-bg-muted: var(--text-muted);
   --text-shadow-on-bg: none;
-  --surface-glass: rgba(255, 255, 255, 0.70);
-  --border-glass: rgba(255, 255, 255, 0.50);
-  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.10);
+  --surface-glass: rgba(255, 255, 255, 0.72);
+  --border-glass: rgba(255, 255, 255, 0.55);
+  --shadow-glass: 0 8px 32px rgba(6, 50, 59, 0.12);
 
   /* menu card imagery */
-  --menu-img-filter: brightness(1.04) contrast(1.06) saturate(1.12);
-  --menu-vignette: rgba(30, 20, 10, 0.28);
-  --menu-chip-bg: rgba(255, 252, 248, 0.62);
-  --menu-chip-border: rgba(255, 255, 255, 0.75);
+  --menu-img-filter: brightness(1.04) contrast(1.04) saturate(1.06);
+  --menu-vignette: rgba(6, 50, 59, 0.30);
+  --menu-chip-bg: rgba(242, 242, 242, 0.66);
+  --menu-chip-border: rgba(255, 255, 255, 0.72);
+}
+
+/* The page ground itself, so the off-white shows through on overscroll and
+   behind pages shorter than the viewport — not just inside each <main>. */
+body {
+  background-color: var(--bg);
+  color: var(--text-primary);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -111,7 +216,8 @@
   --text-primary: #f5f0eb;
   --text-secondary: #d9d2c7;
   --text-muted: #a89f92;
-  --text-dim: #7a7163;
+  /* Lightened to match the light-theme fix; 5.3:1 on --surface (was 3.9:1). */
+  --text-dim: #948a78;
 
   --primary: #14b8a6;
   --primary-hover: #2dd4bf;
@@ -130,6 +236,21 @@
 
   --danger: #f87171;
   --danger-muted: rgba(248, 113, 113, 0.14);
+  /* Dark ON a light red fill — white would be 2.8:1 here. */
+  --danger-text: #1a1005;
+
+  --warning: #e0a13c;          /* 8.1:1 on --surface */
+  --warning-muted: rgba(224, 161, 60, 0.14);
+  --warning-text: #2a1705;
+
+  --accent-text: #2a1705;
+
+  /* Status ramp — lighter counterparts, each ≥4.5:1 on the dark --surface. */
+  --status-info: #4a90d9;      /* 5.4:1 */
+  --status-refund: #4cc4d6;    /* 8.8:1 */
+  --status-unpaid: #f06a92;    /* 6.2:1 */
+  --status-partial: #a78bfa;   /* 6.7:1 */
+  --status-paid: #4ab861;      /* 7.2:1 */
 
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
   --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);

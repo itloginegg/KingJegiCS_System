@@ -27,7 +27,7 @@ export function RoleTabs({ value, onChange }: RoleTabsProps) {
     <div
       role="tablist"
       aria-label="Select account type"
-      className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
+      className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--bg-subtle)] p-1"
     >
       {TABS.map((tab, i) => {
         const selected = value === tab.role;
@@ -44,10 +44,10 @@ export function RoleTabs({ value, onChange }: RoleTabsProps) {
             onKeyDown={(e) => handleKeyDown(e, i)}
             className={[
               'rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]',
               selected
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700',
+                ? 'bg-[var(--surface)] text-[var(--primary)] shadow-sm'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]',
             ].join(' ')}
           >
             {tab.label}

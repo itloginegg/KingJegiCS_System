@@ -879,7 +879,7 @@ function ChatStyles() {
       .cw-bubble {
         position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 60;
         width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer;
-        background: var(--accent); color: #fff;
+        background: var(--accent); color: var(--accent-text);
         display: flex; align-items: center; justify-content: center;
         box-shadow: var(--shadow-gold); transition: transform 0.2s;
       }
@@ -892,7 +892,7 @@ function ChatStyles() {
       }
       .cw-bubble-glyph {
         font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
-        letter-spacing: 0.04em; color: #fff;
+        letter-spacing: 0.04em; color: var(--accent-text);
       }
       .cw-panel {
         position: fixed; right: 1.5rem; bottom: 5.5rem; z-index: 60;

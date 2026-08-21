@@ -6,6 +6,12 @@ import {
   addPackageSlot,
   updatePackageSlot,
   removePackageSlot,
+  addPackageImage,
+  removePackageImage,
+  getFullImageUrl,
+  PACKAGE_ACCEPTED_TYPES,
+  PACKAGE_MAX_IMAGES,
+  PACKAGE_MAX_IMAGE_BYTES,
   PackageApiError,
   type AdminPackage,
   type AdminPackageCreate,
@@ -101,6 +107,86 @@ export function AdminPackagesTab() {
   const selectedPackage = useMemo(() => {
     return packages.find((p) => p.id === selectedPackageId) || null;
   }, [packages, selectedPackageId]);
+
+  /* ── gallery images ──────────────────────────────────────────────────────
+     Uploaded one at a time against the package that's already saved, so there's
+     no draft state to reconcile — the server response is merged straight into
+     the package list, which is what the detail pane renders from. */
+  const [imgUploading, setImgUploading] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
+  const [imgRemovingId, setImgRemovingId] = useState<string | null>(null);
+
+  const uploadPackageImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = ''; // let the same file be re-picked after a removal
+    if (picked.length === 0 || !selectedPackage) return;
+
+    const session = readSession();
+    if (!session?.token) {
+      setImgError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+
+    const room = PACKAGE_MAX_IMAGES - selectedPackage.images.length;
+    const problems: string[] = [];
+    const queue: File[] = [];
+    for (const file of picked) {
+      if (!PACKAGE_ACCEPTED_TYPES.includes(file.type)) {
+        problems.push(`${file.name} — only JPG, PNG or WebP.`);
+      } else if (file.size > PACKAGE_MAX_IMAGE_BYTES) {
+        problems.push(`${file.name} — over 5 MB.`);
+      } else if (queue.length >= room) {
+        problems.push(`${file.name} — the ${PACKAGE_MAX_IMAGES}-image limit is full.`);
+      } else {
+        queue.push(file);
+      }
+    }
+
+    setImgUploading(true);
+    setImgError(null);
+    const uploadedIds: string[] = [];
+    try {
+      for (const file of queue) {
+        const saved = await addPackageImage(session.token, selectedPackage.id, file);
+        uploadedIds.push(saved.id);
+        // Merge as each one lands, so a failure partway still shows what succeeded.
+        setPackages((prev) => prev.map((p) =>
+          p.id === selectedPackage.id ? { ...p, images: [...p.images, saved] } : p));
+      }
+    } catch (err) {
+      problems.push(err instanceof PackageApiError ? err.message : 'One of the uploads failed.');
+    } finally {
+      setImgUploading(false);
+      setImgError(problems.length > 0 ? problems.join(' ') : null);
+      if (uploadedIds.length > 0) {
+        setFeedback(`${uploadedIds.length} image${uploadedIds.length === 1 ? '' : 's'} uploaded.`);
+      }
+    }
+  };
+
+  const deletePackageImage = async (imageId: string) => {
+    if (!selectedPackage) return;
+    const session = readSession();
+    if (!session?.token) {
+      setImgError('You are not signed in. Sign in with an Owner or Assistant account.');
+      return;
+    }
+
+    setImgRemovingId(imageId);
+    setImgError(null);
+    try {
+      await removePackageImage(session.token, selectedPackage.id, imageId);
+      setPackages((prev) => prev.map((p) =>
+        p.id === selectedPackage.id
+          ? { ...p, images: p.images.filter((img) => img.id !== imageId) }
+          : p));
+      setFeedback('Image removed.');
+    } catch (err) {
+      setImgError(err instanceof PackageApiError ? err.message : 'Could not remove that image.');
+    } finally {
+      setImgRemovingId(null);
+    }
+  };
 
   const uniqueItemCategories = useMemo(() => {
     return [...new Set(menuItems.map((m) => m.itemCategory))].filter(Boolean);
@@ -448,6 +534,81 @@ export function AdminPackagesTab() {
                 <FieldLabel text="Extra Pax" />
                 <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(selectedPackage.pricePerExtraPax)}</div>
               </div>
+            </div>
+
+            {/* ── gallery ── */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                <FieldLabel text={`Gallery Photos (${selectedPackage.images.length}/${PACKAGE_MAX_IMAGES})`} />
+                <label
+                  className="adm-btn outline"
+                  style={{
+                    cursor: imgUploading || selectedPackage.images.length >= PACKAGE_MAX_IMAGES ? 'not-allowed' : 'pointer',
+                    opacity: imgUploading || selectedPackage.images.length >= PACKAGE_MAX_IMAGES ? 0.6 : 1,
+                    fontSize: '0.6rem',
+                  }}
+                >
+                  {imgUploading ? 'Uploading…' : 'Upload Photos'}
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp"
+                    disabled={imgUploading || selectedPackage.images.length >= PACKAGE_MAX_IMAGES}
+                    onChange={uploadPackageImages}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
+
+              <p style={{ fontSize: '0.68rem', color: 'var(--text-dim)', margin: '0.35rem 0 0' }}>
+                JPG, PNG or WebP, up to 5&nbsp;MB each.
+              </p>
+
+              {imgError && (
+                <div role="alert" style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--danger)', lineHeight: 1.5 }}>
+                  {imgError}
+                </div>
+              )}
+
+              {selectedPackage.images.length === 0 ? (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.6rem' }}>
+                  No photos yet.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    marginTop: '0.7rem', display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '0.6rem',
+                  }}
+                >
+                  {selectedPackage.images.map((img, i) => (
+                    <div
+                      key={img.id}
+                      style={{
+                        border: '1px solid var(--border)', borderRadius: 'var(--r-lg)',
+                        overflow: 'hidden', background: 'var(--bg-subtle)',
+                      }}
+                    >
+                      <img
+                        src={getFullImageUrl(img.url) ?? undefined}
+                        alt={img.caption ?? `${selectedPackage.packageName} — photo ${i + 1}`}
+                        loading="lazy"
+                        style={{ width: '100%', height: 96, objectFit: 'cover', display: 'block' }}
+                      />
+                      <button
+                        type="button"
+                        className="adm-btn danger"
+                        disabled={imgRemovingId === img.id}
+                        onClick={() => void deletePackageImage(img.id)}
+                        aria-label={`Remove photo ${i + 1} from ${selectedPackage.packageName}`}
+                        style={{ width: '100%', fontSize: '0.55rem', padding: '0.3rem', borderRadius: 0 }}
+                      >
+                        {imgRemovingId === img.id ? 'Removing…' : 'Remove'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>

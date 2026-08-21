@@ -26,6 +26,34 @@ export interface MenuItemBriefDto {
   courseCategory: string;
 }
 
+/** Matches MenuPackageImageDto. `url` is wwwroot-relative. */
+export interface MenuPackageImage {
+  id: string;
+  url: string;
+  caption?: string | null;
+  displayOrder: number;
+}
+
+/** Server-side limits, mirrored so the UI can reject before uploading. */
+export const PACKAGE_MAX_IMAGES = 12;
+export const PACKAGE_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const PACKAGE_ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+/** Same helper menuAdminApi/rentalAdminApi expose. */
+export function getFullImageUrl(urlPath?: string | null): string | null {
+  if (!urlPath) return null;
+  if (
+    urlPath.startsWith('http://') ||
+    urlPath.startsWith('https://') ||
+    urlPath.startsWith('blob:') ||
+    urlPath.startsWith('data:')
+  ) {
+    return urlPath;
+  }
+  const relative = urlPath.startsWith('/') ? urlPath : `/${urlPath}`;
+  return `${API_BASE_URL}${relative}`;
+}
+
 export interface AdminPackage {
   id: string;
   packageName: string;
@@ -37,6 +65,8 @@ export interface AdminPackage {
   inclusions: string[];
   slots: PackageSlotDto[];
   fixedItems: MenuItemBriefDto[];
+  /** The package's own uploaded gallery art, in display order. */
+  images: MenuPackageImage[];
 }
 
 export interface AdminPackageCreate {
@@ -168,4 +198,53 @@ export function updatePackageSlot(token: string, packageId: string, slotId: stri
 
 export function removePackageSlot(token: string, packageId: string, slotId: string): Promise<void> {
   return sendJson<void>(`/api/MenuPackages/${packageId}/slots/${slotId}`, 'DELETE', token);
+}
+
+/**
+ * Uploads one gallery photo. Multipart, so Content-Type is left unset and the browser
+ * writes the boundary itself — same shape as the rental/menu-item uploads.
+ */
+export async function addPackageImage(
+  token: string,
+  packageId: string,
+  file: File,
+  caption?: string,
+): Promise<MenuPackageImage> {
+  const form = new FormData();
+  form.append('ImageFile', file);
+  if (caption?.trim()) form.append('Caption', caption.trim());
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/MenuPackages/${packageId}/images`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+  } catch {
+    throw new PackageApiError(
+      'Unable to reach the server. Make sure the backend is running, then try again.',
+    );
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new PackageApiError(
+      'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
+      res.status,
+    );
+  }
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res);
+    throw new PackageApiError(
+      message ?? `The server responded with an error (HTTP ${res.status}).`,
+      res.status,
+    );
+  }
+
+  return (await res.json()) as MenuPackageImage;
+}
+
+export function removePackageImage(token: string, packageId: string, imageId: string): Promise<void> {
+  return sendJson<void>(`/api/MenuPackages/${packageId}/images/${imageId}`, 'DELETE', token);
 }

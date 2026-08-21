@@ -814,7 +814,7 @@ export function BookingPage() {
         .bk-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.8rem}
         .bk-btn{font-family:var(--font-body);font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;padding:.85rem 1.4rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:.45rem;transition:all .25s}
         .bk-btn:disabled{opacity:.4;cursor:not-allowed}
-        .bk-btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+        .bk-btn.danger{background:var(--danger);color:var(--danger-text);border-color:var(--danger)}
         .bk-btn.danger:hover:not(:disabled){filter:brightness(.92);transform:translateY(-2px)}
 
         /* leave-confirmation modal — same overlay/modal shape as the dashboards */
@@ -827,7 +827,7 @@ export function BookingPage() {
         .bk-btn.primary:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-2px);box-shadow:var(--shadow-green)}
         .bk-btn.outline{background:transparent;color:var(--primary);border-color:var(--border-accent)}
         .bk-btn.outline:hover:not(:disabled){background:var(--primary-muted);border-color:var(--primary);transform:translateY(-2px)}
-        .bk-btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+        .bk-btn.danger{background:var(--danger);color:var(--danger-text);border-color:var(--danger)}
 
         /* ── mode cards ── */
         .bk-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.2rem 0}
@@ -1301,7 +1301,7 @@ export function BookingPage() {
                             >
                               <div className="bk-catalog-name">{pkg.packageName}</div>
                               <div className="bk-catalog-meta">{pkg.minPax}–{pkg.maxPax} pax</div>
-                              {!isEligible && <div style={{ fontSize: '.65rem', color: '#ff4d4f', marginTop: '.25rem', fontWeight: 500 }}>Requires at least {pkg.minPax} guests</div>}
+                              {!isEligible && <div style={{ fontSize: '.65rem', color: 'var(--danger)', marginTop: '.25rem', fontWeight: 500 }}>Requires at least {pkg.minPax} guests</div>}
                               <div className="bk-catalog-meta" style={{ marginTop: '.2rem' }}>{pkg.description}</div>
                               <div className="bk-catalog-price">{fmtPHP(pkg.basePrice)}</div>
                               {pkg.inclusions.length > 0 && (

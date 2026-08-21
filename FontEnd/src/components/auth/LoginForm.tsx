@@ -56,7 +56,7 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
       {formError && (
         <div
           role="alert"
-          className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]"
         >
           {formError}
         </div>
@@ -64,7 +64,7 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
 
       {/* Email */}
       <div className="space-y-1.5">
-        <label htmlFor={emailId} className="block text-sm font-medium text-slate-700">
+        <label htmlFor={emailId} className="block text-sm font-medium text-[var(--text-secondary)]">
           Email
         </label>
         <input
@@ -84,7 +84,7 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
           className={fieldClasses(submitted && Boolean(errors.email))}
         />
         {submitted && errors.email && (
-          <p id={emailErrId} className="text-sm text-red-600">
+          <p id={emailErrId} className="text-sm text-[var(--danger)]">
             {errors.email}
           </p>
         )}
@@ -93,10 +93,10 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
       {/* Password */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
-          <label htmlFor={passwordId} className="block text-sm font-medium text-slate-700">
+          <label htmlFor={passwordId} className="block text-sm font-medium text-[var(--text-secondary)]">
             Password
           </label>
-          <a href="/forgot-password" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+          <a href="/forgot-password" className="text-sm font-medium text-[var(--primary)] hover:text-[var(--accent)]">
             Forgot password?
           </a>
         </div>
@@ -121,26 +121,26 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
             onClick={() => setShowPassword((s) => !s)}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
             aria-pressed={showPassword}
-            className="absolute inset-y-0 right-0 flex items-center px-3 text-sm font-medium text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 rounded-r-lg"
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] rounded-r-lg"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
         {submitted && errors.password && (
-          <p id={passwordErrId} className="text-sm text-red-600">
+          <p id={passwordErrId} className="text-sm text-[var(--danger)]">
             {errors.password}
           </p>
         )}
       </div>
 
       {/* Remember me */}
-      <label className="flex items-center gap-2.5 text-sm text-slate-600 select-none">
+      <label className="flex items-center gap-2.5 text-sm text-[var(--text-secondary)] select-none">
         <input
           type="checkbox"
           name="rememberMe"
           checked={rememberMe}
           onChange={(e) => setRememberMe(e.target.checked)}
-          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus-visible:ring-2 focus-visible:ring-indigo-500"
+          className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
         />
         Remember me on this device
       </label>
@@ -148,7 +148,7 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
       <button
         type="submit"
         disabled={submitting}
-        className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {submitting ? 'Signing in…' : `Sign in as ${role === 'admin' ? 'Admin' : 'Customer'}`}
       </button>
@@ -158,11 +158,11 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
 
 function fieldClasses(invalid: boolean): string {
   return [
-    'w-full rounded-lg border bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm',
-    'placeholder:text-slate-400 transition-colors',
+    'w-full rounded-lg border bg-[var(--surface)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] shadow-sm',
+    'placeholder:text-[var(--text-dim)] transition-colors',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0',
     invalid
-      ? 'border-red-400 focus-visible:ring-red-500'
-      : 'border-slate-300 focus-visible:ring-indigo-500',
+      ? 'border-[var(--danger)] focus-visible:ring-[var(--danger)]'
+      : 'border-[var(--border-strong)] focus-visible:ring-[var(--primary)]',
   ].join(' ');
 }

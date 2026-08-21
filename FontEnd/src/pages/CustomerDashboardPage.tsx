@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useTheme } from '../hooks/useTheme';
+import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
 import { ChatWidget } from '../components/landing/ChatWidget';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
   LayoutDashboard, CalendarDays, CreditCard, Package,
   Utensils, Tent, CheckCircle, Clock, MapPin, Users, HeartHandshake, Truck,
-  Cake, PartyPopper, Building2, Landmark, Calendar, ListTodo, LogOut, Sun, Moon
+  Cake, PartyPopper, Building2, Landmark, Calendar, ListTodo, LogOut
 } from 'lucide-react';
 import {
   getAllBookings,
@@ -898,7 +898,6 @@ const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 
 
 export function CustomerDashboardPage() {
-  const { theme, toggleTheme } = useTheme();
   const { user: authUser, logout } = useAuth();
   const location = useLocation();
 
@@ -1736,7 +1735,7 @@ export function CustomerDashboardPage() {
                     style={{
                       position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
                       padding: '0 3px', borderRadius: 'var(--r-full)', background: 'var(--danger)',
-                      color: '#fff', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
+                      color: 'var(--accent-text)', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
                       display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
                     }}
                   >
@@ -1810,15 +1809,7 @@ export function CustomerDashboardPage() {
               )}
             </div>
 
-            <button
-              type="button"
-              className="cds-iconbtn"
-              onClick={toggleTheme}
-              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              style={{ color: 'var(--accent)' }}
-            >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
+            <ThemeToggle className="cds-iconbtn" style={{ color: 'var(--accent)' }} />
             <div className="cds-avatar" title={account.name}>{account.name.charAt(0)}</div>
           </div>
 
@@ -1900,7 +1891,7 @@ export function CustomerDashboardPage() {
                       <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.75)', fontWeight: 500 }}>
                         {new Date(nextBooking.eventDate || '').toLocaleDateString('en-PH', { month: 'short' }).toUpperCase()}
                       </span>
-                      <span style={{ fontFamily: 'var(--font-display)', fontSize: '2.6rem', fontWeight: 600, color: '#fff', lineHeight: 1 }}>
+                      <span style={{ fontFamily: 'var(--font-display)', fontSize: '2.6rem', fontWeight: 600, color: 'var(--primary-text)', lineHeight: 1 }}>
                         {new Date(nextBooking.eventDate || '').getDate()}
                       </span>
                       <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.55rem', letterSpacing: '0.2em', color: 'rgba(255,255,255,0.6)' }}>
@@ -2309,7 +2300,7 @@ export function CustomerDashboardPage() {
                               p.status === 'Success' ? 'var(--primary)'
                               : p.status === 'Failed' ? 'var(--danger)'
                               : p.status === 'Pending' ? 'var(--accent)'
-                              : '#4a90d9';
+                              : 'var(--status-info)';
                             // A completed event has already been delivered, so its
                             // payments are no longer refundable — asking would be a
                             // dispute, not a refund request.
@@ -2409,7 +2400,7 @@ export function CustomerDashboardPage() {
                     type="button"
                     className="cds-btn"
                     disabled={cancelBusy}
-                    style={{ background: 'var(--danger)', color: '#fff', borderColor: 'var(--danger)', opacity: cancelBusy ? 0.6 : 1 }}
+                    style={{ background: 'var(--danger)', color: 'var(--danger-text)', borderColor: 'var(--danger)', opacity: cancelBusy ? 0.6 : 1 }}
                     onClick={() => void cancelBooking(confirmCancel)}
                   >
                     {cancelBusy ? 'Working…' : needsRequest ? 'Send Request' : 'Yes, Cancel'}

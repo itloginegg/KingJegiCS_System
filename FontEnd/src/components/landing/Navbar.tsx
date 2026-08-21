@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useTheme } from '../../hooks/useTheme';
+import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAuth } from '../../hooks/useAuth';
 
 const NAV_LINKS = [
@@ -10,23 +10,6 @@ const NAV_LINKS = [
   { label: 'Rentals', href: '/rentals' },
   { label: 'Book Now', href: '/book' },
 ];
-
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="18" height="18" aria-hidden="true">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
 
 function CartIcon() {
   return (
@@ -46,7 +29,6 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
   /** Click handler for the cart icon (e.g. open the checkout modal). Optional. */
   onCartClick?: () => void;
 }) {
-  const { theme, toggleTheme } = useTheme();
   const { isAuthenticated, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -89,7 +71,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
           font-size: 0.66rem;
           letter-spacing: 0.22em;
           text-transform: uppercase;
-          font-weight: 500;
+          font-weight: 700;
           color: var(--text-secondary);
           text-decoration: none;
           transition: color 0.2s;
@@ -179,7 +161,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
                   position: 'absolute', top: 2, right: 2,
                   minWidth: 15, height: 15, padding: '0 3px',
                   borderRadius: 'var(--r-full)',
-                  background: 'var(--accent)', color: '#fff',
+                  background: 'var(--accent)', color: 'var(--accent-text)',
                   fontFamily: 'var(--font-body)', fontSize: '0.52rem', fontWeight: 600,
                   lineHeight: '15px', textAlign: 'center',
                 }}
@@ -189,14 +171,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            style={{ ...iconBtn, color: 'var(--accent)' }}
-          >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </button>
+          <ThemeToggle style={{ ...iconBtn, color: 'var(--accent)' }} />
 
           {isAuthenticated ? (
             <>

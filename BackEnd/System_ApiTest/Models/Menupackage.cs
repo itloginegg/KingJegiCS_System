@@ -47,6 +47,12 @@ namespace System_ApiTest.Models
         public ICollection<Menupackagefixeditem> FixedItems { get; set; } = new List<Menupackagefixeditem>();
 
         /// <summary>
+        /// The package's own gallery photos, uploaded by an Owner/Assistant. Empty is
+        /// normal — the public gallery then falls back to the dish photos on Items.
+        /// </summary>
+        public ICollection<Menupackageimage> Images { get; set; } = new List<Menupackageimage>();
+
+        /// <summary>
         /// Total package cost for a given guest count:
         ///   within [MinPax, MaxPax]      => BasePrice
         ///   above MaxPax                 => BasePrice + (guests - MaxPax) * PricePerExtraPax

@@ -40,6 +40,7 @@ namespace System_ApiTest.Data
         public DbSet<Menupackageslot> MenuPackageSlots => Set<Menupackageslot>();
         public DbSet<SlotCategory> SlotCategories => Set<SlotCategory>();
         public DbSet<Menupackagefixeditem> MenuPackageFixedItems => Set<Menupackagefixeditem>();
+        public DbSet<Menupackageimage> MenuPackageImages => Set<Menupackageimage>();
         public DbSet<Bookingpackageselection> BookingPackageSelections => Set<Bookingpackageselection>();
 
         // Configuration
@@ -57,6 +58,9 @@ namespace System_ApiTest.Data
 
         // Admin broadcasts to the customer base (delivered via the ledger above)
         public DbSet<Announcement> Announcements => Set<Announcement>();
+
+        // Public "Events by King Jegi" photo gallery — unrelated to announcements above
+        public DbSet<Galleryimage> GalleryImages => Set<Galleryimage>();
 
         // Virtual assistant (conversation history)
         public DbSet<Conversation> Conversations => Set<Conversation>();
@@ -340,6 +344,14 @@ namespace System_ApiTest.Data
                  .HasForeignKey(x => x.MenuItemId).OnDelete(DeleteBehavior.Restrict);
             });
 
+            b.Entity<Menupackageimage>(e =>
+            {
+                // Gallery reads are always "this package's images, in order".
+                e.HasIndex(x => new { x.MenuPackageId, x.DisplayOrder });
+                e.HasOne(x => x.MenuPackage).WithMany(p => p.Images)
+                 .HasForeignKey(x => x.MenuPackageId).OnDelete(DeleteBehavior.Cascade);
+            });
+
             b.Entity<Bookingpackageselection>(e =>
             {
                 e.HasKey(x => new { x.BookingId, x.MenuPackageSlotId, x.MenuItemId });
@@ -496,6 +508,18 @@ namespace System_ApiTest.Data
                 // removed out from under it. Same Restrict stance as AuditLog.
                 e.HasOne(a => a.CreatedBy).WithMany()
                  .HasForeignKey(a => a.CreatedById).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- Gallery image (public "Events by King Jegi") ----------------
+            b.Entity<Galleryimage>(e =>
+            {
+                // Every read is "the gallery, in order".
+                e.HasIndex(g => new { g.DisplayOrder, g.UploadedAt });
+
+                // Same Restrict stance as Announcement.CreatedBy: removing an admin must
+                // not silently delete the photos they uploaded.
+                e.HasOne(g => g.UploadedBy).WithMany()
+                 .HasForeignKey(g => g.UploadedById).OnDelete(DeleteBehavior.Restrict);
             });
 
             // ---------------- Conversation / Conversationmessage (virtual assistant) ----------------

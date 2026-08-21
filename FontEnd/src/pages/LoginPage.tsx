@@ -89,14 +89,14 @@ export function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--bg-subtle)] px-4 py-12">
       <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/50 sm:p-8">
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-lg)] sm:p-8">
           <header className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
               Welcome back
             </h1>
-            <p className="mt-1.5 text-sm text-slate-500">
+            <p className="mt-1.5 text-sm text-[var(--text-muted)]">
               Sign in to your KingJegi account
             </p>
           </header>
@@ -105,7 +105,7 @@ export function LoginPage() {
           {(location.state as RedirectState | null)?.registeredEmail && (
             <div
               role="status"
-              className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+              className="mt-5 rounded-lg border border-[var(--border-accent)] bg-[var(--primary-muted)] px-4 py-3 text-sm text-[var(--primary)]"
             >
               Account created for{' '}
               <strong>{(location.state as RedirectState).registeredEmail}</strong>.
@@ -118,24 +118,24 @@ export function LoginPage() {
           </div>
 
           {otpStep && pendingCredentials ? (
-            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-5">
               <div className="space-y-2">
-                <h2 className="text-lg font-semibold text-slate-900">Verify your sign-in</h2>
-                <p className="text-sm text-slate-600">
+                <h2 className="text-lg font-semibold text-[var(--text-primary)]">Verify your sign-in</h2>
+                <p className="text-sm text-[var(--text-secondary)]">
                   Enter the 6-digit code sent to{' '}
-                  <span className="font-medium text-slate-800">{pendingCredentials.email}</span>.
+                  <span className="font-medium text-[var(--text-primary)]">{pendingCredentials.email}</span>.
                 </p>
               </div>
 
               {otpError && (
-                <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <div role="alert" className="mt-4 rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]">
                   {otpError}
                 </div>
               )}
 
               <form onSubmit={handleOtpSubmit} className="mt-4 space-y-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="otp-code" className="block text-sm font-medium text-slate-700">
+                  <label htmlFor="otp-code" className="block text-sm font-medium text-[var(--text-secondary)]">
                     Verification code
                   </label>
                   <input
@@ -150,7 +150,7 @@ export function LoginPage() {
                       setOtpCode(nextValue);
                       if (otpError) setOtpError(null);
                     }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-center text-lg font-semibold tracking-[0.35em] text-slate-900 shadow-sm placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3.5 py-2.5 text-center text-lg font-semibold tracking-[0.35em] text-[var(--text-primary)] shadow-sm placeholder:text-[var(--text-dim)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
                     placeholder="123456"
                   />
                 </div>
@@ -158,7 +158,7 @@ export function LoginPage() {
                 <button
                   type="submit"
                   disabled={otpSubmitting || status === 'authenticating'}
-                  className="flex w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {otpSubmitting || status === 'authenticating' ? 'Verifying…' : 'Verify code'}
                 </button>
@@ -172,7 +172,7 @@ export function LoginPage() {
                   setOtpCode('');
                   setOtpError(null);
                 }}
-                className="mt-4 text-sm font-medium text-slate-600 hover:text-slate-800"
+                className="mt-4 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               >
                 Back to sign in
               </button>
@@ -187,9 +187,9 @@ export function LoginPage() {
           )}
         </div>
 
-        <p className="mt-6 text-center text-sm text-slate-500">
+        <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
           Don&apos;t have an account?{' '}
-          <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-700">
+          <Link to="/register" className="font-medium text-[var(--primary)] hover:text-[var(--accent)]">
             Create one
           </Link>
         </p>

@@ -4,6 +4,34 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KingJegi</title>
+    <!--
+      Applies the theme before first paint.
+
+      Must stay INLINE and BLOCKING, in <head>, above the stylesheet: body's
+      background comes from var(--bg), which resolves to the light value until
+      `.dark` lands on <html>. Moving this into a module, deferring it, or letting
+      React apply it on mount all reintroduce a light flash for dark-mode users —
+      the window is HTML parse → CSS → JS download → parse → React mount.
+
+      Mirrors readStoredTheme() in src/context/ThemeContext.tsx: same
+      'kingjegi-theme' key, same fallback to the OS preference. Keep the two in step.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('kingjegi-theme');
+          var dark =
+            stored === 'dark' ||
+            ((stored === 'system' || stored === null) &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          root.classList.toggle('dark', dark);
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* Storage unavailable (private mode) — fall through to the light default. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

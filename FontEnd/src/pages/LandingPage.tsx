@@ -319,8 +319,8 @@ function CollidingBlobsCanvas() {
     };
  
     const buildPalette = () => {
-      const primary = getCSSVar('--primary') || '#0f766e';
-      const accent = getCSSVar('--accent') || '#b07d2b';
+      const primary = getCSSVar('--primary') || '#073a40';
+      const accent = getCSSVar('--accent') || '#79654e';
       const hover = getCSSVar('--primary-hover') || primary;
       return [primary, accent, primary, hover, accent, primary];
     };

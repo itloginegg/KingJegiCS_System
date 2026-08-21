@@ -295,9 +295,28 @@ namespace System_ApiTest.DTOs
         /* Whether a resource plan exists, for the admin list's "Edit Resources"
            affordance. Null means "no plan saved" OR "this response didn't load it" —
            only the read endpoints that Include the navigation property populate it, via
-           ToDtoWithResources. Mutation responses deliberately leave it null rather than
+           ToDtoWithRelations. Mutation responses deliberately leave it null rather than
            reporting an absence they didn't actually check. */
-        BookingResourceSummaryDto? ResourceAllocation = null);
+        BookingResourceSummaryDto? ResourceAllocation = null,
+
+        /* Display fields for the admin bookings table, which needs the customer's email
+           and the package's name — neither of which is derivable from CustomerId and
+           MenuPackageId alone, and which the list previously faked as "Not provided"
+           and "Package Selected".
+
+           BookingName already carries the customer's full name (see Booking.BookingName),
+           so no CustomerName-for-display field is needed here; this one exists for
+           callers that want it unparsed. ContactNumber, not Customer.PhoneNumber, remains
+           the phone shown on a booking: it is the event-day contact and may legitimately
+           differ from the account's number.
+
+           Same discipline as ResourceAllocation: populated ONLY by the reads that
+           actually Include the navigation properties. Reading Customer/MenuPackage on an
+           entity loaded without them yields null, which is indistinguishable from "there
+           isn't one" — so base ToDto never touches them. */
+        string? CustomerName = null,
+        string? CustomerEmail = null,
+        string? PackageName = null);
 
     /// <summary>Just enough of the resource plan for a list row to show its state.</summary>
     public record BookingResourceSummaryDto(bool IsApproved, DateTime UpdatedAt);

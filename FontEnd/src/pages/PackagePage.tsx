@@ -13,6 +13,11 @@ import { ChatWidget } from '../components/landing/ChatWidget';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuTrays } from '../api/menuAdminApi';
+import {
+  fetchGallery,
+  getFullImageUrl as getGalleryImageUrl,
+  type GalleryImage,
+} from '../api/galleryApi';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -366,6 +371,174 @@ function TrayCard({ tray, tabbable, onSelect }: {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
+/* ─────────────────────────────────────────────────────────────────────────
+   "Events by King Jegi" lightbox
+
+   Hand-rolled on top of framer-motion (already a dependency, already driving
+   the slider above) rather than a new package: nothing installed does dialogs
+   or lightboxes, and this page is styled with inline styles and CSS custom
+   properties, so a headless-UI dependency would mean a second styling system
+   for one overlay.
+
+   Accessibility, since no library provides it here:
+     · role="dialog" + aria-modal, labelled by the gallery heading
+     · Escape closes
+     · ← / → move through the collection (when there's more than one photo)
+     · Tab and Shift+Tab cycle inside the dialog
+     · focus moves in on open and returns to the trigger on close
+───────────────────────────────────────────────────────────────────────── */
+
+const LIGHTBOX_FOCUSABLE = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+  'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function GalleryLightbox({
+  images,
+  startIndex,
+  onClose,
+}: {
+  images: GalleryImage[];
+  startIndex: number;
+  onClose: () => void;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const [index, setIndex] = useState(startIndex);
+
+  const count = images.length;
+  const titleId = 'kj-gallery-lightbox-title';
+  const current = images[index];
+
+  /* Focus in on open, back to the trigger on close. */
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    return () => {
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, []);
+
+  /* Background must not scroll under the overlay. */
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+
+      if (count > 1 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+        e.preventDefault();
+        setIndex((i) => (e.key === 'ArrowRight' ? (i + 1) % count : (i - 1 + count) % count));
+        return;
+      }
+
+      if (e.key !== 'Tab') return;
+
+      // Re-queried per Tab: the arrows only exist when there's more than one photo.
+      const card = cardRef.current;
+      if (!card) return;
+      const items = Array.from(card.querySelectorAll<HTMLElement>(LIGHTBOX_FOCUSABLE))
+        .filter((el) => el.offsetParent !== null || el === document.activeElement);
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (e.shiftKey && (active === first || !card.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !card.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [onClose, count]);
+
+  // Guard: an image removed while the lightbox is open would otherwise blank it.
+  if (!current) return null;
+
+  return (
+    <div className="lb-overlay" onClick={onClose}>
+      <div
+        ref={cardRef}
+        className="lb-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id={titleId} className="sr-only">Events by King Jegi — photo gallery</h2>
+
+        <button ref={closeRef} className="lb-close" onClick={onClose} aria-label="Close gallery">
+          ✕
+        </button>
+
+        <div className="lb-stage">
+          {/* Keyed so React swaps the element outright on navigation, and the new
+              one fades in from its `initial`. Deliberately NOT an AnimatePresence
+              exit transition: `mode="wait"` withholds the incoming image until the
+              outgoing one finishes animating, which strands the viewer on the
+              previous photo if that animation is ever interrupted or throttled —
+              a stalled fade should never mean the wrong image on screen. */}
+          <motion.img
+            key={current.id}
+            src={getGalleryImageUrl(current.url) ?? undefined}
+            alt={current.caption ?? `Gallery photo ${index + 1} of ${count}`}
+            className="lb-image"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.18 }}
+          />
+
+          {count > 1 && (
+            <>
+              <button
+                type="button"
+                className="lb-arrow lb-arrow-prev"
+                onClick={() => setIndex((i) => (i - 1 + count) % count)}
+                aria-label="Previous photo"
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="lb-arrow lb-arrow-next"
+                onClick={() => setIndex((i) => (i + 1) % count)}
+                aria-label="Next photo"
+              >
+                ›
+              </button>
+            </>
+          )}
+        </div>
+
+        <div className="lb-footer">
+          {/* Announced as the photo changes — the caption is the only text that moves. */}
+          <p className="lb-caption" aria-live="polite">
+            {current.caption ?? `Photo ${index + 1} of ${count}`}
+          </p>
+          {count > 1 && <span className="lb-counter">{index + 1} / {count}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PackagePage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Pkg | null>(null);
@@ -428,11 +601,36 @@ export function PackagePage() {
   useEffect(() => { void loadPackages(); }, []);
   const [slideIndex, setSlideIndex] = useState(0);
 
+  /* ── "Events by King Jegi" gallery ──────────────────────────────────────
+     Admin-uploaded photos from /api/Gallery (anonymous GET). When the gallery
+     is empty the banner falls back to the stock slides and simply isn't
+     clickable — the section keeps its exact layout either way. */
+  const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    // A failed gallery fetch must not take the page down: the banner just keeps
+    // its stock slides, so the error is swallowed deliberately.
+    void fetchGallery().then(setGallery, () => setGallery([]));
+  }, []);
+
+  const hasGallery = gallery.length > 0;
+  /* The banner shows real event photos once there are any. */
+  const bannerSlides = hasGallery
+    ? gallery.map((g) => getGalleryImageUrl(g.url) ?? '').filter(Boolean)
+    : PKG_HERO_SLIDES;
+
   /* auto-advance slideshow */
   useEffect(() => {
-    const t = setInterval(() => setSlideIndex((i) => (i + 1) % PKG_HERO_SLIDES.length), 5000);
+    if (bannerSlides.length <= 1) return;
+    const t = setInterval(() => setSlideIndex((i) => (i + 1) % bannerSlides.length), 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [bannerSlides.length]);
+
+  /* A shorter gallery (an admin deleted a photo) must not strand the index. */
+  useEffect(() => {
+    setSlideIndex((i) => (i >= bannerSlides.length ? 0 : i));
+  }, [bannerSlides.length]);
 
   /* lock scroll when modal open */
   useEffect(() => {
@@ -605,13 +803,103 @@ export function PackagePage() {
         .modal-close {
           position: absolute; top: 1rem; right: 1rem;
           width: 36px; height: 36px; border-radius: 50%;
-          background: rgba(255,255,255,0.9); border: 1px solid var(--border);
+          background: var(--surface-glass); border: 1px solid var(--border);
           cursor: pointer;
           display: flex; align-items: center; justify-content: center;
-          color: #211a13; font-size: 1rem;
+          color: var(--text-primary); font-size: 1rem;
           transition: background 0.2s, transform 0.2s; z-index: 2;
         }
-        .modal-close:hover { background: #fff; transform: scale(1.05); }
+        .modal-close:hover { background: var(--surface); transform: scale(1.05); }
+        /* ── events gallery lightbox ── */
+        .sr-only {
+          position: absolute; width: 1px; height: 1px;
+          padding: 0; margin: -1px; overflow: hidden;
+          clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
+        /* The banner is a button only when there are photos behind it. */
+        .pkg-slideshow-clickable { cursor: pointer; }
+        .pkg-slide-trigger {
+          position: absolute; inset: 0; z-index: 3;
+          background: none; border: 0; padding: 0;
+          cursor: pointer;
+        }
+        .pkg-slide-trigger:focus-visible {
+          outline: 3px solid var(--primary);
+          outline-offset: -3px;
+        }
+        /* Dots sit above the full-bleed trigger so they stay independently clickable. */
+        .pkg-slide-dots { z-index: 4; }
+
+        .lb-overlay {
+          position: fixed; inset: 0;
+          background: rgba(6, 50, 59, 0.82);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          z-index: 400;
+          display: flex; align-items: center; justify-content: center;
+          padding: 1.5rem;
+          animation: overlayIn 0.25s ease both;
+        }
+        .lb-card {
+          position: relative;
+          width: min(1100px, 100%); max-height: 92vh;
+          display: flex; flex-direction: column; gap: 0.75rem;
+          animation: modalIn 0.3s ease both;
+        }
+        .lb-stage {
+          position: relative; flex: 1; min-height: 0;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .lb-image {
+          max-width: 100%; max-height: 78vh;
+          object-fit: contain; display: block;
+          border-radius: var(--r-lg);
+          box-shadow: var(--shadow-lg);
+        }
+        .lb-close {
+          position: absolute; top: -0.5rem; right: -0.5rem; z-index: 5;
+          width: 40px; height: 40px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: var(--surface); border: 1px solid var(--border);
+          color: var(--text-primary); font-size: 1rem; cursor: pointer;
+          transition: transform 0.2s;
+        }
+        .lb-close:hover { transform: scale(1.06); }
+        .lb-arrow {
+          position: absolute; top: 50%; transform: translateY(-50%);
+          width: 46px; height: 46px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: var(--surface-glass); border: 1px solid var(--border-glass);
+          color: var(--text-primary); font-size: 1.6rem; line-height: 1;
+          cursor: pointer; z-index: 4;
+          transition: background 0.2s, transform 0.2s;
+        }
+        .lb-arrow:hover { background: var(--surface); transform: translateY(-50%) scale(1.06); }
+        .lb-arrow-prev { left: 0.5rem; }
+        .lb-arrow-next { right: 0.5rem; }
+        .lb-footer {
+          display: flex; align-items: center; justify-content: center;
+          gap: 1rem; flex-wrap: wrap;
+        }
+        .lb-caption {
+          margin: 0; text-align: center;
+          font-family: var(--font-body); font-size: 0.82rem; font-weight: 300;
+          color: rgba(255, 255, 255, 0.92);
+        }
+        .lb-counter {
+          font-family: var(--font-body); font-size: 0.68rem; letter-spacing: 0.12em;
+          color: rgba(255, 255, 255, 0.7);
+        }
+        /* Keyboard operation is a stated requirement — every control shows focus. */
+        .lb-close:focus-visible,
+        .lb-arrow:focus-visible {
+          outline: 2px solid #fff;
+          outline-offset: 2px;
+        }
+        @media (max-width: 640px) {
+          .lb-close { top: 0.25rem; right: 0.25rem; }
+          .lb-arrow { width: 38px; height: 38px; font-size: 1.3rem; }
+        }
+
         .modal-body-scroll { overflow-y: auto; padding: 2rem; }
         .modal-body-scroll::-webkit-scrollbar { width: 6px; }
         .modal-body-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -690,8 +978,8 @@ export function PackagePage() {
 
           {/* ── slideshow banner ── */}
           <div style={{ maxWidth: 1200, margin: '4rem auto 0', padding: '0 2.5rem', position: 'relative' }}>
-            <div className="pkg-slideshow-wrap">
-              {PKG_HERO_SLIDES.map((src, i) => (
+            <div className={`pkg-slideshow-wrap${hasGallery ? ' pkg-slideshow-clickable' : ''}`}>
+              {bannerSlides.map((src, i) => (
                 <div
                   key={src}
                   className={`pkg-slide${i === slideIndex ? ' active' : ''}`}
@@ -699,6 +987,20 @@ export function PackagePage() {
                 />
               ))}
               <div className="pkg-slide-overlay" />
+
+              {/* The whole banner is the affordance once there are photos to show.
+                  A real <button> rather than a click handler on the wrapper, so it
+                  is reachable and operable from the keyboard for free. Rendered
+                  only when the gallery has content — an empty gallery leaves the
+                  banner exactly as it was, decorative and inert. */}
+              {hasGallery && (
+                <button
+                  type="button"
+                  className="pkg-slide-trigger"
+                  onClick={() => setLightboxIndex(slideIndex)}
+                  aria-label={`Open the Events by King Jegi gallery — ${gallery.length} photo${gallery.length === 1 ? '' : 's'}`}
+                />
+              )}
 
               <div style={{ position: 'absolute', left: '2rem', top: '50%', transform: 'translateY(-50%)', zIndex: 2 }}>
                 <p
@@ -714,10 +1016,21 @@ export function PackagePage() {
                 <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.1rem, 2.5vw, 1.6rem)', fontWeight: 400, color: '#fff', lineHeight: 1.2 }}>
                   Events by King Jegi
                 </p>
+                {hasGallery && (
+                  <p
+                    style={{
+                      fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.18em',
+                      textTransform: 'uppercase', color: 'rgba(255,255,255,0.85)',
+                      marginTop: '0.5rem', fontWeight: 500,
+                    }}
+                  >
+                    View all {gallery.length} photo{gallery.length === 1 ? '' : 's'} →
+                  </p>
+                )}
               </div>
 
               <div className="pkg-slide-dots">
-                {PKG_HERO_SLIDES.map((_, i) => (
+                {bannerSlides.map((_, i) => (
                   <button
                     key={i}
                     className={`pkg-slide-dot${i === slideIndex ? ' active' : ''}`}
@@ -972,6 +1285,15 @@ export function PackagePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══════════════════ EVENTS GALLERY LIGHTBOX ═══════════════════ */}
+      {lightboxIndex !== null && hasGallery && (
+        <GalleryLightbox
+          images={gallery}
+          startIndex={Math.min(lightboxIndex, gallery.length - 1)}
+          onClose={() => setLightboxIndex(null)}
+        />
       )}
 
       <ChatWidget />

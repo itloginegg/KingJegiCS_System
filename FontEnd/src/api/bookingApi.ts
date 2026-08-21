@@ -151,6 +151,22 @@ export interface BookingResponse {
    * null as "unknown/none" and refetch rather than concluding a plan was deleted.
    */
   resourceAllocation: { isApproved: boolean; updatedAt: string } | null;
+
+  /**
+   * Customer and package display fields, joined into the list and detail reads.
+   *
+   * Same caveat as `resourceAllocation`: null means EITHER the value is genuinely
+   * absent OR this particular response didn't load the join. Only the reads populate
+   * them — every mutation response leaves them null, so re-render a row from the list
+   * rather than from a confirm/cancel result if you need these cells to stay filled.
+   *
+   * `bookingName` already contains the customer's full name (the server generates it
+   * as "{full name} - {event type}"), so prefer it for display; `customerName` is here
+   * for callers that want the name unparsed.
+   */
+  customerName: string | null;
+  customerEmail: string | null;
+  packageName: string | null;
 }
 
 /** Which event-detail fields the server will accept for a given event type. */

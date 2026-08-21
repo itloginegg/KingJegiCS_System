@@ -1,35 +1,19 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
+import { useContext } from 'react';
+import { ThemeContext, type ThemeContextValue } from '../context/ThemeContext';
 
-export type Theme = 'light' | 'dark';
-
-const STORAGE_KEY = 'kingjegi-theme';
-
-function getInitialTheme(): Theme {
-  if (typeof window === 'undefined') return 'dark';
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') return stored;
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-}
+export type { Theme, ResolvedTheme } from '../context/ThemeContext';
 
 /**
- * Class-based theme switching: keeps the `.dark` class on <html> in sync so
- * Tailwind's `dark:` variant (see index.css @custom-variant) applies globally,
- * and persists the choice across visits.
+ * Reads the app-wide theme.
+ *
+ * Previously this hook OWNED the state, so every caller got its own copy. It now
+ * reads the single ThemeProvider instance instead — same import path, so callers
+ * did not have to change.
  */
-export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
-
-  // Layout effect: the class must be on <html> before first paint, otherwise
-  // dark-mode users see a flash of the light theme on every page load.
-  useLayoutEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    window.localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
-
-  const toggleTheme = useCallback(
-    () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
-    [],
-  );
-
-  return { theme, toggleTheme };
+export function useTheme(): ThemeContextValue {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) {
+    throw new Error('useTheme must be used inside <ThemeProvider> (mounted in AppRoutes).');
+  }
+  return ctx;
 }

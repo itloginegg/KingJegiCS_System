@@ -350,12 +350,28 @@ namespace System_ApiTest.Controllers
         /// Owner view: the most recent customer payments across all bookings, newest
         /// first, with their booking + customer context for the admin dashboard.
         /// </summary>
+        /// <param name="date">
+        /// Optional single-day filter on PaymentDateTime. Applied BEFORE Take, so asking
+        /// for a day returns that day's payments rather than whichever of them happen to
+        /// fall inside the newest `take` rows — filtering the page client-side would
+        /// report an empty day for any date older than the most recent 50 payments.
+        /// </param>
         [Authorize(Roles = "Owner,Assistant")]
         [HttpGet("recent")]
-        public async Task<IActionResult> Recent([FromQuery] int take = 50)
+        public async Task<IActionResult> Recent([FromQuery] int take = 50, [FromQuery] DateOnly? date = null)
         {
             take = Math.Clamp(take, 1, 200);
-            var rows = await _db.Payments
+            var payments = _db.Payments.AsQueryable();
+            if (date is not null)
+            {
+                var from = date.Value.ToDateTime(TimeOnly.MinValue);
+                var to = from.AddDays(1);
+                // Half-open range rather than .Date == so the comparison stays sargable
+                // and the query can still use an index on PaymentDateTime.
+                payments = payments.Where(p => p.PaymentDateTime >= from && p.PaymentDateTime < to);
+            }
+
+            var rows = await payments
                 .Join(_db.Invoices, p => p.InvoiceId, i => i.Id, (p, i) => new { p, i })
                 .Join(_db.Bookings, x => x.i.BookingId, b => b.Id, (x, b) => new { x.p, b })
                 .Join(_db.Customers, x => x.b.CustomerId, c => c.Id, (x, c) => new { x.p, x.b, c })

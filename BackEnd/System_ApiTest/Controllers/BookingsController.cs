@@ -62,11 +62,18 @@ namespace System_ApiTest.Controllers
 
             // Included so the admin list can show whether each booking already has a
             // resource plan. One extra left join; the summary is dropped for customers.
+            //
+            // Customer and MenuPackage join for the admin table's Email and Package
+            // columns. Two more left joins on this one query, rather than the alternative
+            // of a per-row GetById — which would be N requests, each carrying five
+            // ThenInclude chains, to fill two cells.
             var list = await query
+                .Include(b => b.Customer)
+                .Include(b => b.MenuPackage)
                 .Include(b => b.ResourceAllocation)
                 .OrderByDescending(b => b.CreatedAt)
                 .ToListAsync();
-            return Ok(list.Select(b => ToDtoWithResources(b)));
+            return Ok(list.Select(b => ToDtoWithRelations(b)));
         }
 
         /// <summary>Booking detail: scalars plus every line item (rental lines carry
@@ -75,6 +82,7 @@ namespace System_ApiTest.Controllers
         public async Task<IActionResult> GetById(Guid id)
         {
             var booking = await _db.Bookings.AsNoTracking()
+                .Include(b => b.Customer)
                 .Include(b => b.MenuPackage)
                 .Include(b => b.Rentals).ThenInclude(r => r.RentalItem)
                 .Include(b => b.Services).ThenInclude(sv => sv.ServiceItem)
@@ -89,7 +97,7 @@ namespace System_ApiTest.Controllers
                 return Forbid();
 
             var detail = new BookingDetailDto(
-                ToDtoWithResources(booking),
+                ToDtoWithRelations(booking),
                 booking.MenuPackage is null ? null : new BookingPackageSummaryDto(
                     booking.MenuPackage.Id, booking.MenuPackage.PackageName,
                     booking.MenuPackage.BasePrice, booking.MenuPackage.Inclusions),
@@ -649,16 +657,27 @@ namespace System_ApiTest.Controllers
             b.Motif, b.MotifImageUrl, b.Theme, b.ThemeImageUrl);
 
         /// <summary>
-        /// ToDto plus the resource-plan summary. Only for callers that have actually
-        /// Included Booking.ResourceAllocation — reading that navigation property on an
-        /// entity loaded without it yields null, which would be indistinguishable from
-        /// "no plan has been saved" and would quietly mislabel every row.
+        /// ToDto plus the navigation-backed fields: the resource-plan summary, and the
+        /// customer/package display values the admin bookings table needs.
         ///
-        /// Admin-only, like AdminNote: resource planning is internal.
+        /// Only for callers that have actually Included those navigation properties —
+        /// reading one on an entity loaded without it yields null, which would be
+        /// indistinguishable from "there isn't one" and would quietly mislabel every row.
+        ///
+        /// The resource summary stays admin-only, like AdminNote: resource planning is
+        /// internal. Customer name/email and the package name are not gated — they go
+        /// back to whoever can already see the booking, which for a customer is only
+        /// their own, i.e. their own name and address.
         /// </summary>
-        private BookingResponseDto ToDtoWithResources(Booking b)
+        private BookingResponseDto ToDtoWithRelations(Booking b)
         {
-            var dto = ToDto(b);
+            var dto = ToDto(b) with
+            {
+                CustomerName = b.Customer?.FullName,
+                CustomerEmail = b.Customer?.Email,
+                PackageName = b.MenuPackage?.PackageName,
+            };
+
             if (!IsAdmin() || b.ResourceAllocation is null) return dto;
 
             return dto with

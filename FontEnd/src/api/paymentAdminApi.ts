@@ -121,9 +121,21 @@ async function request<T>(
 
 // ── Public API ─────────────────────────────────────────────────────────
 
-/** Most recent customer payments across all bookings, newest first. */
-export function getRecentPayments(token: string, take = 50): Promise<AdminPaymentRecord[]> {
-  return request<AdminPaymentRecord[]>(`/api/Payments/recent?take=${take}`, 'GET', token);
+/**
+ * Most recent customer payments across all bookings, newest first.
+ *
+ * `date` ("YYYY-MM-DD") narrows to a single day server-side, before the take cap.
+ * Filtering the returned page in the browser instead would report an empty day for
+ * any date older than the newest `take` payments.
+ */
+export function getRecentPayments(
+  token: string,
+  take = 50,
+  date?: string | null,
+): Promise<AdminPaymentRecord[]> {
+  const qs = new URLSearchParams({ take: String(take) });
+  if (date) qs.set('date', date);
+  return request<AdminPaymentRecord[]>(`/api/Payments/recent?${qs}`, 'GET', token);
 }
 
 /** Open refund requests awaiting the owner's decision. */

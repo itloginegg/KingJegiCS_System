@@ -103,12 +103,12 @@ export function OtpCodeInput({
 
 function boxClasses(invalid: boolean): string {
   return [
-    'h-12 w-10 rounded-lg border bg-white text-center text-lg font-semibold text-slate-900 shadow-sm',
+    'h-12 w-10 rounded-lg border bg-[var(--surface)] text-center text-lg font-semibold text-[var(--text-primary)] shadow-sm',
     'transition-colors sm:h-14 sm:w-12 sm:text-xl',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0',
-    'disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60',
+    'disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60',
     invalid
-      ? 'border-red-400 focus-visible:ring-red-500'
-      : 'border-slate-300 focus-visible:ring-indigo-500',
+      ? 'border-[var(--danger)] focus-visible:ring-[var(--danger)]'
+      : 'border-[var(--border-strong)] focus-visible:ring-[var(--primary)]',
   ].join(' ');
 }
