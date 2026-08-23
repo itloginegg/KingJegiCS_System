@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
-import { ChatWidget } from '../components/landing/ChatWidget';
 import { readSession } from '../lib/tokenStorage';
 import { fetchRentalItems, getFullImageUrl, type AdminRentalItem } from '../api/rentalAdminApi';
 import { createBooking, addRental, submitBooking, BookingApiError } from '../api/bookingApi';
@@ -968,7 +967,6 @@ export function RentalsPage() {
         </div>
       )}
 
-      <ChatWidget />
     </>
   );
 }

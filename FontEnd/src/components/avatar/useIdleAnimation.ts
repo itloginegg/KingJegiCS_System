@@ -1,48 +1,66 @@
 import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Euler, MathUtils, Quaternion } from 'three';
+import { MathUtils, Vector3 } from 'three';
 import type { Object3D } from 'three';
 import type { MorphRig } from './morphRig';
 import type { VoiceState } from '../../hooks/useVoiceSession';
 
 /**
- * An eye bone plus the two orientations it is measured against, both snapshotted from
- * the BIND pose before any clip plays.
+ * What the VRM migration removed from this file, so it doesn't get reinstated by reflex:
  *
- * Two are needed, not one. `restLocal` is the anatomical zero — how far the eye has
- * turned in its socket is measured from this. `restWorld` is where the eye pointed in
- * the world when the rig was bound, and that is the aim held on to while the head moves
- * underneath it.
+ *  - `basisFor()` / `baseRotations` / `clipDrivenBones`. This existed to branch between
+ *    a cached bind pose and the mixer's live output, because the old rig's bones had
+ *    non-identity rest rotations that our offsets had to be measured against. VRM
+ *    normalized bones have IDENTITY rest poses by construction, so the base is simply
+ *    zero and there is nothing to cache or branch on. Rotations are written absolutely.
+ *
+ *  - `EyeRest` / `restLocal` / `restWorld` / `EYE_STABILISE` / `EYE_MAX_DEVIATION`, and
+ *    the world-space quaternion eye solve. Every one of those was compensation for the
+ *    old rig, and `vrm.lookAt` now does the same jobs natively and better:
+ *
+ *      * EYE_STABILISE approximated "eyes don't inherit the whole head turn". The bone
+ *        applier gets this for free — it measures yaw/pitch against the head's REST
+ *        world orientation, so head rotation is already discounted. Measured: with the
+ *        head turned 11 degrees and the target only 4.6 degrees off centre, the eyes
+ *        rotate -1.06 degrees, i.e. backwards against the head, holding the target.
+ *        That counter-rotation is the behaviour the old code hand-rolled.
+ *      * EYE_MAX_DEVIATION guessed a socket limit. The model authors real ones.
+ *      * The Euler-singularity problem is gone with normalized bones.
+ *
+ *    So DO NOT write eye bones here. The applier owns `leftEye`/`rightEye` on both the
+ *    raw and normalized skeletons and overwrites them inside every `vrm.update()`;
+ *    that is also why AvatarBones no longer carries eye fields to tempt anyone.
  */
-export interface EyeRest {
-  bone: Object3D;
-  restLocal: Quaternion;
-  restWorld: Quaternion;
-}
 
+/**
+ * NORMALIZED humanoid nodes, never raw ones.
+ *
+ * Normalized bones rest at identity, so the rotations below are absolute angles rather
+ * than offsets from whatever the rig authored, and `vrm.update()` copies the result onto
+ * the raw bones the meshes are skinned to. Writing raw bones here would both fight that
+ * copy and discard the rig's rest pose.
+ *
+ * No eye fields, deliberately — see the note above.
+ */
 export interface AvatarBones {
   head: Object3D | null;
   neck: Object3D | null;
-  spine: Object3D | null;
-  leftEye: Object3D | null;
-  rightEye: Object3D | null;
-  /** Eye bones with their bind-pose orientations. Absent means gaze is skipped. */
-  eyes?: EyeRest[];
+  /** upperChest where present, else chest. Carries the breath. */
+  chest: Object3D | null;
 }
 
 interface Args {
   rig: MorphRig | null;
   bones: AvatarBones;
-  state: VoiceState;
   /**
-   * Names of bones an AnimationMixer is driving this frame, or null when no clip is
-   * playing. Bones in this set are treated as clip-owned: the procedural motion below
-   * layers ON TOP of whatever the clip left, instead of overwriting it.
+   * The proxy object `vrm.lookAt` aims at, positioned in WORLD space by this hook.
    *
-   * Without this, a skeletal idle clip and this hook silently fight over head, neck and
-   * spine — see basisFor.
+   * Deliberately unparented: `getWorldPosition` refreshes its own matrix, so an orphan
+   * object needs no scene-graph membership and picks up a same-frame position with no
+   * traversal. Null disables gaze entirely.
    */
-  clipDrivenBones?: Set<string> | null;
+  gazeTarget: Object3D | null;
+  state: VoiceState;
 }
 
 const BLINK_MIN_MS = 2200;
@@ -51,26 +69,29 @@ const BLINK_CLOSE_MS = 70;
 const BLINK_OPEN_MS = 130;
 
 /**
- * How much of the head's movement the eyes refuse to inherit.
+ * How far in front of the eyes the gaze target sits, in metres.
  *
- * 1 pins the gaze perfectly level however the head moves, which reads as robotic; 0 is
- * pure inheritance, where the eyeballs roll with the skull and the camera ends up looking
- * at sclera. People do let their eyes travel a little with a big head turn.
+ * Only the ANGLE it subtends matters, so this and the spreads below are one setting in
+ * two numbers. 2 m reads as "looking at someone across the room" rather than focusing on
+ * the tip of its own nose, which matters because the two eyes converge on this point.
  */
-const EYE_STABILISE = 0.75;
-
-/** Gaze travel in radians at full cursor deflection, applied about WORLD axes. */
-const EYE_GAZE_YAW = 0.52;
-const EYE_GAZE_PITCH = 0.26;
+const GAZE_DISTANCE = 2.0;
 
 /**
- * How far the eye may turn in its socket before it gives up and rides along with the
- * head. Roughly 24 degrees — past that a real eye has run out of travel too.
+ * Lateral and vertical travel of the target at full cursor deflection, in metres.
+ *
+ * 4.0 puts the target about 33 degrees off centre at the extreme. That is further than
+ * the head turns (11 degrees) on purpose: the difference is what the eyes take up, and
+ * a target pinned to exactly where the head points would leave them dead centre forever.
+ *
+ * Do not expect large numbers here to buy large eye movement. This model maps a 90 degree
+ * request onto at most 8 degrees of inner / 12 degrees of outer eye rotation, so the
+ * response is roughly a ninth of the residual angle — measured 2.15 degrees of eye yaw at
+ * these values. That ceiling is authored into the VRM, and deferring to it rather than
+ * overriding it is the point of using lookAt at all.
  */
-const EYE_MAX_DEVIATION = 0.42;
-
-/** Per-frame easing toward the solved orientation. */
-const EYE_SMOOTHING = 0.35;
+const GAZE_SPREAD_X = 4.0;
+const GAZE_SPREAD_Y = 2.5;
 
 const nextBlinkDelay = () => BLINK_MIN_MS + Math.random() * (BLINK_MAX_MS - BLINK_MIN_MS);
 
@@ -81,69 +102,17 @@ const nextBlinkDelay = () => BLINK_MIN_MS + Math.random() * (BLINK_MAX_MS - BLIN
  * clip can't know about: the cursor position, and which conversational state we're in.
  * Blink, breath and gaze clear the "is this thing broken?" bar on their own at
  * head-and-shoulders framing.
- *
- * A skeletal body clip now layers UNDERNEATH this — see clipDrivenBones. At full-body
- * framing the clip is what stops the avatar being a statue from the shoulders down;
- * this hook keeps owning the head, eyes and expression on top of it.
  */
-export function useIdleAnimation({ rig, bones, state, clipDrivenBones = null }: Args) {
+export function useIdleAnimation({ rig, bones, gazeTarget, state }: Args) {
   const pointer = useThree((s) => s.pointer);
 
   const clock = useRef(0);
   const blinkAt = useRef(nextBlinkDelay());
   const blinkElapsed = useRef<number | null>(null);
-  const baseRotations = useRef<Map<Object3D, Euler>>(new Map());
-  /* Per-bone scratch for clip-driven bases. A Map rather than one shared Euler so two
-     bones read in the same frame can't alias, and reused rather than cloned so this
-     allocates nothing in the frame loop. */
-  const liveRotations = useRef<Map<Object3D, Euler>>(new Map());
   const gaze = useRef({ x: 0, y: 0 });
-  /* Reused every frame so the gaze solve allocates nothing in the render loop. */
-  const scratch = useRef({
-    parentWorld: new Quaternion(),
-    invParent: new Quaternion(),
-    inherited: new Quaternion(),
-    desired: new Quaternion(),
-    local: new Quaternion(),
-    gazeQ: new Quaternion(),
-    gazeE: new Euler(0, 0, 0, 'YXZ'),
-  });
   const aversion = useRef({ x: 0, y: 0, until: 0 });
-
-  /**
-   * The pose this frame's offsets are added to.
-   *
-   * Two cases, and getting them the wrong way round is the bug this exists to prevent:
-   *
-   *  - NO clip on this bone: the base is the rig's authored rest pose, cached on first
-   *    sight. Re-reading it every frame would compound our own offsets into a drift.
-   *
-   *  - CLIP driving this bone: the base is the bone's CURRENT rotation, as the mixer
-   *    just wrote it. Caching here would freeze the base at whatever single frame of
-   *    the clip happened to be showing on mount, and then overwrite the clip's motion
-   *    with that stale pose for the rest of the session.
-   *
-   * This only works because the mixer runs before us — see the ordering note in
-   * AvatarModel. Reading bone.rotation is safe even though the mixer writes quaternions:
-   * three keeps rotation and quaternion in sync through their onChange callbacks.
-   */
-  const basisFor = (bone: Object3D) => {
-    if (clipDrivenBones?.has(bone.name)) {
-      let live = liveRotations.current.get(bone);
-      if (!live) {
-        live = new Euler();
-        liveRotations.current.set(bone, live);
-      }
-      return live.copy(bone.rotation);
-    }
-
-    let base = baseRotations.current.get(bone);
-    if (!base) {
-      base = bone.rotation.clone();
-      baseRotations.current.set(bone, base);
-    }
-    return base;
-  };
+  /* Reused so positioning the gaze target allocates nothing in the frame loop. */
+  const headWorld = useRef(new Vector3());
 
   useFrame((_, delta) => {
     const deltaMs = Math.min(delta * 1000, 100);
@@ -152,7 +121,10 @@ export function useIdleAnimation({ rig, bones, state, clipDrivenBones = null }: 
 
     /* ── Blink ──────────────────────────────────────────────────────────
        The cheapest signal of life by a wide margin: a face that never blinks
-       reads as dead within about four seconds. */
+       reads as dead within about four seconds.
+
+       The timing curve is asset-independent and carries over to VRM unchanged — only
+       the target names need to become `blinkLeft` / `blinkRight` expressions. */
     if (rig) {
       if (blinkElapsed.current === null && clock.current >= blinkAt.current) {
         blinkElapsed.current = 0;
@@ -173,26 +145,51 @@ export function useIdleAnimation({ rig, bones, state, clipDrivenBones = null }: 
         }
       }
 
-      rig.set('eyeBlinkLeft', lid);
-      rig.set('eyeBlinkRight', lid);
+      /* `blinkLeft`/`blinkRight` rather than the single `blink` preset: they're driven
+         from one `lid` value today, but keeping them separate is what makes a wink or an
+         asymmetric blink possible later without restructuring. All three exist here. */
+      rig.set('blinkLeft', lid);
+      rig.set('blinkRight', lid);
 
-      /* ── Expression per conversational state ──────────────────────── */
-      const listening = state === 'listening' ? 1 : 0;
-      const thinking = state === 'thinking' ? 1 : 0;
+      /* ── Expression per conversational state ────────────────────────
+         A gentle resting warmth while idle or listening, dropped while speaking so it
+         doesn't fight the visemes. `relaxed` (the model's `Fcl_ALL_Fun`) is the closest
+         preset to the mouthSmile pair this replaces, and at 0.12 it reads as a soft
+         resting expression rather than a grin.
 
-      rig.set('browInnerUp', MathUtils.lerp(rig.get('browInnerUp'), listening * 0.22 + thinking * 0.1, 0.08));
-      rig.set('eyeWideLeft', MathUtils.lerp(rig.get('eyeWideLeft'), listening * 0.12, 0.08));
-      rig.set('eyeWideRight', MathUtils.lerp(rig.get('eyeWideRight'), listening * 0.12, 0.08));
-      // A gentle resting smile while idle, dropped while speaking so it doesn't fight the visemes.
-      const smile = state === 'idle' || state === 'listening' ? 0.12 : 0;
-      rig.set('mouthSmileLeft', MathUtils.lerp(rig.get('mouthSmileLeft'), smile, 0.05));
-      rig.set('mouthSmileRight', MathUtils.lerp(rig.get('mouthSmileRight'), smile, 0.05));
+         The old brow-raise and eye-widen on `listening` are NOT ported. They mapped to
+         ARKit `browInnerUp` / `eyeWide*`, and VRM's preset vocabulary has no equivalent —
+         the nearest raw shapes are `Fcl_BRW_Surprised` and `Fcl_EYE_Surprised`, both of
+         which the `surprised` preset already binds, so driving them directly would be
+         silently overwritten (see the clobbering note in morphRig). Restoring that
+         behaviour means registering custom expressions, which is a real decision and
+         belongs with the lip-sync work that needs the same machinery. */
+      const attentive = state === 'idle' || state === 'listening';
+      rig.set('relaxed', MathUtils.lerp(rig.get('relaxed'), attentive ? 0.12 : 0, 0.05));
+
+      /* A little warmth over the top of `relaxed`, so the greeting lands on a face that
+         is already pleased to see you rather than a neutral one.
+
+         0.10, and BELOW relaxed's 0.12 on purpose. `happy` binds a single VRoid morph,
+         Fcl_ALL_Joy, which is an "ALL" shape driving eyes, brows and mouth together — at
+         full weight it becomes the closed `^^` squint, which would swallow the blink and
+         make the gaze tracking pointless. relaxed (Fcl_ALL_Fun) barely touches the eyes;
+         this one does, so it gets the smaller share.
+
+         Dropped to zero while speaking for a second reason as well as the obvious one:
+         its overrideMouth is `none`, so it ACCUMULATES with the viseme weights instead of
+         yielding to them, and a held mouth shape under lip-sync reads as mush. */
+      rig.set('happy', MathUtils.lerp(rig.get('happy'), attentive ? 0.10 : 0, 0.05));
     }
 
     /* ── Gaze ───────────────────────────────────────────────────────────
        Tracks the cursor, except while thinking. People look away to think, and
        unbroken eye contact during a pause is the specific thing that makes a
-       virtual character feel like it has stopped responding. */
+       virtual character feel like it has stopped responding.
+
+       This is the behaviour worth preserving. Where the resulting gaze vector gets
+       APPLIED changes under VRM — it should drive a lookAt target rather than eye
+       bone quaternions — but what to look at, and when to look away, does not. */
     if (state === 'thinking') {
       if (clock.current > aversion.current.until) {
         aversion.current = {
@@ -213,82 +210,53 @@ export function useIdleAnimation({ rig, bones, state, clipDrivenBones = null }: 
 
     /* ── Head, neck, breath ─────────────────────────────────────────────
        Split across head and neck so the motion arcs instead of pivoting on one
-       joint, and offset from each bone's authored rest pose rather than assigned
-       absolutely — overwriting would erase the rig's own posture. */
+       joint. Written as absolute rotations because normalized VRM bones rest at
+       identity — there is no authored posture underneath to preserve. */
     const sway = Math.sin(t * 0.55) * 0.022 + Math.sin(t * 0.23) * 0.014;
     const bob = Math.sin(t * 0.8) * 0.01;
     const speakingNod = state === 'speaking' ? Math.sin(t * 2.6) * 0.02 : 0;
 
     if (bones.head) {
-      const base = basisFor(bones.head);
       bones.head.rotation.set(
-        base.x + gaze.current.y * 0.6 + bob + speakingNod,
-        base.y + gaze.current.x * 0.6 + sway,
-        base.z + (state === 'listening' ? 0.05 : 0) + Math.sin(t * 0.37) * 0.012,
+        gaze.current.y * 0.6 + bob + speakingNod,
+        gaze.current.x * 0.6 + sway,
+        (state === 'listening' ? 0.05 : 0) + Math.sin(t * 0.37) * 0.012,
       );
     }
 
     if (bones.neck) {
-      const base = basisFor(bones.neck);
-      bones.neck.rotation.set(
-        base.x + gaze.current.y * 0.25,
-        base.y + gaze.current.x * 0.3,
-        base.z,
-      );
+      bones.neck.rotation.set(gaze.current.y * 0.25, gaze.current.x * 0.3, 0);
     }
 
-    if (bones.spine) {
-      const base = basisFor(bones.spine);
+    if (bones.chest) {
       // ~14 breaths/minute.
-      bones.spine.rotation.set(base.x + Math.sin(t * 1.45) * 0.008, base.y, base.z);
+      bones.chest.rotation.set(Math.sin(t * 1.45) * 0.008, 0, 0);
     }
 
-    /* ── Eye aim ────────────────────────────────────────────────────────
-       Solved as quaternions, deliberately.
+    /* ── Gaze target ────────────────────────────────────────────────────
+       Positioned after the bone writes above so getWorldPosition — which refreshes the
+       head's matrix up the parent chain — picks up this frame's neck and chest
+       rotations rather than last frame's.
 
-       The obvious version — add a gaze offset to the eye's Euler rotation — is what
-       used to be here, and it fails twice over. It inherits the head's rotation whole,
-       so when a clip throws the head back the eyeballs roll up with it and the camera
-       is left looking at sclera; and this rig's eye bones rest near a Euler singularity
-       (about 144 degrees on X), so Euler arithmetic against the head's angles compares
-       numbers that don't share an axis convention.
+       Correct rather than critical, and worth being honest about the size of it: the
+       head bone is a pivot, so rotating the neck barely translates it. Measured at 3.6mm
+       for a 28-degree neck turn, which at GAZE_DISTANCE is about a tenth of a degree of
+       target displacement. Nobody would ever see it. The ordering costs nothing either
+       way, so it is done properly and the question never has to be asked again — but
+       don't go rearranging other things on the theory that this one mattered.
 
-       Working in world space sidesteps both. Nothing here needs to know which axis the
-       eye calls 'forward', because the aim being held is the bind-pose world
-       orientation itself rather than a direction anyone had to name. */
-    const s = scratch.current;
-    s.gazeE.set(gaze.current.y * EYE_GAZE_PITCH, gaze.current.x * EYE_GAZE_YAW, 0);
-    s.gazeQ.setFromEuler(s.gazeE);
+       Offsets are applied about WORLD axes, not the head's, so the avatar tracks the
+       cursor rather than a direction that depends on where its head already points —
+       the same reason the old implementation solved gaze in world space.
 
-    for (const eye of bones.eyes ?? []) {
-      const parent = eye.bone.parent;
-      if (!parent) continue;
-
-      parent.updateWorldMatrix(true, false);
-      parent.getWorldQuaternion(s.parentWorld);
-
-      // Where the eye would point if it simply rode along with the head.
-      s.inherited.copy(s.parentWorld).multiply(eye.restLocal);
-
-      // Pull it back toward the aim it had when the rig was bound.
-      s.desired.copy(s.inherited).slerp(eye.restWorld, EYE_STABILISE);
-
-      // Gaze on top. Pre-multiplied, so it applies about world axes and the eye tracks
-      // the cursor rather than a direction that depends on where the head is facing.
-      s.desired.premultiply(s.gazeQ);
-
-      // Back into the parent bone's space, which is what the bone actually stores.
-      s.invParent.copy(s.parentWorld).invert();
-      s.local.copy(s.invParent).multiply(s.desired);
-
-      // Clamp to the socket. Past the limit the eye travels with the head rather than
-      // reaching an angle no eye could.
-      const deviation = s.local.angleTo(eye.restLocal);
-      if (deviation > EYE_MAX_DEVIATION) {
-        s.local.copy(eye.restLocal).slerp(s.local, EYE_MAX_DEVIATION / deviation);
-      }
-
-      eye.bone.quaternion.slerp(s.local, EYE_SMOOTHING);
+       vrm.update() consumes this a moment later, inside useVRMUpdate. */
+    if (gazeTarget && bones.head) {
+      const origin = bones.head.getWorldPosition(headWorld.current);
+      gazeTarget.position.set(
+        origin.x + gaze.current.x * GAZE_SPREAD_X,
+        origin.y + gaze.current.y * GAZE_SPREAD_Y,
+        origin.z + GAZE_DISTANCE,
+      );
     }
   });
 }

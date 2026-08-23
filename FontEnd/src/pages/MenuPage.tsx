@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
-import { ChatWidget } from '../components/landing/ChatWidget';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import { fetchMenuItems, fetchMenuTrays, getFullImageUrl } from '../api/menuAdminApi';
@@ -27,12 +26,39 @@ type Product = {
   description: string;
   serves: number;
   image?: string | null;
+  /* Both come straight off AdminMenuItem and were previously dropped in the map.
+     Trays carry neither — AdminMenuTray has no courseCategory and no dietaryTags —
+     so a tray gets '' and [], and the sidebar filters treat that as "unclassified"
+     rather than silently excluding every tray. */
+  courseCategory: string;
+  dietaryTags: string[];
 };
 
 type CartLine = { id: string; type: ProductType; name: string; price: number; qty: number };
 
 /** Stable ordering for the category pills; only categories that actually have items show. */
 const CATEGORY_ORDER = ['chicken', 'beef', 'pork', 'seafood', 'pasta', 'vegetable', 'others', 'trays'];
+
+/**
+ * CourseCategory from Models/Menuitem.cs, in enum order — the sidebar's CATEGORY list.
+ * Only courses actually present in the loaded data are rendered, with live counts.
+ */
+const COURSE_ORDER = ['Appetizer', 'Soup', 'Main', 'Side', 'Dessert', 'Beverage'];
+
+/**
+ * Sort options.
+ *
+ * The reference's "Most Popular" is not offered: nothing on Menuitem records
+ * popularity, and fetchBestSeller ranks exactly one dish over a fortnight — not a
+ * per-dish order. Every option here sorts on a field that exists.
+ */
+type SortKey = 'name' | 'price-asc' | 'price-desc' | 'serves-desc';
+const SORT_LABELS: Record<SortKey, string> = {
+  name: 'Name (A–Z)',
+  'price-asc': 'Price (low to high)',
+  'price-desc': 'Price (high to low)',
+  'serves-desc': 'Serves (most first)',
+};
 const catLabel = (c: string) => (c === 'trays' ? 'Trays' : c.charAt(0).toUpperCase() + c.slice(1));
 const cartKey = (p: { id: string; type: ProductType }) => `${p.type}:${p.id}`;
 
@@ -71,6 +97,16 @@ export function MenuPage() {
 
   const [category, setCategory] = useState<'all' | string>('all');
   const [query, setQuery] = useState('');
+
+  /* Sidebar filters. These COMPOSE with `category` and `query` rather than replacing
+     them — the pill row and the search box keep working exactly as before. */
+  const [courses, setCourses] = useState<string[]>([]);
+  const [diets, setDiets] = useState<string[]>([]);
+  /** null until the catalog loads and the real min/max are known. */
+  const [priceRange, setPriceRange] = useState<[number, number] | null>(null);
+  const [sort, setSort] = useState<SortKey>('name');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [selected, setSelected] = useState<Product | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [cart, setCart] = useState<Record<string, CartLine>>({});
@@ -102,6 +138,7 @@ export function MenuPage() {
           id: i.id, type: 'MenuItem', name: i.itemName, category: i.itemCategory.toLowerCase(),
           price: i.pricePerTray as number, description: i.description, serves: i.servesPerTray,
           image: getFullImageUrl(i.imageUrl),
+          courseCategory: i.courseCategory, dietaryTags: i.dietaryTags ?? [],
         }));
       const trayProducts: Product[] = trays
         .filter((t) => t.isActive)
@@ -109,6 +146,7 @@ export function MenuPage() {
           id: t.id, type: 'MenuTray', name: t.trayName, category: 'trays', price: t.pricePerTray,
           description: `A party tray of ${t.dishes.map((d) => d.itemName).join(', ')} — serves ${t.servesMin}–${t.servesMax}.`,
           serves: t.servesMin,
+          courseCategory: '', dietaryTags: [],
         }));
       setProducts([...itemProducts, ...trayProducts]);
     } catch {
@@ -154,12 +192,89 @@ export function MenuPage() {
   const bumpQty = (key: string, delta: number) =>
     setQuantities((prev) => ({ ...prev, [key]: Math.max(1, (prev[key] ?? 1) + delta) }));
 
+  /* Price slider bounds, from the real catalog. Floored/ceiled to whole pesos so the
+     thumbs land on round numbers instead of 1,487.53. */
+  const priceBounds = useMemo<[number, number]>(() => {
+    if (products.length === 0) return [0, 0];
+    const prices = products.map((p) => p.price);
+    return [Math.floor(Math.min(...prices)), Math.ceil(Math.max(...prices))];
+  }, [products]);
+
+  /* Seed the range once the catalog arrives, and re-clamp if the catalog reloads
+     into a narrower spread — otherwise a stale thumb could sit outside the track. */
+  useEffect(() => {
+    if (products.length === 0) return;
+    setPriceRange((prev) => {
+      const [lo, hi] = prev ?? priceBounds;
+      return [
+        Math.max(priceBounds[0], Math.min(lo, priceBounds[1])),
+        Math.min(priceBounds[1], Math.max(hi, priceBounds[0])),
+      ];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceBounds]);
+
+  /** Courses present in the data, with counts. Never a hardcoded list. */
+  const courseOptions = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of products) if (p.courseCategory) m.set(p.courseCategory, (m.get(p.courseCategory) ?? 0) + 1);
+    return COURSE_ORDER.filter((c) => m.has(c)).map((c) => ({ value: c, count: m.get(c)! }));
+  }, [products]);
+
+  /** Dietary tags actually present, with counts — derived, not enumerated. */
+  const dietOptions = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of products) for (const t of p.dietaryTags) m.set(t, (m.get(t) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([value, count]) => ({ value, count }));
+  }, [products]);
+
   const visibleProducts = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return products.filter(
-      (p) => (category === 'all' || p.category === category) && (q === '' || p.name.toLowerCase().includes(q)),
-    );
-  }, [products, category, query]);
+    const [lo, hi] = priceRange ?? priceBounds;
+    const rows = products.filter((p) => {
+      if (category !== 'all' && p.category !== category) return false;
+      if (q !== '' && !p.name.toLowerCase().includes(q)) return false;
+      // A tray has no course/tag, so it drops out only when such a filter is active.
+      if (courses.length > 0 && !courses.includes(p.courseCategory)) return false;
+      if (diets.length > 0 && !diets.some((d) => p.dietaryTags.includes(d))) return false;
+      if (priceRange && (p.price < lo || p.price > hi)) return false;
+      return true;
+    });
+    const sorted = [...rows];
+    if (sort === 'price-asc') sorted.sort((a, b) => a.price - b.price);
+    else if (sort === 'price-desc') sorted.sort((a, b) => b.price - a.price);
+    else if (sort === 'serves-desc') sorted.sort((a, b) => b.serves - a.serves);
+    else sorted.sort((a, b) => a.name.localeCompare(b.name));
+    return sorted;
+  }, [products, category, query, courses, diets, priceRange, priceBounds, sort]);
+
+  /**
+   * The "Popular right now" row.
+   *
+   * NOT a popularity ranking — nothing records that. It is the five best-value
+   * trays/dishes by serves-per-peso, which is a real computation over real fields.
+   * Labelled accordingly in the UI so it doesn't imply sales data.
+   */
+  const trending = useMemo(
+    () => [...products]
+      .filter((p) => p.price > 0)
+      .sort((a, b) => b.serves / b.price - a.serves / a.price)
+      .slice(0, 5),
+    [products],
+  );
+
+  const filtersActive =
+    courses.length > 0 || diets.length > 0
+    || (priceRange !== null && (priceRange[0] !== priceBounds[0] || priceRange[1] !== priceBounds[1]));
+
+  const clearFilters = () => {
+    setCourses([]);
+    setDiets([]);
+    setPriceRange(priceBounds);
+  };
+
+  const toggleIn = (list: string[], set: (v: string[]) => void, value: string) =>
+    set(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
 
   const categories = useMemo(() => {
     const present = new Set(products.map((p) => p.category));
@@ -223,16 +338,53 @@ export function MenuPage() {
     }
   };
 
-  /* Escape closes the detail drawer / checkout */
+  /* ── detail drawer as a real dialog ──
+     The card that opened it is remembered so focus can go back there on close;
+     without that, dismissing the drawer drops focus to <body> and a keyboard user
+     restarts from the top of the page. */
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+
+  const openDetail = (product: Product, opener: HTMLElement) => {
+    const alreadyOpen = selected !== null && cartKey(selected) === cartKey(product);
+    if (alreadyOpen) { closeDetail(); return; }
+    openerRef.current = opener;
+    setSelected(product);
+  };
+
+  const closeDetail = () => {
+    setSelected(null);
+    openerRef.current?.focus();
+    openerRef.current = null;
+  };
+
+  /* Move focus into the drawer when it opens. */
+  useEffect(() => {
+    if (!selected) return;
+    drawerRef.current?.querySelector<HTMLElement>('button, [href], input, select, textarea')?.focus();
+  }, [selected]);
+
+  /* Escape closes the detail drawer / checkout; Tab is trapped inside the drawer. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      setSelected(null);
-      setCheckoutOpen(false);
+      if (e.key === 'Escape') {
+        if (selected) closeDetail(); else setCheckoutOpen(false);
+        return;
+      }
+      if (e.key !== 'Tab' || !selected || !drawerRef.current) return;
+      const focusables = drawerRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
 
   const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
 
@@ -315,108 +467,426 @@ export function MenuPage() {
         .btn-primary:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: var(--shadow-green); }
         .btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--border-accent); padding: 0.9rem 1.5rem; font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer; border-radius: var(--r-full); transition: background 0.25s, border-color 0.25s, transform 0.2s; text-decoration: none; display: inline-block; text-align: center; }
         .btn-outline:hover { background: var(--primary-muted); border-color: var(--primary); transform: translateY(-2px); }
-      `}</style>
 
-      <Navbar activePage="menus" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
+        /* ── hero search (on the dark band) ── */
+        .mnu-hero-search {
+          display: flex; align-items: center; gap: 0.65rem; width: 100%; max-width: 620px;
+          background: var(--band-chip); border-radius: var(--r-full);
+          padding: 0.4rem 0.4rem 0.4rem 1.15rem; margin: 0 auto;
+        }
+        .mnu-hero-search svg { flex-shrink: 0; color: color-mix(in srgb, var(--band-chip-text) 55%, transparent); }
+        .mnu-hero-search input {
+          flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+          font-family: var(--font-body); font-size: 0.9rem; color: var(--band-chip-text);
+        }
+        .mnu-hero-search input::placeholder { color: color-mix(in srgb, var(--band-chip-text) 50%, transparent); }
+        .mnu-hero-btn {
+          flex-shrink: 0; border: none; cursor: pointer; border-radius: var(--r-full);
+          background: var(--band-accent); color: var(--band-accent-text);
+          font-family: var(--font-body); font-size: 0.8rem; font-weight: 600;
+          padding: 0.6rem 1.4rem;
+        }
+
+        /* ── split view ── */
+        .mnu-split { display: grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+        @media (max-width: 900px) { .mnu-split { grid-template-columns: 1fr; gap: 1.25rem; } }
+
+        .mnu-side-label {
+          font-family: var(--font-body); font-size: 0.58rem; letter-spacing: 0.24em;
+          text-transform: uppercase; font-weight: 600; color: var(--text-muted);
+          margin: 0 0 0.75rem;
+        }
+        .mnu-check {
+          display: flex; align-items: center; gap: 0.6rem; cursor: pointer;
+          padding: 0.34rem 0; font-family: var(--font-body); font-size: 0.82rem; color: var(--text-secondary);
+        }
+        .mnu-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+        .mnu-check .count { margin-left: auto; font-size: 0.74rem; color: var(--text-dim); }
+        .mnu-check:hover { color: var(--text-primary); }
+
+        /* Dual-thumb range: two real <input type=range> stacked on one track, so both
+           thumbs are keyboard-operable. Pointer events are off on the inputs and back
+           on for the thumbs only, letting the lower thumb stay reachable. */
+        .mnu-range { position: relative; height: 30px; margin-top: 0.35rem; }
+        .mnu-range-track {
+          position: absolute; top: 13px; left: 0; right: 0; height: 4px;
+          border-radius: 999px; background: var(--border);
+        }
+        .mnu-range-fill { position: absolute; top: 13px; height: 4px; border-radius: 999px; background: var(--accent); }
+        .mnu-range input[type="range"] {
+          position: absolute; top: 0; left: 0; width: 100%; height: 30px; margin: 0;
+          appearance: none; -webkit-appearance: none; background: transparent; pointer-events: none;
+        }
+        .mnu-range input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none; pointer-events: auto; cursor: pointer;
+          width: 16px; height: 16px; border-radius: 50%;
+          background: var(--accent); border: 2px solid var(--surface); box-shadow: var(--shadow-md);
+        }
+        .mnu-range input[type="range"]::-moz-range-thumb {
+          pointer-events: auto; cursor: pointer;
+          width: 16px; height: 16px; border-radius: 50%;
+          background: var(--accent); border: 2px solid var(--surface);
+        }
+        .mnu-range input[type="range"]:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+        /* ── restyled product card ── */
+        .mnu-card2 {
+          background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r-xl);
+          overflow: hidden; display: flex; flex-direction: column; cursor: pointer;
+          transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
+        }
+        .mnu-card2:hover { border-color: var(--border-accent); box-shadow: var(--shadow-md); transform: translateY(-3px); }
+        .mnu-card2.selected { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted), var(--shadow-md); }
+        .mnu-card2-badge {
+          position: absolute; top: 0.7rem; left: 0.7rem; z-index: 2;
+          background: var(--primary); color: var(--primary-text);
+          font-family: var(--font-body); font-size: 0.58rem; font-weight: 600;
+          letter-spacing: 0.08em; padding: 0.28rem 0.7rem; border-radius: var(--r-full);
+        }
+        .mnu-add2 {
+          border: none; cursor: pointer; border-radius: var(--r-full);
+          background: var(--primary); color: var(--primary-text);
+          font-family: var(--font-body); font-size: 0.74rem; font-weight: 600;
+          padding: 0.45rem 1rem; white-space: nowrap;
+        }
+        .mnu-add2:hover, .mnu-add2.flash { background: var(--primary-hover); }
+        .mnu-add2:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+        /* list view — same card, laid on its side */
+        .mnu-list .mnu-card2 { flex-direction: row; }
+        .mnu-list .mnu-card2 .mnu-photo-wrap { width: 190px; flex-shrink: 0; }
+        .mnu-list .mnu-card2 .mnu-photo { height: 100%; aspect-ratio: auto; }
+        @media (max-width: 620px) { .mnu-list .mnu-card2 { flex-direction: column; } .mnu-list .mnu-card2 .mnu-photo-wrap { width: 100%; } }
+
+        .mnu-iconbtn {
+          width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+          border: 1px solid var(--border); border-radius: var(--r-sm); cursor: pointer;
+          background: var(--bg-card); color: var(--text-muted);
+        }
+        .mnu-iconbtn.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+        .mnu-iconbtn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+      `}</style>
 
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
 
-        {/* ═══════════════════════ HERO ═══════════════════════ */}
-        <section style={{ ...sectionPad, paddingTop: 'calc(6rem + 80px)', paddingBottom: '4rem', overflow: 'hidden' }}>
-          <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
-          <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
-
-          <div className="fade-up" style={{ maxWidth: 800, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center', position: 'relative' }}>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', padding: '0.35rem 1rem', marginBottom: '1.5rem' }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
-              <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.58rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 500 }}>
-                From Our Kitchen
-              </span>
-            </div>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.8rem, 5.5vw, 4.5rem)', fontWeight: 400, lineHeight: 1.08, color: 'var(--text-primary)', marginBottom: '1.5rem' }}>
-              A Menu for <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Every Table</em>
-            </h1>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: 'var(--text-muted)', lineHeight: 1.75, maxWidth: 520, margin: '0 auto', fontWeight: 300 }}>
-              Browse our full spread of Filipino favorites and party trays — filter by category,
-              build your delivery cart, and check out in a few taps.
+        {/* ═══════════════════════ HERO (dark band) ═══════════════════════ */}
+        {/* .dark-band keeps this dark in BOTH themes. var(--primary) could not: it
+            flips to the bright teal in dark, which would make the hero glow.
+            Navbar lives INSIDE this section so .dark-band CSS overrides give
+            nav links band-aware colours in both themes (see index.css). */}
+        <section className="dark-band" style={{ background: 'var(--band-bg)', padding: 'calc(4rem + 80px) 0 4rem', position: 'relative', overflow: 'hidden' }}>
+          <Navbar activePage="menus" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
+          <div className="fade-up" style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--band-accent)', marginBottom: '1rem' }}>
+              Full Menu
             </p>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', fontWeight: 400, lineHeight: 1.1, color: 'var(--band-text)', marginBottom: '1rem' }}>
+              Everything we cook,<br />in one place.
+            </h1>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'var(--band-muted)', lineHeight: 1.7, maxWidth: 560, marginBottom: '2rem' }}>
+              {/* Count derived from the loaded catalog — never a fixed number. */}
+              {loading
+                ? 'Filipino dishes and party trays, by the tray — filter by category, course, diet or price.'
+                : `${products.length} Filipino ${products.length === 1 ? 'dish' : 'dishes'} and party trays, by the tray — filter by category, course, diet or price.`}
+            </p>
+
+            {/* Wired to the SAME `query` state the toolbar search uses — no second
+                search state. Submitting is a no-op because filtering is live. */}
+            <form className="mnu-hero-search" onSubmit={(e) => e.preventDefault()} role="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="17" height="17" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search dishes, trays or ingredients…"
+                aria-label="Search the menu"
+              />
+              <button type="submit" className="mnu-hero-btn">Search</button>
+            </form>
           </div>
         </section>
 
-        {/* ═══════════════════════ FILTER TOOLBAR ═══════════════════════ */}
+        {/* ═══════════════════════ QUICK NAV ═══════════════════════ */}
         <div className="mnu-toolbar">
           <div className="mnu-toolbar-inner">
             <div className="mnu-pills" role="tablist" aria-label="Dish categories">
-              <button type="button" className={`mnu-pill${category === 'all' ? ' active' : ''}`} onClick={() => setCategory('all')}>
-                All<span className="count">{products.length}</span>
+              <button type="button" role="tab" aria-selected={category === 'all'} className={`mnu-pill${category === 'all' ? ' active' : ''}`} onClick={() => setCategory('all')}>
+                All Dishes<span className="count">{products.length}</span>
               </button>
               {categories.map((c) => (
-                <button key={c} type="button" className={`mnu-pill${category === c ? ' active' : ''}`} onClick={() => setCategory(c)}>
+                <button key={c} type="button" role="tab" aria-selected={category === c} className={`mnu-pill${category === c ? ' active' : ''}`} onClick={() => setCategory(c)}>
                   {catLabel(c)}<span className="count">{countByCategory.get(c) ?? 0}</span>
                 </button>
               ))}
             </div>
 
-            <label className="mnu-search">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="14" height="14" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" />
-              </svg>
-              <input type="search" placeholder="Search dishes…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search dishes" />
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+              {/* Every option sorts on a field that exists. "Most Popular" is absent
+                  because nothing records popularity — see SORT_LABELS. */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-muted)' }}>Sort</span>
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as SortKey)}
+                  aria-label="Sort dishes"
+                  style={{
+                    fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-primary)',
+                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    borderRadius: 'var(--r-full)', padding: '0.4rem 0.7rem', cursor: 'pointer',
+                  }}
+                >
+                  {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                    <option key={k} value={k}>{SORT_LABELS[k]}</option>
+                  ))}
+                </select>
+              </label>
+
+              <button type="button" className={`mnu-iconbtn${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')} aria-label="List view" aria-pressed={view === 'list'}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="15" height="15" aria-hidden="true">
+                  <path d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button type="button" className={`mnu-iconbtn${view === 'grid' ? ' active' : ''}`} onClick={() => setView('grid')} aria-label="Grid view" aria-pressed={view === 'grid'}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* ═══════════════════════ DISH GRID ═══════════════════════ */}
-        <section style={{ background: 'var(--bg-subtle)', padding: '3.5rem 0 6rem' }}>
+        {/* ═══════════════════════ BEST VALUE ROW ═══════════════════════ */}
+        {!loading && !loadError && trending.length > 0 && (
+          <section style={{ background: 'var(--bg)', padding: '3rem 0 1rem' }}>
+            <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
+              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.28em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--accent)', marginBottom: '0.4rem' }}>
+                Best Seller this week
+              </p>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.5rem, 3vw, 2rem)', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '1.5rem' }}>
+                Most Picked Dishes
+              </h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.25rem' }}>
+                {trending.map((p) => (
+                  <article key={cartKey(p)} className="mnu-card2" onClick={() => setSelected(p)}>
+                    <div className="mnu-photo-wrap" style={{ position: 'relative' }}>
+                      <ProductImage product={p} className="mnu-photo" />
+                    </div>
+                    <div style={{ padding: '0.9rem 1rem 1rem' }}>
+                      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem', lineHeight: 1.25 }}>
+                        {p.name}
+                      </h3>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 600, color: 'var(--accent)' }}>
+                          {fmtPHP(p.price)}
+                        </span>
+                        {/* servesPerTray, not a rating — Menuitem has no rating field. */}
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          Serves {p.serves}
+                        </span>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ═══════════════════════ FILTERS + GRID ═══════════════════════ */}
+        <section style={{ background: 'var(--bg)', padding: '2.5rem 0 6rem' }}>
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>Loading menu…</div>
-            ) : loadError ? (
-              <div className="mnu-empty fade-up">
-                <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>{loadError}</p>
-                <button type="button" className="btn-outline" onClick={() => void loadCatalog()}>Try Again</button>
-              </div>
-            ) : visibleProducts.length === 0 ? (
-              <div className="mnu-empty fade-up">
-                <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>No dishes match your search</p>
-                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 300, marginBottom: '1.5rem' }}>Try a different keyword, or browse another category.</p>
-                <button type="button" className="btn-outline" onClick={() => { setQuery(''); setCategory('all'); }}>Reset Filters</button>
-              </div>
-            ) : (
-              <div className="mnu-grid">
-                {visibleProducts.map((product, i) => {
-                  const key = cartKey(product);
-                  const isSelected = selected ? cartKey(selected) === key : false;
-                  return (
-                    <article
-                      key={key}
-                      className={`mnu-card fade-up${isSelected ? ' selected' : ''}`}
-                      style={{ animationDelay: `${Math.min(i, 10) * 0.05}s` }}
-                      onClick={() => setSelected(isSelected ? null : product)}
+            <div className="mnu-split">
+
+              {/* ── sidebar ──
+                  Below 900px this collapses into a <details> accordion rather than a
+                  drawer: the filters are short, and an accordion keeps them in the
+                  document flow so the grid below stays reachable without a scrim. */}
+              <details
+                open={filtersOpen}
+                onToggle={(e) => setFiltersOpen((e.currentTarget as HTMLDetailsElement).open)}
+                className="mnu-filters"
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '1.25rem' }}
+              >
+                <summary style={{ cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '0.7rem', letterSpacing: '0.2em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-primary)', listStyle: 'none' }}>
+                  Filters{filtersActive ? ' ·' : ''}
+                  {filtersActive && <span style={{ color: 'var(--accent)' }}> active</span>}
+                </summary>
+
+                <div style={{ marginTop: '1.25rem' }}>
+                  {courseOptions.length > 0 && (
+                    <fieldset style={{ border: 'none', padding: 0, margin: '0 0 1.5rem' }}>
+                      <legend className="mnu-side-label" style={{ padding: 0 }}>Category</legend>
+                      {courseOptions.map((o) => (
+                        <label key={o.value} className="mnu-check">
+                          <input
+                            type="checkbox"
+                            checked={courses.includes(o.value)}
+                            onChange={() => toggleIn(courses, setCourses, o.value)}
+                          />
+                          {o.value}
+                          <span className="count">{o.count}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
+
+                  {priceRange && priceBounds[1] > priceBounds[0] && (
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <p className="mnu-side-label">Price range</p>
+                      <div className="mnu-range">
+                        <div className="mnu-range-track" />
+                        <div
+                          className="mnu-range-fill"
+                          style={{
+                            left: `${((priceRange[0] - priceBounds[0]) / (priceBounds[1] - priceBounds[0])) * 100}%`,
+                            right: `${100 - ((priceRange[1] - priceBounds[0]) / (priceBounds[1] - priceBounds[0])) * 100}%`,
+                          }}
+                        />
+                        {/* Two real inputs — both thumbs keyboard-operable. Each clamps
+                            against the other so they can't cross. */}
+                        <input
+                          type="range"
+                          min={priceBounds[0]}
+                          max={priceBounds[1]}
+                          value={priceRange[0]}
+                          onChange={(e) => setPriceRange([Math.min(Number(e.target.value), priceRange[1]), priceRange[1]])}
+                          aria-label="Minimum price"
+                        />
+                        <input
+                          type="range"
+                          min={priceBounds[0]}
+                          max={priceBounds[1]}
+                          value={priceRange[1]}
+                          onChange={(e) => setPriceRange([priceRange[0], Math.max(Number(e.target.value), priceRange[0])])}
+                          aria-label="Maximum price"
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                        <span>{fmtPHP(priceRange[0])}</span>
+                        <span>{fmtPHP(priceRange[1])}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {dietOptions.length > 0 && (
+                    <fieldset style={{ border: 'none', padding: 0, margin: '0 0 1.5rem' }}>
+                      <legend className="mnu-side-label" style={{ padding: 0 }}>Dietary</legend>
+                      {dietOptions.map((o) => (
+                        <label key={o.value} className="mnu-check">
+                          <input
+                            type="checkbox"
+                            checked={diets.includes(o.value)}
+                            onChange={() => toggleIn(diets, setDiets, o.value)}
+                          />
+                          {o.value}
+                          <span className="count">{o.count}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    disabled={!filtersActive}
+                    style={{
+                      width: '100%', cursor: filtersActive ? 'pointer' : 'not-allowed',
+                      background: 'transparent', color: 'var(--text-primary)',
+                      border: '1px solid var(--border)', borderRadius: 'var(--r-full)',
+                      padding: '0.6rem', fontFamily: 'var(--font-body)', fontSize: '0.75rem',
+                      opacity: filtersActive ? 1 : 0.5,
+                    }}
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+              </details>
+
+              {/* ── grid ── */}
+              <div>
+                {loading ? (
+                  <div style={{ textAlign: 'center', padding: '4rem', color: 'var(--text-dim)', fontFamily: 'var(--font-body)' }}>Loading the menu…</div>
+                ) : loadError ? (
+                  <div className="mnu-empty fade-up">
+                    <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.6rem' }}>{loadError}</p>
+                    <button type="button" className="btn-outline" onClick={() => void loadCatalog()}>Try Again</button>
+                  </div>
+                ) : visibleProducts.length === 0 ? (
+                  <div className="mnu-empty fade-up">
+                    <p style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-primary)', marginBottom: '0.6rem' }}>No dishes match those filters.</p>
+                    <button type="button" className="btn-outline" onClick={() => { setQuery(''); setCategory('all'); clearFilters(); }}>Reset Filters</button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Real count from the array. fetchMenuItems returns the whole
+                        catalog in one call, so there is nothing to paginate. */}
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+                      Showing {visibleProducts.length} of {products.length} dishes
+                    </p>
+
+                    <div
+                      className={view === 'list' ? 'mnu-list' : ''}
+                      style={
+                        view === 'list'
+                          ? { display: 'flex', flexDirection: 'column', gap: '1rem' }
+                          : { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.5rem' }
+                      }
                     >
-                      <div className="mnu-photo-wrap">
-                        <ProductImage product={product} className="mnu-photo" />
-                      </div>
-                      <div className="mnu-card-body">
-                        <span className="mnu-cat-chip">{catLabel(product.category)}</span>
-                        <h3 className="mnu-dish-name">{product.name}</h3>
-                        <p className="mnu-dish-desc">{product.description}</p>
-                        <div className="mnu-card-foot">
-                          <p className="mnu-price">
-                            {fmtPHP(product.price)} <small>/ {product.type === 'MenuTray' ? 'tray' : 'tray-serving'}</small>
-                          </p>
-                          <QtyStepper value={qtyOf(key)} onDelta={(d) => bumpQty(key, d)} label={product.name} />
-                          <button type="button" className={`mnu-add${flashKey === key ? ' flash' : ''}`} onClick={(e) => { e.stopPropagation(); addToCart(product); }}>
-                            {flashKey === key ? 'Added ✓' : '+ Add'}
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
+                      {visibleProducts.map((product, i) => {
+                        const key = cartKey(product);
+                        const isSelected = selected ? cartKey(selected) === key : false;
+                        return (
+                          <article
+                            key={key}
+                            className={`mnu-card2 fade-up${isSelected ? ' selected' : ''}`}
+                            style={{ animationDelay: `${Math.min(i, 10) * 0.05}s` }}
+                            onClick={(e) => openDetail(product, e.currentTarget as HTMLElement)}
+                          >
+                            <div className="mnu-photo-wrap" style={{ position: 'relative' }}>
+                              <ProductImage product={product} className="mnu-photo" />
+                              <span className="mnu-card2-badge">{catLabel(product.category)}</span>
+                            </div>
+                            <div className="mnu-card-body">
+                              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.6rem' }}>
+                                <h3 className="mnu-dish-name" style={{ margin: 0 }}>{product.name}</h3>
+                                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.9rem', fontWeight: 700, color: 'var(--accent)', whiteSpace: 'nowrap' }}>
+                                  {fmtPHP(product.price)}
+                                </span>
+                              </div>
+
+                              {/* Meta row: only fields that exist. The reference's cook
+                                  time and spice level have no backing column. */}
+                              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0.35rem 0 0' }}>
+                                Serves {product.serves}
+                                {product.courseCategory ? ` · ${product.courseCategory}` : ''}
+                                {product.dietaryTags.length > 0 ? ` · ${product.dietaryTags.join(', ')}` : ''}
+                              </p>
+
+                              <p className="mnu-dish-desc">{product.description}</p>
+
+                              <div className="mnu-card-foot">
+                                <QtyStepper value={qtyOf(key)} onDelta={(d) => bumpQty(key, d)} label={product.name} />
+                                <button
+                                  type="button"
+                                  className={`mnu-add2${flashKey === key ? ' flash' : ''}`}
+                                  onClick={(e) => { e.stopPropagation(); addToCart(product); }}
+                                >
+                                  {flashKey === key ? 'Added ✓' : '+ Add'}
+                                </button>
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </section>
 
@@ -448,9 +918,9 @@ export function MenuPage() {
       {/* ═══════════════════════ DETAIL DRAWER ═══════════════════════ */}
       {selected && (
         <>
-          <div className="mnu-backdrop" onClick={() => setSelected(null)} />
-          <aside className="mnu-drawer" role="dialog" aria-label={`${selected.name} details`}>
-            <button type="button" className="mnu-drawer-close" onClick={() => setSelected(null)} aria-label="Close details">✕</button>
+          <div className="mnu-backdrop" onClick={closeDetail} />
+          <aside ref={drawerRef} className="mnu-drawer" role="dialog" aria-modal="true" aria-label={`${selected.name} details`}>
+            <button type="button" className="mnu-drawer-close" onClick={closeDetail} aria-label="Close details">✕</button>
             <ProductImage product={selected} className="mnu-drawer-photo" />
             <span className="mnu-cat-chip">{catLabel(selected.category)}</span>
             <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.15 }}>{selected.name}</h3>
@@ -530,7 +1000,6 @@ export function MenuPage() {
         </div>
       )}
 
-      <ChatWidget />
     </>
   );
 }

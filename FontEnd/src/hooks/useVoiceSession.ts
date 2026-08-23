@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { HubConnectionBuilder, HubConnectionState } from '@microsoft/signalr';
 import type { HubConnection, ISubscription } from '@microsoft/signalr';
 import { readSession } from '../lib/tokenStorage';
+import { buildLocalUtterance } from '../lib/localSpeech';
 import type { Proposal } from '../api/suggestionsApi';
 
 /**
@@ -402,8 +403,11 @@ export function useVoiceSession(args: UseVoiceSessionArgs): VoiceSession {
                 );
               }
               if (!serverSpoke && reply && 'speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance(reply);
-                utterance.lang = 'en-PH';
+                // Shared with ChatWidget's read-aloud toggle: strips the markdown Azure's
+                // path strips server-side in VoiceHub.Speakable(), and assigns a voice so
+                // the reply isn't read in whatever the OS defaults to. See lib/localSpeech.
+                // `reply` itself is untouched — it was already handed to onReplyDone above
+                // with its markdown intact for the transcript.
                 const finish = () => {
                   localSpeechRef.current = false;
                   spokenTextRef.current = '';
@@ -413,30 +417,43 @@ export function useVoiceSession(args: UseVoiceSessionArgs): VoiceSession {
                   setInterim('');
                   if (shouldListenRef.current) setVoiceState('listening');
                 };
-                utterance.onend = finish;
-                utterance.onerror = (event) => {
-                  // Previously this just called finish(), so a refused or failed utterance
-                  // was indistinguishable from a successful silent one — the single worst
-                  // way for "it won't talk" to present.
-                  const reason = (event as SpeechSynthesisErrorEvent).error ?? 'unknown';
-                  console.warn('[voice] speechSynthesis failed:', reason);
-                  if (reason !== 'interrupted' && reason !== 'canceled') {
-                    argsRef.current.onFailure(
-                      `Couldn't play the reply out loud (${reason}). The text is above.`,
-                    );
-                  }
-                  finish();
-                };
                 // Marks that WE are talking through the local synthesizer. Without this the
                 // stream's complete() handler — which fires almost immediately here, since
                 // there is no queued AudioContext audio to wait on — would flip the state
                 // to 'listening' mid-sentence, and the assistant's own voice would be
                 // transcribed and sent back as the customer's next message.
+                //
+                // Set BEFORE awaiting the voice list, not after: buildLocalUtterance needs
+                // an event tick on its first call, and complete() would land inside that
+                // gap with the flag still false.
                 localSpeechRef.current = true;
                 spokenTextRef.current = reply;
                 speakingSinceRef.current = Date.now();
                 setVoiceState('speaking');
-                window.speechSynthesis.speak(utterance);
+
+                void buildLocalUtterance(reply)
+                  .then((utterance) => {
+                    utterance.onend = finish;
+                    utterance.onerror = (event) => {
+                      // Previously this just called finish(), so a refused or failed
+                      // utterance was indistinguishable from a successful silent one — the
+                      // single worst way for "it won't talk" to present.
+                      const reason = (event as SpeechSynthesisErrorEvent).error ?? 'unknown';
+                      console.warn('[voice] speechSynthesis failed:', reason);
+                      if (reason !== 'interrupted' && reason !== 'canceled') {
+                        argsRef.current.onFailure(
+                          `Couldn't play the reply out loud (${reason}). The text is above.`,
+                        );
+                      }
+                      finish();
+                    };
+                    // Barge-in or a new turn during that same gap clears the flag
+                    // (abortReply/sendTurn both do). Speaking anyway would start an
+                    // utterance those paths have already cancelled and stopped tracking.
+                    if (!localSpeechRef.current) return;
+                    window.speechSynthesis.speak(utterance);
+                  })
+                  .catch(finish);
               }
               break;
             }

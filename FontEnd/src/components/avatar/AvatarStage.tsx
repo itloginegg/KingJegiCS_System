@@ -28,6 +28,8 @@ interface Props {
   framing?: AvatarFraming;
   /** Zoom for full-body framing. Lower fills more of the frame. Ignored for `bust`. */
   fitMargin?: number;
+  /** Forwarded to AvatarModel; changing it re-arms the greeting. See the note there. */
+  greetKey?: string;
   /**
    * What to show when 3D can't run — no WebGL, reduced motion, or a render error.
    *
@@ -108,6 +110,7 @@ export function AvatarStage({
   state = 'idle',
   framing = 'bust',
   fitMargin,
+  greetKey,
   fallback,
   loadingFallback,
 }: Props) {
@@ -135,6 +138,7 @@ export function AvatarStage({
             state={state}
             framing={framing}
             fitMargin={fitMargin}
+            greetKey={greetKey}
           />
         </Suspense>
       </AvatarErrorBoundary>

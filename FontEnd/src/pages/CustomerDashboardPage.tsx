@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { useAuth } from '../hooks/useAuth';
-import { ChatWidget } from '../components/landing/ChatWidget';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
   LayoutDashboard, CalendarDays, CreditCard, Package,
@@ -2449,7 +2448,6 @@ export function CustomerDashboardPage() {
       )}
 
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
-      <ChatWidget />
     </>
   );
 }

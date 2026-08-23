@@ -3,7 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import type { MorphRig } from './morphRig';
 import type { VisemeCue } from '../../hooks/useVoiceSession';
 import {
-  VISEME_TARGETS, VISEME_INTENSITY, VISEME_ATTACK_MS, VISEME_RELEASE_MS, targetForVisemeId,
+  VISEME_TARGETS, VISEME_INTENSITY, VISEME_ATTACK_MS, VISEME_RELEASE_MS, VISEME_SILENCE,
+  targetForVisemeId,
 } from './visemeMap';
 import type { VisemeTarget } from './visemeMap';
 
@@ -29,7 +30,7 @@ export function useVisemeDriver({ rig, visemesRef, getPlaybackMs, speaking }: Ar
   // so this advances rather than searching — at 60fps a scan per frame is wasted work.
   const cursor = useRef(0);
   const lastCueCount = useRef(0);
-  const activeTarget = useRef<VisemeTarget>('viseme_sil');
+  const activeTarget = useRef<VisemeTarget>(VISEME_SILENCE);
   const weights = useRef<Map<string, number>>(new Map());
   const fallbackPhase = useRef(0);
 
@@ -42,7 +43,7 @@ export function useVisemeDriver({ rig, visemesRef, getPlaybackMs, speaking }: Ar
     // A new turn clears the array (see useVoiceSession); rewind rather than run off the end.
     if (cues.length < lastCueCount.current) {
       cursor.current = 0;
-      activeTarget.current = 'viseme_sil';
+      activeTarget.current = VISEME_SILENCE;
     }
     lastCueCount.current = cues.length;
 
@@ -54,7 +55,7 @@ export function useVisemeDriver({ rig, visemesRef, getPlaybackMs, speaking }: Ar
         cursor.current += 1;
       }
     } else {
-      activeTarget.current = 'viseme_sil';
+      activeTarget.current = VISEME_SILENCE;
     }
 
     // No server TTS means no viseme data and no audio clock — the browser's speechSynthesis
@@ -65,8 +66,7 @@ export function useVisemeDriver({ rig, visemesRef, getPlaybackMs, speaking }: Ar
       fallbackPhase.current += deltaMs / 1000;
       const openness = 0.5 + 0.5 * Math.sin(fallbackPhase.current * 9);
       for (const name of VISEME_TARGETS) rig.set(name, 0);
-      rig.set('viseme_aa', openness * 0.45);
-      rig.set('jawOpen', openness * 0.22);
+      rig.set('aa', openness * 0.45);
       return;
     }
 
@@ -87,9 +87,11 @@ export function useVisemeDriver({ rig, visemesRef, getPlaybackMs, speaking }: Ar
       rig.set(name, next);
     }
 
-    // The viseme shapes carry the lips; a little jaw underneath sells the openness.
-    const openVowel = weights.current.get('viseme_aa') ?? 0;
-    const roundVowel = weights.current.get('viseme_O') ?? 0;
-    rig.set('jawOpen', Math.min(0.35, openVowel * 0.3 + roundVowel * 0.15));
+    /* The old jaw underlay is gone with the rig it belonged to. Avaturn shipped a
+       separate `jawOpen` shape that opened the jaw independently of the lips, so the
+       viseme shapes needed help selling an open mouth. VRM has no equivalent, and does
+       not need one: `Fcl_MTH_A` behind the `aa` preset already opens the jaw as part of
+       the shape. Layering `Fcl_MTH_Large` on top here would double the opening and
+       over-articulate every vowel. */
   });
 }

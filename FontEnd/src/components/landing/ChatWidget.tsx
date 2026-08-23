@@ -236,7 +236,7 @@ function useDeferredDesktopAvatar(): boolean {
   return wideEnough && afterPaint;
 }
 
-export function ChatWidget() {
+export function ChatWidget({ greetKey }: { greetKey?: string }) {
   const { user } = useAuth();
   const isCustomer = user?.role === 'customer';
   const [open, setOpen] = useState(false);
@@ -287,6 +287,7 @@ export function ChatWidget() {
           open={open}
           onToggle={() => setOpen((o) => !o)}
           onUnavailable={() => setStandingBroken(true)}
+          greetKey={greetKey}
         />
       )}
 
@@ -347,10 +348,14 @@ function StandingAvatar({
   open,
   onToggle,
   onUnavailable,
+  greetKey,
 }: {
   open: boolean;
   onToggle: () => void;
   onUnavailable: () => void;
+  /* Changing this re-arms the greeting. The widget outlives navigation now, so without
+     it she waves once per session rather than once per page. */
+  greetKey?: string;
 }) {
   /* Two sources can make the assistant talk, and they are not equivalent.
      A live voice call carries real phoneme timings, so it wins: passing its cue stream
@@ -385,6 +390,7 @@ function StandingAvatar({
         framing="full"
         fitMargin={AVATAR_UI.fitMargin}
         state={state}
+        greetKey={greetKey}
         /* Undefined when no call is live. AvatarStage then supplies its own empty cue
            ref, which is exactly the condition useVisemeDriver treats as "talk with a
            generic mouth" — so read-aloud still moves the jaw with no extra wiring. */

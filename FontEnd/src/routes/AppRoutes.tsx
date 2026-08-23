@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { ChatWidget } from '../components/landing/ChatWidget';
 import { AuthProvider } from '../context/AuthContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { ProtectedRoute } from './ProtectedRoute';
@@ -7,13 +8,37 @@ import { RegisterPage } from '../pages/RegisterPage';
 import { LandingPage } from '../pages/LandingPage';
 import { PackagePage } from '../pages/PackagePage';
 import { MenuPage } from '../pages/MenuPage';
-import { RentalsPage } from '../pages/RentalsPage';
+import { RentalPage } from '../pages/RentalPage';
 import { BookingPage } from '../pages/BookingPage';
 import { CustomerDashboardPage } from '../pages/CustomerDashboardPage';
 import { AdminDashboardPage } from '../pages/AdminDashboardPage';
 import { PaymentReturnPage } from '../pages/PaymentReturnPage';
 import { AvatarLabPage } from '../pages/AvatarLabPage';
 import { VoiceLabPage } from '../pages/VoiceLabPage';
+
+/**
+ * Routes that carry the assistant widget.
+ *
+ * WHY THIS IS MOUNTED HERE AND NOT INSIDE THE PAGES. It used to be rendered by each page
+ * component, which meant every navigation unmounted one <Canvas> and mounted another —
+ * destroying and recreating the WebGL context, and with it every texture and buffer the
+ * 16.5MB avatar had uploaded to the GPU. Measured: two in-app route changes produced three
+ * separate R3F roots. That is the stutter that showed up on every nav click.
+ *
+ * An ALLOW-list rather than a deny-list, deliberately. The set below is exactly the pages
+ * that rendered <ChatWidget /> before this moved; a deny-list would silently hand a widget
+ * to the dev labs (which mount their own AvatarStage, so two live VRMs share one spring
+ * bone solver), the payment return pages, and anything added later.
+ */
+const WIDGET_ROUTES = new Set(['/', '/packages', '/menus', '/rentals', '/book', '/dashboard']);
+
+function SiteChatWidget() {
+  const { pathname } = useLocation();
+  if (!WIDGET_ROUTES.has(pathname)) return null;
+  /* The pathname re-arms the greeting. The widget no longer remounts per page, so without
+     this she would wave once per session rather than once per page. */
+  return <ChatWidget greetKey={pathname} />;
+}
 
 export function AppRoutes() {
   return (
@@ -25,7 +50,7 @@ export function AppRoutes() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/packages" element={<PackagePage />} />
           <Route path="/menus" element={<MenuPage />} />
-          <Route path="/rentals" element={<RentalsPage />} />
+          <Route path="/rentals" element={<RentalPage />} />
           <Route path="/book" element={<BookingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -65,6 +90,7 @@ export function AppRoutes() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <SiteChatWidget />
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

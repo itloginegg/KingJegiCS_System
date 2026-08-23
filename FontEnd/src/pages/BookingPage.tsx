@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
-import { ChatWidget } from '../components/landing/ChatWidget';
 import { PlanByBudget } from '../components/suggestions/PlanByBudget';
+import { HERO_CARDS, HeroLayout } from '../components/booking/HeroLayout';
+import type {
+  HeroCardAction,
+  ServiceFlow as HeroServiceFlow,
+} from '../components/booking/heroTypes';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
@@ -79,7 +83,9 @@ const fmtLeadDate = (iso: string) => {
   });
 };
 
-type ServiceFlow = 'event' | 'rentals';
+/* Moved to components/booking/heroTypes so the hero components and this page
+   share one definition. Same union, same name, same usages below. */
+type ServiceFlow = HeroServiceFlow;
 
 /* ── component ────────────────────────────────────────────────────────── */
 
@@ -745,6 +751,13 @@ export function BookingPage() {
   /* ── navigation helpers ── */
   const pickService = (flow: ServiceFlow) => { setServiceFlow(flow); setStep(1); };
 
+  /* Hero card dispatch. 'plan' is deliberately NOT a pickService call — it swaps
+     the card grid for <PlanByBudget /> and leaves `step` at 0. */
+  const pickHeroCard = (action: HeroCardAction) => {
+    if (action.kind === 'plan') setPlanMode(true);
+    else pickService(action.flow);
+  };
+
   /* ── can proceed checks ── */
   const allSlotsComplete = packageTemplate
     ? packageTemplate.slots.every(s => (slotSelections[s.slotId]?.length ?? 0) === s.chooseCount)
@@ -929,40 +942,16 @@ export function BookingPage() {
             <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
             <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
             
-            <div className="fade-up" style={{ maxWidth: 880, margin: '0 auto', padding: '0 2.5rem', position: 'relative' }}>
+            {/* Widened from 880 to 1200: an asymmetric 4/8 split inside 880px
+                leaves the card descriptions too narrow to read. 1200 matches the
+                container the menu and rentals pages use. */}
+            <div className="fade-up" style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative' }}>
               {!planMode ? (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', padding: '0.35rem 1rem', marginBottom: '1.5rem' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', display: 'inline-block' }} />
-                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.58rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 500 }}>
-                      Start Here
-                    </span>
-                  </div>
-                  <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.8rem, 5.5vw, 4.5rem)', fontWeight: 400, lineHeight: 1.08, color: 'var(--text-primary)', marginBottom: '1.5rem' }}>
-                    Book Your <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>Experience</em>
-                  </h1>
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: 'var(--text-muted)', lineHeight: 1.75, maxWidth: 520, margin: '0 auto 2.5rem', fontWeight: 300 }}>
-                    Choose the service that fits your occasion. We'll guide you through every detail.
-                  </p>
-
-                  <div className="bk-flow-grid">
-                    <div className="bk-flow-card" onClick={() => pickService('event')}>
-                      <div className="bk-flow-icon">🎉</div>
-                      <div className="bk-flow-title">Full Event Catering</div>
-                      <div className="bk-flow-desc">Complete event packages with staff, styling, and curated menus for any occasion.</div>
-                    </div>
-                    <div className="bk-flow-card" onClick={() => pickService('rentals')}>
-                      <div className="bk-flow-icon">🪑</div>
-                      <div className="bk-flow-title">Rental Items Only</div>
-                      <div className="bk-flow-desc">Tables, chairs, linens, and decor — delivered to your venue.</div>
-                    </div>
-                    <div className="bk-flow-card" onClick={() => setPlanMode(true)}>
-                      <div className="bk-flow-icon">💡</div>
-                      <div className="bk-flow-title">Plan by Budget</div>
-                      <div className="bk-flow-desc">Tell us your budget — we'll suggest complete, kitchen-priced options you can book.</div>
-                    </div>
-                  </div>
-                </div>
+                <HeroLayout
+                  cards={HERO_CARDS}
+                  onSelect={pickHeroCard}
+                  onPrimaryAction={() => pickService('event')}
+                />
               ) : (
                 <PlanByBudget
                   onBack={() => setPlanMode(false)}
@@ -1680,7 +1669,6 @@ export function BookingPage() {
         </div>
       )}
 
-      <ChatWidget />
     </>
   );
 }

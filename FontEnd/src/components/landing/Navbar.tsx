@@ -127,6 +127,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
       >
         <Link
           to="/"
+          className="nav-logo"
           style={{
             fontFamily: 'var(--font-display)',
             fontSize: '1.45rem',
@@ -149,6 +150,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <button
             type="button"
+            className="nav-icon"
             aria-label={cartCount > 0 ? `View cart (${cartCount} item${cartCount === 1 ? '' : 's'})` : 'View cart'}
             style={{ ...iconBtn, position: 'relative' }}
             onClick={onCartClick}
@@ -171,7 +173,7 @@ export function Navbar({ activePage, cartCount = 0, onCartClick }: {
             )}
           </button>
 
-          <ThemeToggle style={{ ...iconBtn, color: 'var(--accent)' }} />
+          <ThemeToggle className="nav-icon" style={{ ...iconBtn, color: 'var(--accent)' }} />
 
           {isAuthenticated ? (
             <>

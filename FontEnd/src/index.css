@@ -47,10 +47,28 @@
      Pending badge indistinguishable from a Confirmed one. */
   --color-accent: var(--accent);
   --color-accent-muted: var(--accent-muted);
+  /* Hover state for an --accent fill. --primary has always had --primary-hover;
+     --accent never did, so accent-filled buttons had no hover and read as inert. */
+  --color-accent-hover: var(--accent-hover);
+  /* Text/icon colour placed ON an --accent fill. An alias of the existing
+     --accent-text under the name the component contract uses, so the pair reads
+     as one unit: `bg-accent text-accent-fg`. Not a second source of truth —
+     it forwards to the same themed property. */
+  --color-accent-fg: var(--accent-text);
+
+  /* Decorative gold. Deliberately NOT --warning: that token means "something
+     needs attention", and spending it on ornament is what stops real warnings
+     from registering. --gold is the page-ground value, --gold-on-band is
+     band-only. See the :root block for why there have to be two. */
+  --color-gold: var(--gold);
+  --color-gold-on-band: var(--gold-on-band);
 
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-border-accent: var(--border-accent);
+
+  --color-glass: var(--glass);
+  --color-glass-border: var(--glass-border);
 
   --color-danger: var(--danger);
   --color-danger-muted: var(--danger-muted);
@@ -67,6 +85,11 @@
   --color-status-unpaid: var(--status-unpaid);
   --color-status-partial: var(--status-partial);
   --color-status-paid: var(--status-paid);
+
+  /* Card elevation as a utility (`shadow-card`) instead of
+     shadow-[var(--shadow-md)] repeated at every card. Forwards to the themed
+     --shadow-md, so .dark rebinds it without a `dark:` variant. */
+  --shadow-card: var(--shadow-md);
 }
 
 /* ──────────────────────────────────────────────────────────────────────
@@ -103,11 +126,20 @@
      accents use it darkened to the same hue (hsl 32.5° 21%); the literal
      #A69076 carries the borders and washes below, where contrast is moot. */
   --accent: #79654e;
+  --accent-hover: #665441;   /* one step darker, same hue */
   --accent-muted: rgba(166, 144, 118, 0.16);
 
   --border: rgba(6, 50, 59, 0.14);
   --border-strong: rgba(6, 50, 59, 0.32);
   --border-accent: rgba(166, 144, 118, 0.55);
+
+  /* Raised panel over a busy background (gradients, the blob canvas, photography).
+     Semi-opaque rather than a backdrop-filter: the surfaces this sits on are animated,
+     so a blur would re-run every frame over a large area for a tint that a fill gives
+     free. In light it lifts the panel off the wash; in dark it is a faint white veil.
+     Effective: #f6f6f6 light, #181614 dark. */
+  --glass: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(6, 50, 59, 0.10);
 
   --danger: #dc2626;
   --danger-muted: rgba(220, 38, 38, 0.12);
@@ -124,6 +156,15 @@
   --warning-text: #ffffff;
 
   --accent-text: #ffffff;
+
+  /* ── Decorative gold ──
+     The brand gold #DDA750 carries the eyebrow and the search CTA on the dark
+     band, but measures ~1.9:1 on the off-white --bg — unusable as text there.
+     So it is two tokens rather than one: --gold-on-band is the literal brand
+     gold and may ONLY be used inside .dark-band; --gold is its darkened
+     counterpart for anything on the normal page ground. */
+  --gold: #8a6318;          /* 4.8:1 on --bg */
+  --gold-on-band: #dda750;  /* 4.4:1 on --band-bg — band use only */
 
   /* ── Status ramp ──
      Booking / payment / deposit states, which need to stay distinguishable from each
@@ -168,6 +209,91 @@
   --menu-chip-border: rgba(255, 255, 255, 0.72);
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+   Dark band — a section that stays dark in BOTH themes.
+
+   Used by the landing page's "Our Special Dish" band and MenuPage's hero. These
+   can't derive from --primary: that flips to #14b8a6 in dark, which would turn an
+   inverted band into a glowing bright one. So the values are literal here, and
+   this block is the only place they may be written.
+
+   Class-based like everything else (@custom-variant dark above). A
+   [data-theme="dark"] selector would silently never match — this project sets no
+   such attribute anywhere.
+─────────────────────────────────────────────────────────────────────── */
+.dark-band {
+  --band-bg:           #134E4A;
+  --band-text:         #FCFAF6;   /* 9.1:1 on --band-bg */
+  --band-muted:        #A7D8D1;   /* 6.0:1 */
+  --band-border:       rgb(255 255 255 / 0.28);
+
+  /* Raised panel inside a band. Never paired with backdrop-filter: --band-bg is a
+     flat solid, so a blur would sample a uniform colour — the cost of a compositing
+     layer for a tint a fill gives free. */
+  --band-glass:        rgb(255 255 255 / 0.05);
+  --band-glass-border: rgb(255 255 255 / 0.10);
+
+  /* Drives the active pill, the active card and the CTA together. */
+  --band-chip:         #FCFAF6;
+  --band-chip-text:    #17120C;
+  --band-chip-edge:    transparent;  /* cream on the panel is already 7.9:1 */
+
+  /* The band's own accent. --accent CANNOT be used on a band: its light value is
+     the bronze #79654e, which reads 1.7:1 on --band-bg — invisible. Pinned to the
+     dark-theme gold in both themes: 5.1:1 on the light band, 9.2:1 on the dark. */
+  --band-accent:       #e2b857;
+  /* Text placed ON --band-accent. Same in both themes because the accent is. */
+  --band-accent-text:  #17120C;   /* 10.8:1 on the gold */
+}
+
+.dark .dark-band {
+  --band-bg:           #0A1F1D;
+  --band-text:         #F5F0EB;   /* 15.1:1 */
+  --band-muted:        #A89F92;   /* 6.6:1 */
+  --band-border:       rgb(245 240 235 / 0.16);
+
+  --band-glass:        rgb(255 255 255 / 0.05);
+  --band-glass-border: rgb(245 240 235 / 0.10);
+
+  --band-chip:         #1C1411;
+  --band-chip-text:    #F5F0EB;
+  /* Without this the active card has no edge: #1C1411 on the glass panel is
+     1.2:1. A translucent hairline can't fix it (10% → 1.3:1, 16% → 1.6:1). This is
+     3.9:1 against the panel and 4.7:1 against the chip. */
+  --band-chip-edge:    #748680;
+
+  --band-accent:       #e2b857;
+  --band-accent-text:  #17120C;
+}
+
+/* ── Navbar inside a dark band ──
+   When <Navbar> sits inside a .dark-band section (e.g. MenuPage hero), its
+   generic theme tokens (--text-secondary, --primary) clash with the always-dark
+   background. These overrides rebind nav links to band-aware tokens so they
+   read well in both light and dark themes, with no prop or JS required. */
+.dark-band .nav-link {
+  color: var(--band-muted);
+}
+.dark-band .nav-link:hover,
+.dark-band .nav-link-active {
+  color: var(--band-accent);
+}
+.dark-band .nav-cta {
+  background: var(--band-accent);
+  color: var(--band-accent-text);
+}
+.dark-band .nav-cta:hover {
+  background: color-mix(in srgb, var(--band-accent) 85%, white);
+}
+/* Logo and icon buttons use inline styles, so !important is needed to win. */
+.dark-band .nav-logo {
+  color: var(--band-accent) !important;
+}
+.dark-band .nav-icon,
+.dark-band .nav-burger {
+  color: var(--band-text) !important;
+}
+
 /* The page ground itself, so the off-white shows through on overscroll and
    behind pages shorter than the viewport — not just inside each <main>. */
 body {
@@ -207,6 +333,53 @@ body {
   display: flex; /* child card stretches to the shared row height */
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+   Dual-handle range (used by the rentals filter sidebar).
+
+   Two real <input type="range"> stacked over one track, rather than a div with
+   drag handlers: both thumbs stay keyboard-operable and announce their own
+   value, which a synthetic slider only gets back by reimplementing the whole
+   ARIA slider pattern. The inputs are pointer-transparent so clicks fall
+   through to whichever thumb is nearest; only the thumbs take pointer events.
+
+   Colours come from the themed properties, so .dark needs no counterpart here.
+─────────────────────────────────────────────────────────────────────── */
+.rnt-range { position: relative; height: 30px; }
+.rnt-range-track {
+  position: absolute; top: 13px; left: 0; right: 0; height: 4px;
+  border-radius: 999px; background: var(--bg-subtle);
+  /* --bg-subtle on --bg-card is a 1.03:1 separation in light mode; without an
+     edge the unfilled track is simply not there. */
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.rnt-range-fill {
+  position: absolute; top: 13px; height: 4px;
+  border-radius: 999px; background: var(--accent);
+}
+.rnt-range input[type="range"] {
+  position: absolute; top: 0; left: 0; width: 100%; height: 30px; margin: 0;
+  appearance: none; -webkit-appearance: none; background: transparent;
+  pointer-events: none;
+}
+.rnt-range input[type="range"]:focus { outline: none; }
+.rnt-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; cursor: pointer;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.rnt-range input[type="range"]::-moz-range-thumb {
+  pointer-events: auto; cursor: pointer;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+}
+.rnt-range input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.rnt-range input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
 .dark {
   --bg: #0c0a08;
   --bg-subtle: #141009;
@@ -228,11 +401,17 @@ body {
   --secondary-muted: rgba(20, 184, 166, 0.08);
 
   --accent: #e2b857;
+  --accent-hover: #eec96f;
   --accent-muted: rgba(226, 184, 87, 0.12);
 
   --border: rgba(245, 240, 235, 0.12);
   --border-strong: rgba(245, 240, 235, 0.30);
   --border-accent: rgba(226, 184, 87, 0.35);
+
+  /* A veil, not a wash — 5% is enough to separate the panel from the ground
+     without turning it grey. */
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(245, 240, 235, 0.10);
 
   --danger: #f87171;
   --danger-muted: rgba(248, 113, 113, 0.14);
@@ -244,6 +423,12 @@ body {
   --warning-text: #2a1705;
 
   --accent-text: #2a1705;
+
+  /* On the near-black --bg the brand gold needs no darkening, so both tokens
+     converge here. --gold-on-band is unchanged across themes because --band-bg
+     stays dark in both. */
+  --gold: #e2b857;          /* 9.6:1 on --bg */
+  --gold-on-band: #dda750;
 
   /* Status ramp — lighter counterparts, each ≥4.5:1 on the dark --surface. */
   --status-info: #4a90d9;      /* 5.4:1 */

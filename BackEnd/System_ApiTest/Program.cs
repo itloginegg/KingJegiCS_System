@@ -105,6 +105,11 @@ builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection
 builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.SectionName));
 builder.Services.AddSingleton<Airatelimiter>();
+// A SECOND counter instance, for VoiceHub.Speak (the read-aloud toggle). Airatelimiter
+// keys its windows by user id alone, so sharing the instance above would make reading a
+// reply aloud consume the same hourly budget as asking a question — a customer who turned
+// the speaker on would run out of questions twice as fast.
+builder.Services.AddKeyedSingleton<Airatelimiter>(VoiceHub.ReadAloudLimiterKey);
 builder.Services.AddHttpClient<Assistantservice>();
 // Text-to-speech for the voice pipeline. Singleton because SpeechConfig is immutable and
 // thread-safe; each utterance still gets its own synthesizer. Like the assistant itself

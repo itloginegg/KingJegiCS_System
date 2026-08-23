@@ -9,7 +9,6 @@ import {
 } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
-import { ChatWidget } from '../components/landing/ChatWidget';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuTrays } from '../api/menuAdminApi';
@@ -1296,7 +1295,6 @@ export function PackagePage() {
         />
       )}
 
-      <ChatWidget />
     </>
   );
 }

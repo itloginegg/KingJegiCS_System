@@ -114,6 +114,28 @@ export function fetchMenuItems(token: string): Promise<AdminMenuItem[]> {
   return getJson<AdminMenuItem[]>('/api/Menuitems', token);
 }
 
+/**
+ * GET /api/Menuitems with no credentials — the anonymous catalog read.
+ *
+ * The endpoint is [AllowAnonymous] and returns active dishes only when the caller
+ * isn't an admin, which is exactly what a public page wants. It needs its own
+ * function rather than `fetchMenuItems('')` because getJson always sends
+ * `Authorization: Bearer ${token}`, and a bearer header with an empty token is
+ * malformed rather than absent.
+ *
+ * Same shape as fetchBestSeller: no token, plain fetch.
+ */
+export async function fetchPublicMenuItems(): Promise<AdminMenuItem[]> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/Menuitems`);
+  } catch {
+    throw new MenuApiError('Unable to reach the server.');
+  }
+  if (!res.ok) throw new MenuApiError(`Failed to load the menu (HTTP ${res.status}).`, res.status);
+  return (await res.json()) as AdminMenuItem[];
+}
+
 /** GET /api/Menutrays — every tray with its four dishes. */
 export function fetchMenuTrays(token: string): Promise<AdminMenuTray[]> {
   return getJson<AdminMenuTray[]>('/api/Menutrays', token);
