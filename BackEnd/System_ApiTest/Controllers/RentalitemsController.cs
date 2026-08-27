@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System_ApiTest.Data;
@@ -21,15 +21,18 @@ namespace System_ApiTest.Controllers
         private readonly AppDbContext _db;
         private readonly Rentalservice _rentals;
         private readonly Auditlogservice _audit;
+        private readonly IWebHostEnvironment _env;
 
-        public RentalitemsController(AppDbContext db, Rentalservice rentals, Auditlogservice audit)
+        public RentalitemsController(AppDbContext db, Rentalservice rentals, Auditlogservice audit, IWebHostEnvironment env)
         {
             _db = db;
             _rentals = rentals;
             _audit = audit;
+            _env = env;
         }
 
         /// <summary>Catalog list. Admins see everything; customers see only active items.</summary>
+        [AllowAnonymous]   // guests may browse rentals (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -50,6 +53,7 @@ namespace System_ApiTest.Controllers
             return Ok(items.Select(i => ToDto(i, outgoing.GetValueOrDefault(i.Id))));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
@@ -59,13 +63,27 @@ namespace System_ApiTest.Controllers
             return Ok(ToDto(item, await OutgoingAsync(id)));
         }
 
-        /// <summary>Live availability for an item (total / outgoing / available).</summary>
+        /// <summary>
+        /// Live availability for an item (total / outgoing / available).
+        ///
+        /// Pass <paramref name="from"/> (and optionally <paramref name="to"/>) to ask
+        /// the question a customer actually has — "can I rent this for my dates?" — which
+        /// applies the same overlap-plus-turnaround rule the confirm check uses. Omit
+        /// them for "how many are off the shelf right now".
+        /// </summary>
+        [AllowAnonymous]
         [HttpGet("{id:guid}/availability")]
-        public async Task<IActionResult> Availability(Guid id)
+        public async Task<IActionResult> Availability(
+            Guid id, [FromQuery] DateOnly? from, [FromQuery] DateOnly? to)
         {
+            if (from is null && to is not null)
+                return BadRequest(new { message = "Provide 'from' as well as 'to'." });
+            if (from is not null && to is not null && to < from)
+                return BadRequest(new { message = "'to' must be on or after 'from'." });
+
             try
             {
-                var a = await _rentals.GetAvailabilityAsync(id);
+                var a = await _rentals.GetAvailabilityAsync(id, from, to);
                 var item = await _db.RentalItems.FindAsync(id);
                 return Ok(new RentalItemAvailabilityDto(id, item!.ItemName, a.Total, a.Outgoing, a.Available));
             }
@@ -74,16 +92,26 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] RentalItemCreateDto dto)
+        public async Task<IActionResult> Create([FromForm] RentalItemCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
+
+            string? imageUrl = null;
+            if (dto.ImageFile is not null)
+            {
+                imageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "rentals");
+            }
 
             var item = new Rentalitem
             {
                 ItemName = dto.ItemName.Trim(),
                 Category = dto.Category,
                 TotalQuantity = dto.TotalQuantity,
-                UnitPrice = dto.UnitPrice
+                UnitPrice = dto.UnitPrice,
+                ImageUrl = imageUrl
             };
             _db.RentalItems.Add(item);
             await _db.SaveChangesAsync();
@@ -93,9 +121,12 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPut("{id:guid}")]
-        public async Task<IActionResult> Update(Guid id, [FromBody] RentalItemUpdateDto dto)
+        public async Task<IActionResult> Update(Guid id, [FromForm] RentalItemUpdateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
 
             var item = await _db.RentalItems.FindAsync(id);
             if (item is null) return NotFound();
@@ -107,6 +138,13 @@ namespace System_ApiTest.Controllers
             item.TotalQuantity = dto.TotalQuantity;
             item.UnitPrice = dto.UnitPrice;
             item.IsActive = dto.IsActive;
+
+            if (dto.ImageFile is not null)
+            {
+                ImageUploadHelper.DeleteImage(_env, item.ImageUrl);
+                item.ImageUrl = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "rentals");
+            }
+
             await _db.SaveChangesAsync();
             await _audit.LogAsync(User, AuditAction.UPDATE, "RENTAL_ITEM", item.Id.ToString(), old, ToDto(item, itemOut));
             return Ok(ToDto(item, itemOut));
@@ -115,17 +153,23 @@ namespace System_ApiTest.Controllers
         private bool IsAdmin() => User.IsInRole("Owner") || User.IsInRole("Assistant");
 
         /// <summary>Confirmed outgoing for one item (Confirmed/Completed bookings, not yet Returned).</summary>
+        /// <summary>
+        /// How many units are physically off the shelf right now.
+        ///
+        /// Was a second, hand-written copy of the availability rule; it now delegates to
+        /// Rentalservice.CommittedStock so the catalog can't disagree with what confirm
+        /// will actually allow. No date window, because a catalog row is a statement
+        /// about the warehouse today, not about any particular booking's dates —
+        /// future reservations are not "out".
+        /// </summary>
         private async Task<int> OutgoingAsync(Guid rentalItemId) =>
             await _db.Rentals
-                .Where(r => r.RentalItemId == rentalItemId
-                            && (r.Booking.Status == BookingStatus.Confirmed ||
-                                r.Booking.Status == BookingStatus.Completed)
-                            && r.DeliveryStatus != DeliveryStatus.Returned)
+                .Where(Rentalservice.CommittedStock(rentalItemId))
                 .SumAsync(r => (int?)r.Quantity) ?? 0;
 
         private static RentalItemResponseDto ToDto(Rentalitem i, int quantityOut) =>
             new(i.Id, i.ItemName, i.Category.ToString(), i.TotalQuantity,
-                quantityOut, i.TotalQuantity - quantityOut, i.UnitPrice, i.IsActive);
+                quantityOut, i.TotalQuantity - quantityOut, i.UnitPrice, i.IsActive, i.ImageUrl);
     }
 }
  

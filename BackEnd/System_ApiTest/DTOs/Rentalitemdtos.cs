@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Http;
 
 namespace System_ApiTest.DTOs
 {
@@ -21,6 +22,9 @@ namespace System_ApiTest.DTOs
 
         [Range(0, double.MaxValue, ErrorMessage = "Unit price cannot be negative.")]
         public decimal UnitPrice { get; set; }
+
+        /// <summary>Optional photo upload for the rental item.</summary>
+        public IFormFile? ImageFile { get; set; }
     }
 
     /// <summary>Catalog edits, including soft-deactivation via IsActive.</summary>
@@ -37,7 +41,8 @@ namespace System_ApiTest.DTOs
         int QuantityOut,     // held by Confirmed/Completed bookings, not yet Returned
         int Stock,           // available right now = TotalQuantity - QuantityOut
         decimal UnitPrice,
-        bool IsActive);
+        bool IsActive,
+        string? ImageUrl);
 
     /// <summary>Catalog item plus its on-demand availability figures.</summary>
     public record RentalItemAvailabilityDto(

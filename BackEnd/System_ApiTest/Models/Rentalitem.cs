@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace System_ApiTest.Models
 {
@@ -44,6 +44,9 @@ namespace System_ApiTest.Models
         /// Existing Rental lines on active bookings are unaffected.
         /// </summary>
         public bool IsActive { get; set; } = true;
+
+        [MaxLength(500)]
+        public string? ImageUrl { get; set; }
 
         /// <summary>One catalog item can appear across many Rental lines on different bookings.</summary>
         public ICollection<Rental> Rentals { get; set; } = new List<Rental>();

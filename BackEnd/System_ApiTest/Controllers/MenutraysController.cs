@@ -24,6 +24,7 @@ namespace System_ApiTest.Controllers
             _audit = audit;
         }
 
+        [AllowAnonymous]   // guests may browse the catalog (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -34,6 +35,7 @@ namespace System_ApiTest.Controllers
             return Ok(trays.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
@@ -92,12 +94,28 @@ namespace System_ApiTest.Controllers
 
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost("{id:guid}/deactivate")]
-        public async Task<IActionResult> Deactivate(Guid id)
+        public async Task<IActionResult> Deactivate(Guid id) => await SetActiveAsync(id, false);
+
+        /// <summary>Puts a deactivated tray back in the catalog. The mirror of /deactivate.</summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{id:guid}/reactivate")]
+        public async Task<IActionResult> Reactivate(Guid id) => await SetActiveAsync(id, true);
+
+        /// <summary>
+        /// Shared body for the two endpoints above. Dishes are Included so the audit
+        /// snapshot is the full tray, not a tray with an empty dish list.
+        /// </summary>
+        private async Task<IActionResult> SetActiveAsync(Guid id, bool isActive)
         {
-            var t = await _db.MenuTrays.FindAsync(id);
+            var t = await _db.MenuTrays.Include(x => x.Dishes).ThenInclude(d => d.MenuItem)
+                .FirstOrDefaultAsync(x => x.Id == id);
             if (t is null) return NotFound();
-            t.IsActive = false;
+            if (t.IsActive == isActive) return NoContent();   // no change; nothing to record
+
+            var old = ToDto(t);
+            t.IsActive = isActive;
             await _db.SaveChangesAsync();
+            await _audit.LogAsync(User, AuditAction.UPDATE, "MENU_TRAY", t.Id.ToString(), old, ToDto(t));
             return NoContent();
         }
 

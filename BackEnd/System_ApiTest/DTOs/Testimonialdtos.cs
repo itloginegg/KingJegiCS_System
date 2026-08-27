@@ -6,39 +6,61 @@ namespace System_ApiTest.DTOs
     {
     }
 
-    /// <summary>Anonymous public submission — becomes a Pending testimonial.</summary>
+    /// <summary>A customer submitting a review of one of their completed bookings.</summary>
     public class TestimonialCreateDto
     {
-        [Required, MaxLength(120)]
-        public string CustomerName { get; set; } = string.Empty;
+        [Required]
+        public Guid BookingId { get; set; }
 
-        [MaxLength(120)]
-        public string? EventLabel { get; set; }
+        [Required]
+        [Range(1, 5)]
+        public int Rating { get; set; }
 
-        [Required, MaxLength(1000)]
+        [Required]
+        [MaxLength(2000)]
         public string Body { get; set; } = string.Empty;
 
-        [Range(1, 5)]
-        public int Rating { get; set; } = 5;
+        /// <summary>Optional display name; falls back to the customer's own full name.</summary>
+        [MaxLength(120)]
+        public string? AuthorName { get; set; }
     }
 
-    /// <summary>Full shape for the admin moderation view.</summary>
-    public record TestimonialResponseDto(
-        Guid Id,
-        string CustomerName,
-        string? EventLabel,
-        string Body,
-        int Rating,
-        string Status,
-        DateTime CreatedAt,
-        DateTime? ModeratedAt);
+    /// <summary>Approve or reject a pending testimonial.</summary>
+    public class TestimonialModerateDto
+    {
+        /// <summary>"Approved" or "Rejected".</summary>
+        [Required]
+        public string Status { get; set; } = string.Empty;
 
-    /// <summary>What the anonymous landing page sees — Approved entries only,
-    /// with no moderation metadata.</summary>
+        [MaxLength(500)]
+        public string? Note { get; set; }
+    }
+
+    /// <summary>
+    /// The public shape: only what the landing page renders. No ids that would let a
+    /// reader tie a review back to a customer account or a booking.
+    /// </summary>
     public record PublicTestimonialDto(
         Guid Id,
-        string Name,
-        string? Event,
-        string Quote,
-        int Rating);
+        string AuthorName,
+        int Rating,
+        string Body,
+        DateTime SubmittedAt);
+
+    /// <summary>The moderation shape — everything the admin queue needs.</summary>
+    public record TestimonialResponseDto(
+        Guid Id,
+        Guid CustomerId,
+        string AuthorName,
+        string CustomerEmail,
+        Guid BookingId,
+        string BookingName,
+        DateOnly EventDate,
+        int Rating,
+        string Body,
+        string Status,
+        DateTime SubmittedAt,
+        DateTime? ModeratedAt,
+        Guid? ModeratedById,
+        string? ModerationNote);
 }

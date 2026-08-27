@@ -18,3 +18,9 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Avatar authoring sources (large binaries; the built .vrm/.vrma in public/avatar are tracked)
+avatar-src/
+scripts/
+
+

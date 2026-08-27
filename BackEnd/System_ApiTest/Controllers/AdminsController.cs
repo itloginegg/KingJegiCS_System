@@ -18,12 +18,14 @@ public class AdminsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly JwtTokenService _tokenService;
+    private readonly OtpService _otp;
     private readonly PasswordHasher<Admin> _passwordHasher = new();
 
-    public AdminsController(AppDbContext db, JwtTokenService tokenService)
+    public AdminsController(AppDbContext db, JwtTokenService tokenService, OtpService otp)
     {
         _db = db;
         _tokenService = tokenService;
+        _otp = otp;
     }
 
     /// <summary>
@@ -96,6 +98,39 @@ public class AdminsController : ControllerBase
             admin.PasswordHash = _passwordHasher.HashPassword(admin, dto.Password);
             await _db.SaveChangesAsync();
         }
+
+        // Two-factor for admins too: they control money and refunds. Receiving
+        // the code proves mailbox access (no separate verification flag needed).
+        if (_otp.Enabled)
+        {
+            try
+            {
+                await _otp.IssueAsync("Admin", admin.Id, admin.Email, OtpPurpose.Login);
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+            catch (EmailSendException) { return StatusCode(502, new { message = "Could not send the login code. Try again shortly." }); }
+
+            return Ok(new { otpRequired = true, message = "A 6-digit login code was sent to your email. Confirm it at /api/admins/login/verify-otp." });
+        }
+
+        var role = admin.Role.ToString();
+        var (token, expiresAt) = _tokenService.Generate(admin.Id, admin.Email, role);
+        return Ok(new AuthResponseDto(token, expiresAt, admin.Id, admin.Email, role));
+    }
+
+    /// <summary>Login step 2: confirms the emailed code and issues the JWT.</summary>
+    [AllowAnonymous]
+    [HttpPost("login/verify-otp")]
+    public async Task<IActionResult> VerifyLoginOtp([FromBody] VerifyCodeDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var email = dto.Email.Trim().ToLowerInvariant();
+        var admin = await _db.Admins.FirstOrDefaultAsync(a => a.Email == email);
+        if (admin is null)
+            return Unauthorized(new { message = "Invalid email or code." });
+
+        if (!await _otp.VerifyAsync("Admin", admin.Id, OtpPurpose.Login, dto.Code))
+            return Unauthorized(new { message = "Invalid or expired code." });
 
         var role = admin.Role.ToString();
         var (token, expiresAt) = _tokenService.Generate(admin.Id, admin.Email, role);

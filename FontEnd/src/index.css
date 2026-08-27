@@ -1,1 +1,480 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Inter+Tight:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
+
+/* Class-based dark mode (Tailwind v4): `dark:` utilities apply when `.dark` is on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* --font-serif keeps its name because ~500 call sites read it, but the display
+     face is no longer a serif: Bricolage Grotesque is a variable grotesque. The
+     name is the contract; the value is the direction. */
+  --font-serif: "Bricolage Grotesque", Georgia, sans-serif;
+  --font-sans: "Inter Tight", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Brand palette — the five source colours, exposed as Tailwind utilities
+     (bg-plum-deep, text-blush, …). */
+  --color-plum-deep: #2e1a3e;
+  --color-plum-deeper: #1b1024;
+  --color-rose: #a62a57;
+  --color-blush: #f2c1d1;
+  --color-off-white: #faf6f7;
+
+  /* Aliases — old teal-era names, new plum values. Every `bg-teal-deep` and
+     `text-beige` in the tree keeps resolving, so the re-skin does not have to
+     land in the same commit as ~500 call-site renames. Retire in a later pass. */
+  --color-teal-deep: #2e1a3e;
+  --color-teal-deeper: #1b1024;
+  --color-beige: #f2c1d1;
+  --color-warm-gray: #7a6b84;
+
+  /* ── Semantic tokens as Tailwind utilities ──
+     Each one forwards to the themed custom property defined in :root / .dark
+     below, rather than restating a literal. The indirection is the point: .dark
+     rebinds --bg-card, and every `bg-bg-card` utility follows without Tailwind
+     needing to emit a `dark:` variant for it.
+
+     Names are deliberately verbatim, so the utility reads as the token it uses:
+     bg-bg-card, text-text-muted, border-border, ring-accent.
+
+     Values here are NOT a second source of truth — change a colour in :root/.dark
+     and these follow. Do not paste literals into this block. */
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-bg-card: var(--bg-card);
+  --color-surface: var(--surface);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-text-dim: var(--text-dim);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-text: var(--primary-text);
+  --color-primary-muted: var(--primary-muted);
+
+  /* Kept distinct from --primary: primary is "action" (buttons, links, Confirmed),
+     accent is "attention" (Pending, decorative rules). Merging them would make a
+     Pending badge indistinguishable from a Confirmed one. */
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--accent-muted);
+  /* Hover state for an --accent fill. --primary has always had --primary-hover;
+     --accent never did, so accent-filled buttons had no hover and read as inert. */
+  --color-accent-hover: var(--accent-hover);
+  /* Text/icon colour placed ON an --accent fill. An alias of the existing
+     --accent-text under the name the component contract uses, so the pair reads
+     as one unit: `bg-accent text-accent-fg`. Not a second source of truth —
+     it forwards to the same themed property. */
+  --color-accent-fg: var(--accent-text);
+
+  /* Decorative gold. Deliberately NOT --warning: that token means "something
+     needs attention", and spending it on ornament is what stops real warnings
+     from registering. --gold is the page-ground value, --gold-on-band is
+     band-only. See the :root block for why there have to be two. */
+  --color-gold: var(--gold);
+  --color-gold-on-band: var(--gold-on-band);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-accent: var(--border-accent);
+
+  --color-glass: var(--glass);
+  --color-glass-border: var(--glass-border);
+
+  --color-danger: var(--danger);
+  --color-danger-muted: var(--danger-muted);
+  --color-danger-text: var(--danger-text);
+  --color-danger-ink: var(--danger-ink);
+
+  --color-accent-text: var(--accent-text);
+
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-warning-text: var(--warning-text);
+
+  --color-status-info: var(--status-info);
+  --color-status-refund: var(--status-refund);
+  --color-status-unpaid: var(--status-unpaid);
+  --color-status-partial: var(--status-partial);
+  --color-status-paid: var(--status-paid);
+
+  /* Card elevation as a utility (`shadow-card`) instead of
+     shadow-[var(--shadow-md)] repeated at every card. Forwards to the themed
+     --shadow-md, so .dark rebinds it without a `dark:` variant. */
+  --shadow-card: var(--shadow-md);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   King Jegi design tokens — light is the base, `.dark` overrides.
+   Consumed by the landing page (and any page that opts into the system).
+─────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Palette: #1B1024 / #2E1A3E plum · #A62A57 rose · #F2C1D1 blush · #FAF6F7 ground */
+
+  --bg: #faf6f7;
+  --bg-subtle: #fbeef2;      /* the blush band — tinted, not grey */
+  --bg-card: #ffffff;
+  --surface: #ffffff;
+
+  /* Text is the plum, stepped toward mauve as it recedes. */
+  --text-primary: #1b1024;   /* 16.1:1 on --bg */
+  --text-secondary: #4a3a56; /*  8.9:1 */
+  --text-muted: #7a6b84;     /*  4.7:1 */
+  /* Carries table counts, field captions and calendar numerals — real text,
+     so it clears 4.5:1 rather than sitting at decorative weight. */
+  --text-dim: #6f6379;       /*  5.6:1 on --surface */
+
+  /* primary is "action structure" — the plum fills, nav, sidebars, bands. */
+  --primary: #2e1a3e;
+  --primary-hover: #1b1024;
+  --primary-text: #faf6f7;
+  --primary-muted: rgba(46, 26, 62, 0.10);
+
+  --secondary: #2e1a3e;
+  --secondary-muted: rgba(46, 26, 62, 0.07);
+
+  /* accent is "the button you press" — every primary CTA is this rose. */
+  --accent: #a62a57;         /* 6.9:1 on --surface */
+  --accent-hover: #8e1f49;
+  --accent-muted: rgba(166, 42, 87, 0.12);
+  --accent-text: #ffffff;    /* 6.9:1 on the rose fill */
+
+  --border: rgba(27, 16, 36, 0.12);
+  --border-strong: rgba(27, 16, 36, 0.28);
+  --border-accent: rgba(166, 42, 87, 0.35);
+
+  /* Raised panel over a busy background. Semi-opaque rather than a
+     backdrop-filter, for the same reason as before: the surfaces underneath
+     animate, and a blur re-runs every frame for a tint a fill gives free. */
+  --glass: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(27, 16, 36, 0.10);
+
+  --danger: #dc2626;
+  --danger-muted: rgba(220, 38, 38, 0.12);
+  --danger-text: #ffffff;
+  /* Danger as TEXT on a --danger-muted tint. --danger itself is tuned as a fill;
+     one step darker is what the alert spec in artboards 2d and 4c carries, and it
+     takes the body copy from 4.8:1 to 6.9:1 on --surface. */
+  --danger-ink: #b01f1f;
+
+  --warning: #b4741a;        /* 4.6:1 on --surface */
+  --warning-muted: rgba(180, 116, 26, 0.14);
+  --warning-text: #ffffff;
+
+  /* ── Decorative accent ──
+     The teal-era palette needed two gold tokens because the brand gold was
+     unusable as text on the off-white. The plum direction has no separate
+     ornamental gold: on the page ground the rose carries ornament, and the
+     amber survives only ON the dark band, where it has room. Both token
+     names are kept so no consumer breaks — --gold is now the rose. */
+  --gold: #a62a57;           /* 6.9:1 on --bg */
+  --gold-on-band: #e8b45f;   /* 9.4:1 on --band-bg — band use only */
+
+  /* ── Status ramp ──
+     Unchanged from the teal build. These five must stay distinguishable from
+     each other and from --accent, which is why they are not re-tinted toward
+     the plum: a Pending badge that reads as a Confirmed one is worse than a
+     badge slightly off-palette. Each clears 4.5:1 on --surface. */
+  --status-info: #2b6ba6;      /* Completed              — 5.6:1 */
+  --status-refund: #146b80;    /* Refunded / Partially   — 6.1:1 */
+  --status-unpaid: #c2255c;    /* Deposit Unpaid         — 5.5:1 */
+  --status-partial: #7048e8;   /* Deposit Partial        — 5.4:1 */
+  --status-paid: #1f7a33;      /* Deposit Paid           — 5.4:1 */
+
+  --shadow-sm: 0 1px 2px rgba(27, 16, 36, 0.06);
+  --shadow-md: 0 8px 24px rgba(27, 16, 36, 0.09);
+  --shadow-lg: 0 20px 52px rgba(27, 16, 36, 0.14);
+  --shadow-green: 0 10px 30px rgba(46, 26, 62, 0.28);   /* primary lift */
+  --shadow-gold: 0 10px 34px rgba(166, 42, 87, 0.24);   /* accent lift */
+
+  /* Radii step up, not down. --r-2xl is new: cards and sheets sit at 20–28 in
+     the new direction, where the old scale topped out at 20. */
+  --r-sm: 8px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-2xl: 28px;
+  --r-full: 999px;
+
+  --font-display: "Bricolage Grotesque", Georgia, sans-serif;
+  --font-body: "Inter Tight", system-ui, sans-serif;
+  /* Prices, counts and calendar numerals. Tabular by construction, so a column
+     of pesos lines up without a per-table font-variant-numeric override. */
+  --font-numeric: "JetBrains Mono", ui-monospace, monospace;
+
+  /* text placed over photographic backgrounds */
+  --text-on-bg: var(--text-primary);
+  --text-on-bg-muted: var(--text-muted);
+  --text-shadow-on-bg: none;
+  --surface-glass: rgba(255, 255, 255, 0.72);
+  --border-glass: rgba(255, 255, 255, 0.55);
+  --shadow-glass: 0 8px 32px rgba(27, 16, 36, 0.12);
+
+  /* menu card imagery */
+  --menu-img-filter: brightness(1.03) contrast(1.05) saturate(1.04);
+  --menu-vignette: rgba(27, 16, 36, 0.30);
+  --menu-chip-bg: rgba(250, 246, 247, 0.66);
+  --menu-chip-border: rgba(255, 255, 255, 0.72);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Dark band — a section that stays dark in BOTH themes.
+
+   Used by the landing page's "Our Special Dish" band and MenuPage's hero. These
+   can't derive from --primary: that flips to #14b8a6 in dark, which would turn an
+   inverted band into a glowing bright one. So the values are literal here, and
+   this block is the only place they may be written.
+
+   Class-based like everything else (@custom-variant dark above). A
+   [data-theme="dark"] selector would silently never match — this project sets no
+   such attribute anywhere.
+─────────────────────────────────────────────────────────────────────── */
+.dark-band {
+  --band-bg:           #1b1024;
+  --band-text:         #f7eff4;   /* 15.6:1 on --band-bg */
+  --band-muted:        #c9b8d2;   /*  9.6:1 */
+  --band-border:       rgb(255 255 255 / 0.28);
+
+  /* Raised panel inside a band. Never paired with backdrop-filter: --band-bg is a
+     flat solid, so a blur would sample a uniform colour — the cost of a compositing
+     layer for a tint a fill gives free. */
+  --band-glass:        rgb(255 255 255 / 0.05);
+  --band-glass-border: rgb(255 255 255 / 0.10);
+
+  /* Drives the active pill, the active card and the CTA together. */
+  --band-chip:         #f7eff4;
+  --band-chip-text:    #1b1024;
+  --band-chip-edge:    transparent;
+
+  /* --accent CANNOT be used on a band: the rose reads 3.1:1 on --band-bg —
+     enough for chrome, not for the kicker text it would carry. The amber is
+     pinned across both themes, exactly as the brand gold was before it. */
+  --band-accent:       #e8b45f;   /* 9.4:1 on --band-bg */
+  --band-accent-text:  #1b1024;   /* 9.4:1 on the amber */
+
+  /* Blush as the soft mark on a band — the packages hero kicker and price.
+     Distinct from --band-accent, which is the amber that carries chrome. */
+  --band-accent-soft:  #f2c1d1;   /* 10.2:1 on --band-bg */
+  --band-quote:        #e8709a;   /* the opening quote mark */
+  --band-footer:       #1b1024;   /* the closing footer, one step below the band */
+}
+
+.dark .dark-band {
+  --band-bg:           #120a18;
+  --band-text:         #f7eff4;
+  --band-muted:        #a89ab2;   /*  7.2:1 */
+  --band-border:       rgb(247 239 244 / 0.16);
+
+  --band-glass:        rgb(255 255 255 / 0.05);
+  --band-glass-border: rgb(247 239 244 / 0.10);
+
+  --band-chip:         #241531;
+  --band-chip-text:    #f7eff4;
+  /* Without an edge the active card vanishes: #241531 on the glass panel is
+     1.3:1, and a translucent hairline cannot recover it. */
+  --band-chip-edge:    #6b5a78;
+
+  --band-accent:       #e8b45f;
+  --band-accent-text:  #1b1024;
+  --band-accent-soft:  #f2c1d1;
+  --band-quote:        #e8709a;
+  --band-footer:       #0d0612;
+}
+
+/* ── Navbar inside a dark band ──
+   When <Navbar> sits inside a .dark-band section (e.g. MenuPage hero), its
+   generic theme tokens (--text-secondary, --primary) clash with the always-dark
+   background. These overrides rebind nav links to band-aware tokens so they
+   read well in both light and dark themes, with no prop or JS required. */
+.dark-band .nav-link {
+  color: var(--band-muted);
+}
+.dark-band .nav-link:hover,
+.dark-band .nav-link-active {
+  color: var(--band-accent);
+}
+.dark-band .nav-cta {
+  background: var(--band-accent);
+  color: var(--band-accent-text);
+}
+.dark-band .nav-cta:hover {
+  background: color-mix(in srgb, var(--band-accent) 85%, white);
+}
+/* Logo and icon buttons use inline styles, so !important is needed to win. */
+.dark-band .nav-logo {
+  color: var(--band-accent) !important;
+}
+.dark-band .nav-icon,
+.dark-band .nav-burger {
+  color: var(--band-text) !important;
+}
+
+/* The page ground itself, so the off-white shows through on overscroll and
+   behind pages shorter than the viewport — not just inside each <main>. */
+body {
+  background-color: var(--bg);
+  color: var(--text-primary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Center-focus slider utilities (used by /packages).
+   The track holds two identical halves; a Framer Motion value drives its
+   translateX and wraps at exactly half the track width for a seamless
+   infinite loop. Motion also handles drag, pause, and the per-card
+   center-distance scaling — this CSS is structure only.
+─────────────────────────────────────────────────────────────────────── */
+.center-slider {
+  overflow: hidden;
+  /* soft edge fade so cards materialize instead of popping in */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 6%, #000 94%, transparent 100%);
+}
+.slider-track {
+  display: flex;
+  width: max-content;
+  position: relative; /* offsetParent for the per-card center math */
+  cursor: grab;
+  will-change: transform;
+}
+.slider-track:active { cursor: grabbing; }
+.slider-half {
+  display: flex;
+  align-items: stretch; /* equal heights — one straight, clean row */
+  gap: 2rem;
+  padding-right: 2rem;  /* trailing gap so the -50% loop point is seamless */
+}
+.slider-item {
+  flex-shrink: 0;
+  display: flex; /* child card stretches to the shared row height */
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Dual-handle range (used by the rentals filter sidebar).
+
+   Two real <input type="range"> stacked over one track, rather than a div with
+   drag handlers: both thumbs stay keyboard-operable and announce their own
+   value, which a synthetic slider only gets back by reimplementing the whole
+   ARIA slider pattern. The inputs are pointer-transparent so clicks fall
+   through to whichever thumb is nearest; only the thumbs take pointer events.
+
+   Colours come from the themed properties, so .dark needs no counterpart here.
+─────────────────────────────────────────────────────────────────────── */
+.rnt-range { position: relative; height: 30px; }
+.rnt-range-track {
+  position: absolute; top: 13px; left: 0; right: 0; height: 4px;
+  border-radius: 999px; background: var(--bg-subtle);
+  /* --bg-subtle on --bg-card is a 1.03:1 separation in light mode; without an
+     edge the unfilled track is simply not there. */
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.rnt-range-fill {
+  position: absolute; top: 13px; height: 4px;
+  border-radius: 999px; background: var(--accent);
+}
+.rnt-range input[type="range"] {
+  position: absolute; top: 0; left: 0; width: 100%; height: 30px; margin: 0;
+  appearance: none; -webkit-appearance: none; background: transparent;
+  pointer-events: none;
+}
+.rnt-range input[type="range"]:focus { outline: none; }
+.rnt-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; cursor: pointer;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.rnt-range input[type="range"]::-moz-range-thumb {
+  pointer-events: auto; cursor: pointer;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+}
+.rnt-range input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.rnt-range input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   DARK
+
+   Roles do not swap. --primary stays the action structure, --accent the thing
+   you press, --warning attention — but on a dark ground the fills must be
+   light and their text dark, so each pair inverts.
+─────────────────────────────────────────────────────────────────────── */
+.dark {
+  --bg: #150c1c;
+  --bg-subtle: #2a1b36;
+  --bg-card: #1f1428;
+  --surface: #1f1428;
+
+  --text-primary: #f7eff4;   /* 15.4:1 on --bg */
+  --text-secondary: #c9b8d2; /*  9.4:1 */
+  --text-muted: #9a88a6;     /*  5.5:1 */
+  --text-dim: #8a7896;       /*  4.6:1 on --surface */
+
+  --primary: #e8709a;
+  --primary-hover: #f2c1d1;
+  --primary-text: #150c1c;   /* 8.1:1 on the rose fill */
+  --primary-muted: rgba(232, 112, 154, 0.14);
+
+  --secondary: #e8709a;
+  --secondary-muted: rgba(232, 112, 154, 0.08);
+
+  /* Blush rather than rose, so a decorative accent and a live action are still
+     two different things once both have to be light. */
+  --accent: #f2c1d1;         /* 11.7:1 on --surface */
+  --accent-hover: #ffffff;
+  --accent-muted: rgba(242, 193, 209, 0.14);
+  --accent-text: #1b1024;    /* 11.7:1 on the blush fill */
+
+  --border: rgba(247, 239, 244, 0.12);
+  --border-strong: rgba(247, 239, 244, 0.30);
+  --border-accent: rgba(232, 112, 154, 0.35);
+
+  /* A veil, not a wash — 5% is enough to separate the panel from the ground
+     without turning it grey. */
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(247, 239, 244, 0.10);
+
+  --danger: #f2828c;         /* 6.4:1 on --surface */
+  --danger-muted: rgba(242, 130, 140, 0.14);
+  --danger-text: #150c1c;    /* dark ON a light red — white would be 2.6:1 */
+  /* On the dark ground the light red already clears 6.4:1 as text, so ink and
+     fill converge — darkening here would move it the wrong way. */
+  --danger-ink: #f2828c;
+
+  --warning: #e8b45f;        /* 8.7:1 on --surface */
+  --warning-muted: rgba(232, 180, 95, 0.14);
+  --warning-text: #150c1c;
+
+  /* On the near-black ground the amber needs no darkening, so both gold tokens
+     converge — the same behaviour the teal palette had. */
+  --gold: #e8b45f;
+  --gold-on-band: #e8b45f;
+
+  /* Status ramp — lighter counterparts, each ≥4.5:1 on the dark --surface. */
+  --status-info: #6fa8e0;      /* 6.6:1 */
+  --status-refund: #4cc4d6;    /* 8.5:1 */
+  --status-unpaid: #f06a92;    /* 5.7:1 */
+  --status-partial: #b9a3fa;   /* 7.5:1 */
+  --status-paid: #7fd48f;      /* 9.6:1 */
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.50);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.55);
+  --shadow-green: 0 10px 30px rgba(232, 112, 154, 0.25);
+  --shadow-gold: 0 10px 34px rgba(232, 180, 95, 0.18);
+
+  --text-on-bg: #f7eff4;
+  --text-on-bg-muted: rgba(247, 239, 244, 0.75);
+  --text-shadow-on-bg: 0 1px 6px rgba(0, 0, 0, 0.55);
+  --surface-glass: rgba(21, 12, 28, 0.60);
+  --border-glass: rgba(255, 255, 255, 0.10);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.40);
+
+  --menu-img-filter: brightness(0.88) contrast(1.08) saturate(1.05);
+  --menu-vignette: rgba(10, 5, 14, 0.52);
+  --menu-chip-bg: rgba(31, 20, 40, 0.62);
+  --menu-chip-border: rgba(255, 255, 255, 0.10);
+}

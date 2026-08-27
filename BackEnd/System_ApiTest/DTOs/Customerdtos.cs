@@ -56,4 +56,28 @@ namespace System_ApiTest.DTOs
         bool IsActive,
         DateTime CreatedAt);
 
+    /// <summary>
+    /// Admin walk-in customer create (item 4). A deliberate carve-out from self-
+    /// registration: no Gmail-only rule and no OTP verification, so a customer standing
+    /// at the counter can be booked for immediately. Phone validation is relaxed too.
+    /// </summary>
+    public class AdminCreateCustomerDto
+    {
+        [Required, MaxLength(200)]
+        public string FullName { get; set; } = string.Empty;
+
+        [Required, EmailAddress, MaxLength(254)]
+        public string Email { get; set; } = string.Empty;
+
+        [Required, MaxLength(20)]
+        public string PhoneNumber { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional temporary password. If omitted, a random one is set — the walk-in
+        /// can't log in until it's reset, but the booking (tied to their Customer.Id)
+        /// works regardless.
+        /// </summary>
+        [MinLength(8, ErrorMessage = "Password must be at least 8 characters.")]
+        public string? Password { get; set; }
+    }
 }

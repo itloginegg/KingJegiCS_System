@@ -1,8 +1,79 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System_ApiTest.Models;
 
 namespace System_ApiTest.DTOs
 {
+    /// <summary>
+    /// Which event-detail fields belong to which EventType, and the shared rule that
+    /// keeps a payload internally consistent.
+    ///
+    /// The rule enforced here is APPLICABILITY, not presence: a Wedding may not carry a
+    /// celebrant's age, and a Birthday may not carry a groom. Presence is deliberately
+    /// NOT required, because a booking is a date reservation first and the details often
+    /// arrive later — the admin New Booking modal takes phone reservations that have an
+    /// event type and nothing else, and rejecting those would break walk-ins. The public
+    /// wizard asks for the applicable fields up front; that's a UX gate, not a data rule.
+    /// </summary>
+    public static class EventDetailRules
+    {
+        /// <summary>Longest plausible human age; also stops 4-digit typos.</summary>
+        public const int MaxCelebrantAge = 130;
+
+        public static bool UsesCouple(EventType? t) => t == Models.EventType.Wedding;
+
+        public static bool UsesCelebrant(EventType? t) =>
+            t is Models.EventType.Birthday or Models.EventType.Debut;
+
+        public static bool UsesEventName(EventType? t) =>
+            t is Models.EventType.Corporate or Models.EventType.Others;
+
+        /// <summary>
+        /// Yields a ValidationResult for every field that doesn't belong to this event
+        /// type, plus range checks. Shared by the create and update DTOs so the two can
+        /// never drift apart.
+        /// </summary>
+        public static IEnumerable<ValidationResult> Validate(
+            EventType? eventType,
+            string? groomName, string? brideName,
+            string? celebrantName, string? celebrantSex, int? celebrantAge,
+            string? eventName)
+        {
+            static bool Has(string? s) => !string.IsNullOrWhiteSpace(s);
+
+            if (!UsesCouple(eventType))
+            {
+                if (Has(groomName))
+                    yield return new ValidationResult(
+                        "Groom's name applies to a wedding only.", new[] { nameof(BookingCreateDto.GroomName) });
+                if (Has(brideName))
+                    yield return new ValidationResult(
+                        "Bride's name applies to a wedding only.", new[] { nameof(BookingCreateDto.BrideName) });
+            }
+
+            if (!UsesCelebrant(eventType))
+            {
+                if (Has(celebrantName))
+                    yield return new ValidationResult(
+                        "Celebrant's name applies to a birthday or debut only.", new[] { nameof(BookingCreateDto.CelebrantName) });
+                if (Has(celebrantSex))
+                    yield return new ValidationResult(
+                        "Celebrant's sex applies to a birthday or debut only.", new[] { nameof(BookingCreateDto.CelebrantSex) });
+                if (celebrantAge is not null)
+                    yield return new ValidationResult(
+                        "Celebrant's age applies to a birthday or debut only.", new[] { nameof(BookingCreateDto.CelebrantAge) });
+            }
+            else if (celebrantAge is < 0 or > MaxCelebrantAge)
+            {
+                yield return new ValidationResult(
+                    $"Celebrant's age must be between 0 and {MaxCelebrantAge}.", new[] { nameof(BookingCreateDto.CelebrantAge) });
+            }
+
+            if (!UsesEventName(eventType) && Has(eventName))
+                yield return new ValidationResult(
+                    "Event name applies to a corporate or other event only.", new[] { nameof(BookingCreateDto.EventName) });
+        }
+    }
+
     /// <summary>
     /// Input for creating a Booking. BookingName is NOT here — it is auto-generated
     /// server-side as "{Customer full name} - {Event type}". Status, deposit status
@@ -37,13 +108,37 @@ namespace System_ApiTest.DTOs
         [MaxLength(500)]
         public string VenueAddress { get; set; } = string.Empty;
 
+        [MaxLength(30)]
+        public string? ContactNumber { get; set; }
+
         /// <summary>Guest count — required for FullService, ignored for FoodDelivery.</summary>
         public int? GuestCount { get; set; }
 
         public Guid? MenuPackageId { get; set; }
 
+        // ---- Event-type-specific details (see EventDetailRules) ----
+
+        [MaxLength(150)] public string? GroomName { get; set; }
+        [MaxLength(150)] public string? BrideName { get; set; }
+        [MaxLength(150)] public string? CelebrantName { get; set; }
+        [MaxLength(20)] public string? CelebrantSex { get; set; }
+        public int? CelebrantAge { get; set; }
+        [MaxLength(200)] public string? EventName { get; set; }
+
+        // ---- Motif & theme (text only; images upload separately) ----
+
+        [MaxLength(200)] public string? Motif { get; set; }
+        [MaxLength(200)] public string? Theme { get; set; }
+
         public IEnumerable<ValidationResult> Validate(ValidationContext _)
         {
+            // Applicability holds for every booking type, including FoodDelivery — which
+            // has no EventType at all, so none of these fields may be set.
+            foreach (var r in EventDetailRules.Validate(
+                         EventType, GroomName, BrideName,
+                         CelebrantName, CelebrantSex, CelebrantAge, EventName))
+                yield return r;
+
             if (BookingType == BookingType.FoodDelivery)
             {
                 // Only date/time/address are required; reject event-only inputs that don't apply.
@@ -85,6 +180,9 @@ namespace System_ApiTest.DTOs
         [Required, MaxLength(200)]
         public string BookingName { get; set; } = string.Empty;
 
+        [MaxLength(30)]
+        public string? ContactNumber { get; set; }
+
         [Required]
         public DateOnly EventDate { get; set; }
 
@@ -108,8 +206,30 @@ namespace System_ApiTest.DTOs
 
         public Guid? MenuPackageId { get; set; }
 
+        // ---- Event-type-specific details (see EventDetailRules) ----
+
+        [MaxLength(150)] public string? GroomName { get; set; }
+        [MaxLength(150)] public string? BrideName { get; set; }
+        [MaxLength(150)] public string? CelebrantName { get; set; }
+        [MaxLength(20)] public string? CelebrantSex { get; set; }
+        public int? CelebrantAge { get; set; }
+        [MaxLength(200)] public string? EventName { get; set; }
+
+        // ---- Motif & theme (text only; images upload separately) ----
+
+        [MaxLength(200)] public string? Motif { get; set; }
+        [MaxLength(200)] public string? Theme { get; set; }
+
         public IEnumerable<ValidationResult> Validate(ValidationContext _)
         {
+            // Applicability is checked against the event type being SET here: an edit
+            // that changes Wedding -> Birthday must send the celebrant fields and drop
+            // the couple ones in the same request, or it fails.
+            foreach (var r in EventDetailRules.Validate(
+                         EventType, GroomName, BrideName,
+                         CelebrantName, CelebrantSex, CelebrantAge, EventName))
+                yield return r;
+
             // The booking's own type decides which fields matter — the service applies
             // the per-type rules. Here we only check internal consistency of what's sent.
             if (EndDate is not null && EndTime is not null)
@@ -144,14 +264,69 @@ namespace System_ApiTest.DTOs
         TimeOnly? EndTime,
         string? EventType,
         string VenueAddress,
+        string? ContactNumber,
         int? GuestCount,
         string Status,
         string DepositStatus,
+        /// <summary>"Customer" or "WalkIn" — who created it. Read-only; never accepted on input.</summary>
+        string Source,
         decimal TotalAmount,
         Guid? MenuPackageId,
         bool CancellationRequested,
         string? CancellationRequestReason,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+        /* Internal staff note. Present on the shared response DTO, so it is only ever
+           returned to admins by the endpoints that are already role-gated — see
+           BookingsController.SetAdminNote. */
+        string? AdminNote,
+        /* Event-type-specific details and motif/theme. Defaulted so the many existing
+           construction sites keep compiling; whichever ones don't apply to the booking's
+           event type are null by construction (see EventDetailRules). */
+        string? GroomName = null,
+        string? BrideName = null,
+        string? CelebrantName = null,
+        string? CelebrantSex = null,
+        int? CelebrantAge = null,
+        string? EventName = null,
+        string? Motif = null,
+        string? MotifImageUrl = null,
+        string? Theme = null,
+        string? ThemeImageUrl = null,
+        /* Whether a resource plan exists, for the admin list's "Edit Resources"
+           affordance. Null means "no plan saved" OR "this response didn't load it" —
+           only the read endpoints that Include the navigation property populate it, via
+           ToDtoWithRelations. Mutation responses deliberately leave it null rather than
+           reporting an absence they didn't actually check. */
+        BookingResourceSummaryDto? ResourceAllocation = null,
+
+        /* Display fields for the admin bookings table, which needs the customer's email
+           and the package's name — neither of which is derivable from CustomerId and
+           MenuPackageId alone, and which the list previously faked as "Not provided"
+           and "Package Selected".
+
+           BookingName already carries the customer's full name (see Booking.BookingName),
+           so no CustomerName-for-display field is needed here; this one exists for
+           callers that want it unparsed. ContactNumber, not Customer.PhoneNumber, remains
+           the phone shown on a booking: it is the event-day contact and may legitimately
+           differ from the account's number.
+
+           Same discipline as ResourceAllocation: populated ONLY by the reads that
+           actually Include the navigation properties. Reading Customer/MenuPackage on an
+           entity loaded without them yields null, which is indistinguishable from "there
+           isn't one" — so base ToDto never touches them. */
+        string? CustomerName = null,
+        string? CustomerEmail = null,
+        string? PackageName = null);
+
+    /// <summary>Just enough of the resource plan for a list row to show its state.</summary>
+    public record BookingResourceSummaryDto(bool IsApproved, DateTime UpdatedAt);
+
+    /// <summary>Body for setting a booking's internal staff note. Null or blank clears it.</summary>
+    public class SetAdminNoteDto
+    {
+        [MaxLength(2000, ErrorMessage = "Note is too long (2000 characters maximum).")]
+        public string? Note { get; set; }
+    }
 
     // ===== Booking line items (shown on the booking detail) =====
 
@@ -162,7 +337,8 @@ namespace System_ApiTest.DTOs
         int Quantity,
         decimal UnitPrice,
         decimal Subtotal,
-        string DeliveryStatus);
+        string DeliveryStatus,
+        string? DamageNote = null);
 
     public record BookingServiceLineDto(
         Guid LineId,
@@ -220,6 +396,11 @@ namespace System_ApiTest.DTOs
     public record BookingPackageSelectionDto(
         Guid SlotId,
         string SlotLabel,
-        Guid ItemId,
-        string ItemName);
+        Guid MenuItemId,
+        string MenuItemName);
+
+    public class SetPackageDto
+    {
+        public Guid? MenuPackageId { get; set; }
+    }
 }

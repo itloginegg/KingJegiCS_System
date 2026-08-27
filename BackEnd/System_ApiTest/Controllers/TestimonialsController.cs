@@ -2,110 +2,121 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System_ApiTest.Data;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System_ApiTest.DTOs;
 using System_ApiTest.Models;
 using System_ApiTest.Services;
 
 namespace System_ApiTest.Controllers
 {
+    /// <summary>
+    /// Customer testimonials: submission (Customer), moderation (Owner/Assistant), and
+    /// the approved list the public landing page reads.
+    ///
+    /// Only the approved list is anonymous, and it returns the public DTO — no customer
+    /// or booking ids ever reach an unauthenticated caller.
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
     public class TestimonialsController : ControllerBase
     {
-        private readonly AppDbContext _db;
+        private readonly Testimonialservice _testimonials;
         private readonly Auditlogservice _audit;
 
-        public TestimonialsController(AppDbContext db, Auditlogservice audit)
+        public TestimonialsController(Testimonialservice testimonials, Auditlogservice audit)
         {
-            _db = db;
+            _testimonials = testimonials;
             _audit = audit;
         }
 
-        // ---------------- Public (landing page) ----------------
+        // ---------------- Public ----------------
 
-        /// <summary>
-        /// Approved testimonials for the landing page, newest first.
-        /// Anonymous — this is what the public site calls.
-        /// </summary>
+        /// <summary>Approved testimonials for the landing page. Anonymous.</summary>
         [AllowAnonymous]
-        [HttpGet("public")]
-        public async Task<IActionResult> GetApproved([FromQuery] int take = 6)
-        {
-            take = Math.Clamp(take, 1, 50);
-            var items = await _db.Testimonials
-                .Where(t => t.Status == TestimonialStatus.Approved)
-                .OrderByDescending(t => t.ModeratedAt ?? t.CreatedAt)
-                .Take(take)
-                .Select(t => new PublicTestimonialDto(t.Id, t.CustomerName, t.EventLabel, t.Body, t.Rating))
-                .ToListAsync();
-            return Ok(items);
-        }
+        [HttpGet("approved")]
+        public async Task<IActionResult> Approved([FromQuery] int take = 12, CancellationToken ct = default)
+            => Ok(await _testimonials.ListApprovedAsync(take, ct));
 
-        /// <summary>
-        /// Anonymous submission from the site. Always lands as Pending — nothing
-        /// becomes public until the Owner/Assistant approves it.
-        /// </summary>
-        [AllowAnonymous]
+        // ---------------- Customer ----------------
+
+        /// <summary>Submits a review of one of the caller's own Completed bookings.</summary>
+        [Authorize(Roles = "Customer")]
         [HttpPost]
         public async Task<IActionResult> Submit([FromBody] TestimonialCreateDto dto)
         {
-            var t = new Testimonial
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var me = CurrentUserId();
+            if (me is null) return Unauthorized();
+
+            try
             {
-                CustomerName = dto.CustomerName.Trim(),
-                EventLabel = string.IsNullOrWhiteSpace(dto.EventLabel) ? null : dto.EventLabel.Trim(),
-                Body = dto.Body.Trim(),
-                Rating = dto.Rating,
-            };
-            if (t.CustomerName.Length == 0 || t.Body.Length == 0)
-                return BadRequest(new { message = "Name and testimonial text are required." });
-
-            _db.Testimonials.Add(t);
-            await _db.SaveChangesAsync();
-
-            // 202-style response: accepted, pending review. Don't leak moderation state shape.
-            return StatusCode(StatusCodes.Status201Created,
-                new { id = t.Id, message = "Thank you! Your testimonial is pending review." });
+                var t = await _testimonials.SubmitAsync(me.Value, dto);
+                return Ok(new PublicTestimonialDto(t.Id, t.AuthorName, t.Rating, t.Body, t.SubmittedAt));
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
-        // ---------------- Moderation (admin) ----------------
+        /// <summary>The caller's own submissions, with their current moderation state.</summary>
+        [Authorize(Roles = "Customer")]
+        [HttpGet("mine")]
+        public async Task<IActionResult> Mine(CancellationToken ct = default)
+        {
+            var me = CurrentUserId();
+            if (me is null) return Unauthorized();
+            return Ok(await _testimonials.ListForCustomerAsync(me.Value, ct));
+        }
 
-        /// <summary>All testimonials, optionally filtered by status, for the admin dashboard.</summary>
+        // ---------------- Moderation ----------------
+
+        /// <summary>The moderation queue. Optional ?status=Pending|Approved|Rejected.</summary>
         [Authorize(Roles = "Owner,Assistant")]
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] TestimonialStatus? status)
+        public async Task<IActionResult> GetAll([FromQuery] string? status, CancellationToken ct = default)
         {
-            var query = _db.Testimonials.AsQueryable();
-            if (status is not null) query = query.Where(t => t.Status == status);
+            TestimonialStatus? filter = null;
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                if (!Enum.TryParse<TestimonialStatus>(status, true, out var parsed))
+                    return BadRequest(new { message = "Status must be Pending, Approved, or Rejected." });
+                filter = parsed;
+            }
 
-            var items = await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
-            return Ok(items.Select(ToDto));
+            return Ok(await _testimonials.ListAsync(filter, ct));
         }
 
+        /// <summary>Approves or rejects one testimonial.</summary>
         [Authorize(Roles = "Owner,Assistant")]
-        [HttpPost("{id:guid}/approve")]
-        public Task<IActionResult> Approve(Guid id) => Moderate(id, TestimonialStatus.Approved);
-
-        [Authorize(Roles = "Owner,Assistant")]
-        [HttpPost("{id:guid}/reject")]
-        public Task<IActionResult> Reject(Guid id) => Moderate(id, TestimonialStatus.Rejected);
-
-        private async Task<IActionResult> Moderate(Guid id, TestimonialStatus newStatus)
+        [HttpPost("{id:guid}/moderate")]
+        public async Task<IActionResult> Moderate(Guid id, [FromBody] TestimonialModerateDto dto)
         {
-            var t = await _db.Testimonials.FindAsync(id);
-            if (t is null) return NotFound();
+            if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            var old = ToDto(t);
-            t.Status = newStatus;
-            t.ModeratedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
+            if (!Enum.TryParse<TestimonialStatus>(dto.Status, true, out var status))
+                return BadRequest(new { message = "Status must be Approved or Rejected." });
 
-            await _audit.LogAsync(User, AuditAction.UPDATE, "TESTIMONIAL", t.Id.ToString(), old, ToDto(t));
-            return Ok(ToDto(t));
+            try
+            {
+                var t = await _testimonials.ModerateAsync(id, status, CurrentUserId(), dto.Note);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "TESTIMONIAL", id.ToString(),
+                    null, new { t.Status, t.ModeratedAt, t.ModerationNote });
+
+                return Ok(new
+                {
+                    t.Id,
+                    Status = t.Status.ToString(),
+                    t.ModeratedAt,
+                    t.ModeratedById,
+                    t.ModerationNote
+                });
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
-        private static TestimonialResponseDto ToDto(Testimonial t) =>
-            new(t.Id, t.CustomerName, t.EventLabel, t.Body, t.Rating,
-                t.Status.ToString(), t.CreatedAt, t.ModeratedAt);
+        private Guid? CurrentUserId() =>
+            Guid.TryParse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
+                          ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     }
 }

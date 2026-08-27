@@ -24,7 +24,19 @@
       "Bash(sqlcmd -S \"\\(localdb\\)\\\\MSSQLLocalDB\" -d \"KingJegiDatabase\" -Q \"SET NOCOUNT ON; SELECT COUNT\\(*\\) FROM CalendarDays WHERE [Date]='2026-09-15'; SELECT COUNT\\(*\\) FROM Customers WHERE Email LIKE 'smoketest%';\" -h -1)",
       "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-USER-Desktop-KingJegiCS-System\\\\3cddaf09-f455-4804-b722-e12f9907bb56\\\\scratchpad\\\\kj_smoke.ps1\")",
       "Bash(sqlcmd -S '\\(localdb\\)\\\\MSSQLLocalDB' -d KingJegiDatabase -Q 'SET NOCOUNT ON; *)",
-      "Bash(sqlcmd -I -S '\\(localdb\\)\\\\MSSQLLocalDB' -d KingJegiDatabase -Q 'SET NOCOUNT ON; *)"
+      "Bash(sqlcmd -I -S '\\(localdb\\)\\\\MSSQLLocalDB' -d KingJegiDatabase -Q 'SET NOCOUNT ON; *)",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/framer-motion/package.json'\\).version\\)\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5199/dashboard)",
+      "Bash(npx vite *)",
+      "Bash(node .ssr-check-out/ssr-check.js)",
+      "Bash(dotnet run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST http://localhost:5258/api/Admins/login -H \"Content-Type: application/json\" -d '{\"email\":\"probe@example.com\",\"password\":\"probe\"}')",
+      "PowerShell(dotnet build \"C:\\\\Users\\\\USER\\\\Desktop\\\\KingJegiCS_System\\\\BackEnd\\\\System_ApiTest\\\\System_ApiTest.csproj\" --nologo -v q)",
+      "PowerShell($p = Get-Process -Id 18684 -ErrorAction SilentlyContinue; if \\($p\\) { $pp = Get-CimInstance Win32_Process -Filter \"ProcessId=18684\"; $parent = Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($pp.ParentProcessId\\)\" ; \"Path: $\\($p.Path\\)\"; \"StartTime: $\\($p.StartTime\\)\"; \"Parent: $\\($parent.Name\\) \\(PID $\\($pp.ParentProcessId\\)\\)\"; \"CmdLine: $\\($pp.CommandLine\\)\" } else { \"Process 18684 not running\" })",
+      "PowerShell(dotnet build \"C:\\\\Users\\\\USER\\\\Desktop\\\\KingJegiCS_System\\\\BackEnd\\\\System_ApiTest\\\\System_ApiTest.csproj\" --nologo -v q -p:OutDir=\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-USER-Desktop-KingJegiCS-System\\\\acff9d42-e71f-4de4-8c15-e0040b0577bc\\\\scratchpad\\\\apibuild\\\\\")",
+      "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" diff --stat)",
+      "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" status --short)",
+      "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" log --oneline -5)"
     ]
   }
 }

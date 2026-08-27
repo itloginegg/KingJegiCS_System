@@ -1,6 +1,9 @@
 import type {
   AuthCredentials,
   AuthResponse,
+  LoginResult,
+  RegistrationData,
+  RegistrationFieldErrors,
   User,
   UserRole,
 } from '../types/auth';
@@ -40,9 +43,24 @@ function loginEndpoint(role: UserRole): string {
   return role === 'admin' ? '/api/Admins/login' : '/api/Customers/login';
 }
 
-/** Map the backend's role string onto the front end's two-role model. */
+/**
+ * Map the backend's role string onto the front end's two-role model.
+ * The server issues "Customer", "Owner", or "Assistant" (see AuthResponseDto);
+ * anything else is a contract violation we surface instead of guessing, so a
+ * misconfigured account can never be routed to the wrong dashboard.
+ */
 function toUserRole(backendRole: string): UserRole {
-  return backendRole.toLowerCase() === 'customer' ? 'customer' : 'admin';
+  switch (backendRole.toLowerCase()) {
+    case 'customer':
+      return 'customer';
+    case 'owner':
+    case 'assistant':
+      return 'admin';
+    default:
+      throw new AuthError(
+        `Your account has an unrecognized role ("${backendRole}"), so we can't open a dashboard for it. Please contact support.`,
+      );
+  }
 }
 
 /** The API only returns an email, so derive a friendly display name from it. */
@@ -51,40 +69,8 @@ function nameFromEmail(email: string): string {
   return local ? local.charAt(0).toUpperCase() + local.slice(1) : email;
 }
 
-export async function login(
-  credentials: AuthCredentials,
-): Promise<AuthResponse> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE_URL}${loginEndpoint(credentials.role)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: credentials.email,
-        password: credentials.password,
-      }),
-    });
-  } catch {
-    // Network failure / server down / CORS rejection.
-    throw new AuthError(
-      'Unable to reach the server. Please check your connection and try again.',
-    );
-  }
-
-  // 401 from the controller = wrong email/password or deactivated account.
-  // The body carries a friendly message we can surface.
-  if (res.status === 401) {
-    const message = await readErrorMessage(res);
-    throw new AuthError(message ?? 'Invalid email or password.');
-  }
-
-  if (!res.ok) {
-    const message = await readErrorMessage(res);
-    throw new AuthError(message ?? 'Something went wrong. Please try again.');
-  }
-
-  const data = (await res.json()) as BackendAuthResponse;
-
+/** Maps the backend's AuthResponseDto onto the front end's session shape. */
+function toAuthResponse(data: BackendAuthResponse): AuthResponse {
   const user: User = {
     id: data.id,
     email: data.email,
@@ -98,6 +84,118 @@ export async function login(
   );
 
   return { user, token: data.token, expiresIn };
+}
+
+/** POST JSON to the API, converting network failures into a friendly AuthError. */
+async function postJson(path: string, body: unknown): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // Network failure / server down / CORS rejection.
+    throw new AuthError(
+      'Unable to reach the server. Please check your connection and try again.',
+    );
+  }
+}
+
+export async function login(
+  credentials: AuthCredentials,
+): Promise<LoginResult> {
+  const res = await postJson(loginEndpoint(credentials.role), {
+    email: credentials.email,
+    password: credentials.password,
+  });
+
+  // 401 from the controller = wrong email/password or deactivated account.
+  // The body carries a friendly message we can surface.
+  if (res.status === 401) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Invalid email or password.');
+  }
+
+  if (!res.ok) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Something went wrong. Please try again.');
+  }
+
+  // With OTP enabled, a correct password answers 200 { otpRequired: true }
+  // instead of a token — the session is only issued at /login/verify-otp.
+  const data = (await res.json()) as Partial<BackendAuthResponse> & {
+    otpRequired?: boolean;
+    message?: string;
+  };
+
+  if (data.otpRequired) {
+    return {
+      otpRequired: true,
+      message:
+        data.message ?? 'A 6-digit login code was sent to your email.',
+    };
+  }
+
+  return { otpRequired: false, ...toAuthResponse(data as BackendAuthResponse) };
+}
+
+/**
+ * Login step 2: POST the emailed code to the role's /login/verify-otp
+ * endpoint and receive the JWT the password step withheld.
+ */
+export async function verifyLoginOtp(
+  role: UserRole,
+  email: string,
+  code: string,
+): Promise<AuthResponse> {
+  const endpoint =
+    role === 'admin'
+      ? '/api/Admins/login/verify-otp'
+      : '/api/Customers/login/verify-otp';
+
+  const res = await postJson(endpoint, { email, code });
+
+  if (!res.ok) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Invalid or expired code.');
+  }
+
+  return toAuthResponse((await res.json()) as BackendAuthResponse);
+}
+
+/**
+ * Registration step 2: POST /api/Customers/verify-email confirms the emailed
+ * code and unlocks login. Resolves to the server's confirmation message.
+ */
+export async function verifyEmail(email: string, code: string): Promise<string> {
+  const res = await postJson('/api/Customers/verify-email', { email, code });
+
+  if (!res.ok) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Invalid or expired code.');
+  }
+
+  return (await readMessage(res)) ?? 'Email verified. You can now log in.';
+}
+
+/**
+ * POST /api/Customers/resend-verification. The backend enforces a 60-second
+ * cooldown and deliberately answers the same way whether or not the account
+ * exists, so the resolved message is always safe to display.
+ */
+export async function resendVerificationCode(email: string): Promise<string> {
+  const res = await postJson('/api/Customers/resend-verification', { email });
+
+  if (!res.ok) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Could not send the email. Try again shortly.');
+  }
+
+  return (
+    (await readMessage(res)) ??
+    'If that account needs verification, a code has been sent.'
+  );
 }
 
 export async function logout(
@@ -122,8 +220,81 @@ export async function logout(
   }
 }
 
-/** Pulls the `message` field out of the backend's error JSON, if present. */
-async function readErrorMessage(res: Response): Promise<string | null> {
+/**
+ * Registration failure. Carries per-field messages when the backend's
+ * model validation (400 ValidationProblemDetails) named specific fields,
+ * so the form can highlight them instead of showing one generic banner.
+ */
+export class RegistrationError extends AuthError {
+  readonly fieldErrors: RegistrationFieldErrors;
+
+  constructor(message: string, fieldErrors: RegistrationFieldErrors = {}) {
+    super(message);
+    this.name = 'RegistrationError';
+    this.fieldErrors = fieldErrors;
+  }
+}
+
+/** ASP.NET reports PascalCase DTO property names; map them to our fields. */
+const SERVER_FIELD_MAP: Record<string, keyof RegistrationFieldErrors> = {
+  fullname: 'fullName',
+  email: 'email',
+  phonenumber: 'phoneNumber',
+  password: 'password',
+};
+
+/**
+ * POST /api/Customers/register. Resolves on any 2xx (the backend answers
+ * 201 Created); throws RegistrationError otherwise.
+ */
+export async function register(data: RegistrationData): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/Customers/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch {
+    throw new RegistrationError(
+      'Unable to reach the server. Please check your connection and try again.',
+    );
+  }
+
+  if (res.ok) return;
+
+  // 409 = duplicate email; the body carries a friendly message.
+  if (res.status === 409) {
+    const message = await readMessage(res);
+    throw new RegistrationError(message ?? 'An account with this email already exists.');
+  }
+
+  // 400 = data-annotation validation: { errors: { "Email": ["msg"], ... } }
+  if (res.status === 400) {
+    const fieldErrors: RegistrationFieldErrors = {};
+    try {
+      const body = (await res.json()) as { errors?: Record<string, string[]> };
+      for (const [key, messages] of Object.entries(body.errors ?? {})) {
+        const field = SERVER_FIELD_MAP[key.toLowerCase()];
+        if (field && messages.length > 0) fieldErrors[field] = messages[0];
+      }
+    } catch {
+      // Non-JSON body — fall through to the generic message.
+    }
+    throw new RegistrationError(
+      Object.keys(fieldErrors).length > 0
+        ? 'Please fix the highlighted fields.'
+        : 'The server rejected the registration. Please review your details and try again.',
+      fieldErrors,
+    );
+  }
+
+  const message = await readMessage(res);
+  throw new RegistrationError(message ?? 'Something went wrong. Please try again.');
+}
+
+/** Pulls the `message` field out of the backend's JSON body, if present. */
+async function readMessage(res: Response): Promise<string | null> {
   try {
     const body = (await res.json()) as { message?: string };
     return typeof body.message === 'string' ? body.message : null;

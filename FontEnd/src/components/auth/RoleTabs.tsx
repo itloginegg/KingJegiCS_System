@@ -13,6 +13,10 @@ const TABS: { role: UserRole; label: string }[] = [
 /**
  * Accessible tab switcher (ARIA tablist pattern). Arrow keys move between tabs.
  * The selected role is a UX hint only — real authorization comes from the API.
+ *
+ * Visual only in the plum direction: a segmented pill rather than two boxes on a
+ * rounded tray. The tablist semantics, the arrow-key handling and the roving
+ * tabIndex are unchanged.
  */
 export function RoleTabs({ value, onChange }: RoleTabsProps) {
   const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
@@ -24,11 +28,7 @@ export function RoleTabs({ value, onChange }: RoleTabsProps) {
   };
 
   return (
-    <div
-      role="tablist"
-      aria-label="Select account type"
-      className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
-    >
+    <div role="tablist" aria-label="Select account type" className="ui-seg">
       {TABS.map((tab, i) => {
         const selected = value === tab.role;
         return (
@@ -42,13 +42,7 @@ export function RoleTabs({ value, onChange }: RoleTabsProps) {
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.role)}
             onKeyDown={(e) => handleKeyDown(e, i)}
-            className={[
-              'rounded-lg px-4 py-2.5 text-sm font-medium transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
-              selected
-                ? 'bg-white text-indigo-700 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700',
-            ].join(' ')}
+            className="ui-seg-opt"
           >
             {tab.label}
           </button>

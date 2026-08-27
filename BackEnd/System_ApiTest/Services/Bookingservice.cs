@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System_ApiTest.Data;
 using System_ApiTest.Models;
@@ -11,16 +11,54 @@ namespace System_ApiTest.Services
         public BookingRuleException(string message) : base(message) { }
     }
 
+    /// <summary>
+    /// Read-only verdict on whether a NEW booking of a given type could target a date.
+    /// Time-slot buffer conflicts are NOT evaluated (no times are known before booking);
+    /// those remain enforced at confirmation. RemainingEventSlots is null for deliveries.
+    /// </summary>
+    public record DateAvailabilityResult(
+        bool Available,
+        bool LeadTimeMet,
+        DateOnly EarliestDate,
+        bool DateHasConfirmedEvent,
+        bool DayLocked,
+        int? RemainingEventSlots,
+        string Summary);
+
+    /// <summary>One [Start, End) span within a single calendar day.</summary>
+    public record TimeWindow(TimeOnly Start, TimeOnly End);
+
+    /// <summary>
+    /// What times are still open on one date, for the public calendar.
+    ///
+    /// <paramref name="Busy"/> is what confirmed events actually occupy, clipped to the
+    /// day. <paramref name="Free"/> is what a NEW event could take: the operating-hours
+    /// window minus each busy span expanded by the buffer on both sides. The two are
+    /// therefore NOT complements of each other — the difference between them is exactly
+    /// the setup/teardown gap.
+    /// </summary>
+    public record DayTimeSlots(
+        DateOnly Date,
+        TimeOnly OpensAt,
+        TimeOnly ClosesAt,
+        decimal BufferHours,
+        bool DayLocked,
+        IReadOnlyList<TimeWindow> Busy,
+        IReadOnlyList<TimeWindow> Free);
+
     public class Bookingservice
     {
         private readonly AppDbContext _db;
         private readonly Packageservice _packages;
         private readonly Invoiceservice _invoices;
-        public Bookingservice(AppDbContext db, Packageservice packages, Invoiceservice invoices)
+        private readonly Notificationwriteservice _notifications;
+        public Bookingservice(AppDbContext db, Packageservice packages, Invoiceservice invoices,
+                              Notificationwriteservice notifications)
         {
             _db = db;
             _packages = packages;
             _invoices = invoices;
+            _notifications = notifications;
         }
 
         // TODO: source this from System Settings (default_max_capacity) once that entity exists.
@@ -55,7 +93,14 @@ namespace System_ApiTest.Services
         public async Task<Booking> CreateAsync(
             Guid customerId, BookingType bookingType,
             DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
-            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId)
+            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId,
+            string? contactNumber = null,
+            // Defaulted so the customer-facing callers (and Suggestionservice's
+            // materialize) keep working unchanged; only the admin path passes WalkIn.
+            BookingSource source = BookingSource.Customer,
+            // Null means "no event details supplied" — valid for a walk-in that is so
+            // far only a date and an event type. ApplyTo drops whatever doesn't fit.
+            BookingEventDetails? details = null)
         {
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
@@ -64,7 +109,7 @@ namespace System_ApiTest.Services
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
             var leadDays = bookingType == BookingType.FoodDelivery
                 ? settings?.MinLeadDaysDelivery ?? 1
-                : settings?.MinLeadDaysFullService ?? 3;
+                : settings?.MinLeadDaysFullService ?? 7;
             var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
             if (eventDate < earliest)
                 throw new BookingRuleException(
@@ -87,7 +132,22 @@ namespace System_ApiTest.Services
                 // Full-service requires the event fields.
                 if (endDate is null || end is null || type is null || guestCount is null)
                     throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
+
+                if (menuPackageId is not null)
+                {
+                    var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
+                    if (pkg is null)
+                        throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
+                    
+                    if (guestCount < pkg.MinPax)
+                        throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+                }
             }
+
+            // Fail early if this window can never be confirmed, rather than letting the
+            // customer build out a booking on a date that's already taken. Confirmation
+            // still re-checks under a row lock — this doesn't replace that guarantee.
+            await EnsureSlotOpenForNewWindowAsync(null, bookingType, eventDate, start, endDate, end);
 
             await using var tx = await _db.Database.BeginTransactionAsync();
 
@@ -128,11 +188,17 @@ namespace System_ApiTest.Services
                 EndTime = end,
                 EventType = type,
                 VenueAddress = venueAddress.Trim(),
+                ContactNumber = contactNumber?.Trim(),
                 GuestCount = guestCount,
                 MenuPackageId = menuPackageId,
                 BookingName = BuildBookingName(customer.FullName, bookingType, type),
+                Source = source,
                 // Status = Draft, DepositStatus = Unpaid, TotalAmount = 0 by default.
             };
+
+            // After `type` has been forced to null for a delivery above, so the details
+            // are dropped for exactly the bookings that can't carry them.
+            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
 
             _db.Bookings.Add(booking);
             await _db.SaveChangesAsync();
@@ -140,6 +206,11 @@ namespace System_ApiTest.Services
 
             // Fold in the package price immediately (full-service only; deliveries have none).
             await RecomputeTotalAsync(booking.Id);
+
+            // Staff notification, after the commit so it only fires for a booking that
+            // actually exists. Once per booking, so the Period is empty.
+            await _notifications.WriteAsync(NotificationKind.BookingCreated, booking.Id);
+
             return booking;
         }
 
@@ -221,6 +292,20 @@ namespace System_ApiTest.Services
             if (booking.Status != BookingStatus.Pending)
                 throw new BookingRuleException($"Only a submitted (Pending) booking can be confirmed; this one is {booking.Status}.");
 
+            // No money, no confirmation. DepositStatus is already re-derived from verified
+            // payments every time one posts (RecomputeDepositStatusAsync), so Unpaid is the
+            // system's own answer to "has the reservation fee cleared" — nothing to compute
+            // here. Applies to every booking type: the REQUIRED amount differs by type
+            // (5% of the total for rentals, the flat fee otherwise), but "nothing paid"
+            // never justifies committing the date.
+            //
+            // Only on the manual admin path. The auto-confirm path is already gated by its
+            // caller (Paymentservice.MarkSuccessAsync confirms only once payments reach the
+            // fee), and putting this in the shared ConfirmCoreAsync would risk breaking it.
+            if (booking.DepositStatus == DepositStatus.Unpaid)
+                throw new BookingRuleException(
+                    "The reservation fee has not been paid yet — this booking cannot be confirmed.");
+
             await using var tx = await _db.Database.BeginTransactionAsync();
             await WriteHistorySnapshotAsync(bookingId, adminId, "Confirmed");
             await ConfirmCoreAsync(booking);
@@ -238,7 +323,25 @@ namespace System_ApiTest.Services
         public async Task<bool> TryAutoConfirmOnReservationAsync(Guid bookingId)
         {
             var booking = await LoadForConfirmAsync(bookingId);
-            if (booking.BookingType != BookingType.FullService) return false;
+
+            // Walk-ins never auto-confirm — separation of duties.
+            //
+            // Auto-confirm is safe for a customer booking because the money arrives
+            // through the gateway and nobody at King Jegi decides it was received. A
+            // walk-in's cash is different: the same admin takes the payment AND marks it
+            // Success, so letting that mark also commit the calendar slot would put the
+            // whole "money in, date secured" chain in one person's hands with no second
+            // look.
+            //
+            // This does NOT block confirmation, only automatic confirmation: the deposit
+            // is still recomputed by the caller (SyncInvoiceAndDepositAsync), so the
+            // booking lands on Reserved/Partial/Paid and the admin's manual Confirm
+            // button — which refuses while DepositStatus is Unpaid — goes through.
+            if (booking.Source == BookingSource.WalkIn) return false;
+
+            // Rentals auto-confirm on their deposit the same way events do; only
+            // deliveries (no reservation fee concept) are excluded.
+            if (booking.BookingType == BookingType.FoodDelivery) return false;
             if (booking.Status != BookingStatus.Pending) return false;
 
             await WriteHistorySnapshotAsync(bookingId, null, "Auto-confirmed on reservation payment");
@@ -271,6 +374,24 @@ namespace System_ApiTest.Services
                 await LockCalendarDayAsync(booking.EventDate);
                 if (await DateHasConfirmedEventAsync(booking.EventDate))
                     throw new BookingRuleException("This date now has a booked event and isn't available for delivery.");
+            }
+            else if (booking.BookingType == BookingType.RentalService)
+            {
+                // Equipment, not a venue slot: a rental does NOT consume calendar
+                // capacity, so it also never increments ConfirmedCount. That symmetry
+                // matters — CancelBookingAsync only decrements for FullService, so
+                // incrementing here would leak a slot on every cancelled rental until
+                // the day locked itself permanently.
+                //
+                // A MANUAL lock still applies (the admin has closed that date outright),
+                // but being at event capacity does not — three booked events don't stop
+                // us lending out chairs.
+                await LockCalendarDayAsync(booking.EventDate);
+                if (booking.CalendarDay.IsManuallyLocked)
+                    throw new BookingRuleException("This calendar day is closed; the booking cannot be confirmed.");
+
+                // Stock IS the real constraint for a rental booking.
+                await EnsureRentalStockAvailableAsync(booking.Id);
             }
             else
             {
@@ -308,6 +429,22 @@ namespace System_ApiTest.Services
                 .Select(r => new { r.RentalItemId, r.Quantity })
                 .ToListAsync();
 
+            // This booking's rental window. A booking with no end date occupies its
+            // single day. The turnaround buffer is applied to THIS window rather than to
+            // each candidate, so the arithmetic happens once, in C# — the query then
+            // compares plain columns and needs no date maths in SQL.
+            var window = await _db.Bookings.AsNoTracking()
+                .Where(b => b.Id == bookingId)
+                .Select(b => new { Start = b.EventDate, End = b.EndDate ?? b.EventDate })
+                .FirstOrDefaultAsync()
+                ?? throw new BookingRuleException("Booking not found.");
+
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var turnaround = Math.Max(0, settings?.RentalTurnaroundDays ?? 1);
+
+            var windowStart = window.Start.AddDays(-turnaround);
+            var windowEnd = window.End.AddDays(turnaround);
+
             foreach (var line in lines)
             {
                 var item = (await _db.RentalItems
@@ -316,17 +453,26 @@ namespace System_ApiTest.Services
                     .FirstOrDefault()
                     ?? throw new BookingRuleException("A rental item on this booking no longer exists.");
 
+                // What's genuinely unavailable to THIS booking's dates.
+                //
+                // This query used to carry its own copy of the rule with no date
+                // condition at all, so confirming a wedding that used 10 chairs made
+                // those chairs unavailable on every other date, forever, until someone
+                // marked them Returned — a booking months away blocked one tomorrow.
+                //
+                // It now shares Rentalservice.CommittedStock with the catalog and the
+                // low-stock worker, so "what counts as unavailable" is defined once.
+                // See that method for why both the window and the physically-out clauses
+                // are needed.
                 var outgoing = await _db.Rentals
-                    .Where(r => r.RentalItemId == line.RentalItemId
-                                && r.BookingId != bookingId
-                                && (r.Booking.Status == BookingStatus.Confirmed ||
-                                    r.Booking.Status == BookingStatus.Completed)
-                                && r.DeliveryStatus != DeliveryStatus.Returned)
+                    .Where(Rentalservice.CommittedStock(
+                        line.RentalItemId, bookingId, windowStart, windowEnd))
                     .SumAsync(r => (int?)r.Quantity) ?? 0;
 
                 if (outgoing + line.Quantity > item.TotalQuantity)
                     throw new BookingRuleException(
-                        $"Not enough stock for '{item.ItemName}' to confirm: " +
+                        $"Not enough stock for '{item.ItemName}' on {window.Start:yyyy-MM-dd}" +
+                        $"{(window.End == window.Start ? "" : $"–{window.End:yyyy-MM-dd}")}: " +
                         $"{item.TotalQuantity - outgoing} available, {line.Quantity} needed.");
             }
         }
@@ -375,27 +521,223 @@ namespace System_ApiTest.Services
                         "This delivery date now has a booked event and isn't available. " +
                         "Please move the delivery to another date before paying.");
             }
-            else
+            else if (booking.BookingType != BookingType.RentalService)
             {
+                // Rentals don't occupy a time window, so there is no slot for them to
+                // lose — their availability is stock, re-checked at confirm.
                 await CheckTimeSlotConflictAsync(booking);
             }
         }
 
+        /// <summary>
+        /// Read-only date probe for the assistant's check_date_availability tool (and any
+        /// pre-booking UI). Applies the same minimum-lead-time gate as CreateAsync, plus
+        /// the whole-day confirmed-event rule for deliveries and calendar capacity/lock
+        /// for events. No time-slot buffer check here — see the record's remarks.
+        /// </summary>
+        public async Task<DateAvailabilityResult> GetDateAvailabilityAsync(DateOnly date, BookingType bookingType)
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var leadDays = bookingType == BookingType.FoodDelivery
+                ? settings?.MinLeadDaysDelivery ?? 1
+                : settings?.MinLeadDaysFullService ?? 7;
+            var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
+            var leadOk = date >= earliest;
+
+            if (bookingType == BookingType.FoodDelivery)
+            {
+                var hasEvent = await DateHasConfirmedEventAsync(date);
+                var ok = leadOk && !hasEvent;
+                var summary = !leadOk
+                    ? $"Too soon — the earliest delivery date is {earliest:yyyy-MM-dd}."
+                    : hasEvent ? "Unavailable — this date already has a booked event."
+                    : "Available for delivery.";
+                return new DateAvailabilityResult(ok, leadOk, earliest, hasEvent, false, null, summary);
+            }
+
+            var day = await _db.CalendarDays.AsNoTracking().FirstOrDefaultAsync(d => d.Date == date);
+
+            if (bookingType == BookingType.RentalService)
+            {
+                // Rentals don't take an event slot, so capacity is irrelevant to them —
+                // only an outright manual closure of the day applies. Availability then
+                // comes down to stock, which is checked per item at confirm.
+                var closed = day?.IsManuallyLocked ?? false;
+                var rentalOk = leadOk && !closed;
+                var rentalSummary = !leadOk
+                    ? $"Too soon — the earliest rental date is {earliest:yyyy-MM-dd}."
+                    : closed ? "Unavailable — this date is closed."
+                    : "Available for rentals (subject to item stock).";
+                return new DateAvailabilityResult(rentalOk, leadOk, earliest, false, closed, null, rentalSummary);
+            }
+
+            var maxCap = day?.MaxCapacity ?? settings?.DefaultMaxCapacity ?? 3;
+            var used = day?.ConfirmedCount ?? 0;
+            var locked = day?.IsLocked ?? false;
+            var remaining = Math.Max(0, maxCap - used);
+            var available = leadOk && !locked && remaining > 0;
+            var eventSummary = !leadOk
+                ? $"Too soon — the earliest event date is {earliest:yyyy-MM-dd}."
+                : locked ? "Unavailable — this calendar day is locked."
+                : remaining == 0 ? "Fully booked — no event slots remain on this date."
+                : $"Available — {remaining} of {maxCap} event slot(s) open (subject to the time-slot check at confirmation).";
+            return new DateAvailabilityResult(available, leadOk, earliest, false, locked, remaining, eventSummary);
+        }
+
+        /// <summary>
+        /// The open time windows on one date — what the public calendar advertises when
+        /// a customer hovers a partially-booked day.
+        ///
+        /// Derived from the SAME rule CheckTimeSlotConflictAsync enforces, rather than a
+        /// second approximation of it. That test says a proposed window [ns, ne] clashes
+        /// with a confirmed [exStart, exEnd] iff
+        ///
+        ///     exEnd + buffer > ns   AND   ne + buffer > exStart
+        ///
+        /// Negate it and a new event is safe iff it sits entirely at or after
+        /// exEnd + buffer, or entirely at or before exStart - buffer. So the region a new
+        /// event may not touch is exactly [exStart - buffer, exEnd + buffer], and the free
+        /// slots are the operating-hours window minus the union of those expanded spans.
+        ///
+        /// Multi-day events are handled by widening the candidate scan and clipping to
+        /// this date, so an overnight event correctly blocks the morning after.
+        ///
+        /// Only CONFIRMED FullService bookings count, matching the conflict test — an
+        /// unpaid booking doesn't own its slot and must not make a date look busier than
+        /// it is.
+        /// </summary>
+        public async Task<DayTimeSlots> GetDayTimeSlotsAsync(DateOnly date, CancellationToken ct = default)
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+            var buffer = TimeSpan.FromHours((double)(settings?.EventBufferHours ?? 3m));
+            var opensAt = settings?.OperatingHoursStart ?? new TimeOnly(8, 0);
+            var closesAt = settings?.OperatingHoursEnd ?? new TimeOnly(22, 0);
+
+            var dayOpen = date.ToDateTime(opensAt);
+            var dayClose = date.ToDateTime(closesAt);
+
+            var day = await _db.CalendarDays.AsNoTracking().FirstOrDefaultAsync(d => d.Date == date, ct);
+            var locked = day?.IsLocked ?? false;
+
+            // Same ±2-day widening CheckTimeSlotConflictAsync uses, so an event that
+            // starts the day before and runs into this one is still a candidate.
+            var lowDate = date.AddDays(-2);
+            var highDate = date.AddDays(2);
+
+            var candidates = await _db.Bookings.AsNoTracking()
+                .Where(b => b.BookingType == BookingType.FullService
+                            && b.Status == BookingStatus.Confirmed
+                            && b.EventDate >= lowDate && b.EventDate <= highDate)
+                .Select(b => new { b.EventDate, b.StartTime, b.EndDate, b.EndTime })
+                .ToListAsync(ct);
+
+            var busy = new List<TimeWindow>();
+            var blocked = new List<(DateTime Start, DateTime End)>();
+
+            foreach (var c in candidates)
+            {
+                var exStart = c.EventDate.ToDateTime(c.StartTime);
+                var exEnd = (c.EndDate ?? c.EventDate).ToDateTime(c.EndTime ?? c.StartTime);
+
+                // What the event itself occupies, clipped to this day's window.
+                if (exEnd > dayOpen && exStart < dayClose)
+                {
+                    busy.Add(new TimeWindow(
+                        TimeOnly.FromDateTime(exStart < dayOpen ? dayOpen : exStart),
+                        TimeOnly.FromDateTime(exEnd > dayClose ? dayClose : exEnd)));
+                }
+
+                // What a new event may not touch, clipped the same way.
+                var blockStart = exStart - buffer;
+                var blockEnd = exEnd + buffer;
+                if (blockEnd > dayOpen && blockStart < dayClose)
+                {
+                    blocked.Add((
+                        blockStart < dayOpen ? dayOpen : blockStart,
+                        blockEnd > dayClose ? dayClose : blockEnd));
+                }
+            }
+
+            busy.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            // A locked day has no open slots at all, regardless of what's booked.
+            var free = locked
+                ? new List<TimeWindow>()
+                : SubtractBlocked(dayOpen, dayClose, blocked);
+
+            return new DayTimeSlots(
+                date, opensAt, closesAt, settings?.EventBufferHours ?? 3m, locked, busy, free);
+        }
+
+        /// <summary>
+        /// [dayOpen, dayClose] minus the union of <paramref name="blocked"/> — the pure
+        /// interval arithmetic behind <see cref="GetDayTimeSlotsAsync"/>.
+        ///
+        /// Split out from the query so the part with all the edge cases (overlapping
+        /// spans, a span that swallows another, spans running past close, a day fully
+        /// covered) can be exercised on its own. Callers pass spans already clipped to
+        /// the day.
+        ///
+        /// Zero-length gaps are dropped: a window you cannot fit anything into is not
+        /// availability.
+        /// </summary>
+        public static List<TimeWindow> SubtractBlocked(
+            DateTime dayOpen, DateTime dayClose, List<(DateTime Start, DateTime End)> blocked)
+        {
+            var free = new List<TimeWindow>();
+
+            // Sorting by start is what lets a single left-to-right sweep merge overlaps:
+            // once ordered, anything beginning before the running cursor is already
+            // covered, so only the cursor needs advancing.
+            blocked.Sort((a, b) => a.Start.CompareTo(b.Start));
+
+            var cursor = dayOpen;
+            foreach (var (start, end) in blocked)
+            {
+                if (start > cursor)
+                    free.Add(new TimeWindow(TimeOnly.FromDateTime(cursor), TimeOnly.FromDateTime(start)));
+                // Max, not assignment: a span nested inside an earlier one must not pull
+                // the cursor backwards and re-open time that's already blocked.
+                if (end > cursor) cursor = end;
+            }
+
+            if (cursor < dayClose)
+                free.Add(new TimeWindow(TimeOnly.FromDateTime(cursor), TimeOnly.FromDateTime(dayClose)));
+
+            return free;
+        }
+
         /// <summary>The overlap test itself (buffer-expanded, overnight-aware). Callers decide about locking.</summary>
         private async Task CheckTimeSlotConflictAsync(Booking booking)
+            => await CheckTimeSlotConflictAsync(
+                booking.Id, booking.EventDate, booking.StartTime, booking.EndDate, booking.EndTime);
+
+        /// <summary>
+        /// The overlap test, expressed over the window's FIELDS rather than a persisted
+        /// Booking — so it can also run before the row exists (creation) or against a
+        /// proposed new date (edit). <paramref name="excludeBookingId"/> is the booking
+        /// being placed, excluded so it never conflicts with itself; pass null when
+        /// there isn't one yet.
+        ///
+        /// Only CONFIRMED events are candidates. That's deliberate: an unconfirmed
+        /// booking has not paid for and does not own its slot, so it must not block
+        /// anyone else from taking the date.
+        /// </summary>
+        private async Task CheckTimeSlotConflictAsync(
+            Guid? excludeBookingId, DateOnly eventDate, TimeOnly startTime, DateOnly? endDate, TimeOnly? endTime)
         {
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
             var buffer = TimeSpan.FromHours((double)(settings?.EventBufferHours ?? 3m));
 
-            var newStart = booking.EventDate.ToDateTime(booking.StartTime);
-            var newEnd = (booking.EndDate ?? booking.EventDate).ToDateTime(booking.EndTime ?? booking.StartTime);
+            var newStart = eventDate.ToDateTime(startTime);
+            var newEnd = (endDate ?? eventDate).ToDateTime(endTime ?? startTime);
 
             // Candidate confirmed events near this window (widen for overnight spans).
             var lowDate = DateOnly.FromDateTime(newStart.AddDays(-2));
             var highDate = DateOnly.FromDateTime(newEnd.AddDays(2));
 
             var candidates = await _db.Bookings.AsNoTracking()
-                .Where(b => b.Id != booking.Id
+                .Where(b => (excludeBookingId == null || b.Id != excludeBookingId)
                             && b.BookingType == BookingType.FullService
                             && b.Status == BookingStatus.Confirmed
                             && b.EventDate >= lowDate && b.EventDate <= highDate)
@@ -414,6 +756,39 @@ namespace System_ApiTest.Services
                         "This time slot conflicts with an already-confirmed event on this date " +
                         $"(a {buffer.TotalHours:0.#}-hour gap is required between events).");
             }
+        }
+
+        /// <summary>
+        /// Rejects a proposed booking window that can never be confirmed, at the moment
+        /// it's being created or re-dated rather than only at confirmation.
+        ///
+        /// Confirmation remains the authoritative, race-proof gate (it re-runs this
+        /// under a row lock on the calendar day). This is the early, friendlier failure:
+        /// it stops customers from building out a booking on a date that is already
+        /// spoken for, and stops the admin queue filling with drafts that are doomed.
+        /// Only Confirmed bookings block, so several parties may still hold competing
+        /// interest in a date nobody has paid for.
+        /// </summary>
+        private async Task EnsureSlotOpenForNewWindowAsync(
+            Guid? excludeBookingId, BookingType bookingType,
+            DateOnly eventDate, TimeOnly startTime, DateOnly? endDate, TimeOnly? endTime)
+        {
+            if (bookingType == BookingType.FoodDelivery)
+            {
+                // A delivery has no time window; its scarcity rule is the whole-day one.
+                if (await DateHasConfirmedEventAsync(eventDate))
+                    throw new BookingRuleException(
+                        "This date already has a booked event and isn't available for delivery. " +
+                        "Please choose another date.");
+                return;
+            }
+
+            // Rentals compete for stock, not for the day: no window to clash over, and
+            // a fully-booked event calendar doesn't stop us lending equipment.
+            if (bookingType == BookingType.RentalService)
+                return;
+
+            await CheckTimeSlotConflictAsync(excludeBookingId, eventDate, startTime, endDate, endTime);
         }
 
         /// <summary>
@@ -464,6 +839,10 @@ namespace System_ApiTest.Services
             booking.Status = BookingStatus.Cancelled;
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            // Staff copy. The customer's BookingCancelled is written separately by the
+            // NotificationWorker when it emails them; this is the one staff can see.
+            await _notifications.WriteAsync(NotificationKind.BookingCancelledStaff, bookingId);
         }
 
         /// <summary>
@@ -491,6 +870,69 @@ namespace System_ApiTest.Services
             booking.CancellationRequestedAt = DateTime.Now;
             booking.CancellationRequestReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
             await _db.SaveChangesAsync();
+
+            // Staff must decide on this — the booking itself hasn't changed status.
+            await _notifications.WriteAsync(NotificationKind.BookingCancellationRequested, bookingId);
+        }
+
+        /// <summary>
+        /// Hard-deletes an abandoned Draft booking and its line items.
+        ///
+        /// Deliberately Draft-only. A Draft is the one state with no dependents worth
+        /// keeping: CreateAsync writes no history snapshot (those start at Submit), and
+        /// an invoice isn't generated until Submit either — so there is nothing to
+        /// orphan. From Pending onward a booking has history, an invoice, and possibly
+        /// payments, and must be CANCELLED rather than erased so the trail survives.
+        ///
+        /// Line items are removed explicitly rather than relying on cascade, so the
+        /// intent is visible here and doesn't depend on a mapping elsewhere.
+        /// </summary>
+        public async Task DeleteDraftAsync(Guid bookingId)
+        {
+            var booking = await _db.Bookings.FindAsync(bookingId)
+                ?? throw new BookingRuleException("Booking not found.");
+
+            if (booking.Status != BookingStatus.Draft)
+                throw new BookingRuleException(
+                    $"Only a Draft booking can be deleted; this one is {booking.Status}. Cancel it instead.");
+
+            await using var tx = await _db.Database.BeginTransactionAsync();
+
+            _db.BookingPackageSelections.RemoveRange(
+                _db.BookingPackageSelections.Where(x => x.BookingId == bookingId));
+            _db.BookingMenuItems.RemoveRange(_db.BookingMenuItems.Where(x => x.BookingId == bookingId));
+            _db.BookingMenuTrays.RemoveRange(_db.BookingMenuTrays.Where(x => x.BookingId == bookingId));
+            _db.Rentals.RemoveRange(_db.Rentals.Where(x => x.BookingId == bookingId));
+            _db.Services.RemoveRange(_db.Services.Where(x => x.BookingId == bookingId));
+
+            _db.Bookings.Remove(booking);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+
+        /// <summary>
+        /// Sets (or clears) the internal staff note on a booking.
+        ///
+        /// Deliberately its own narrow method rather than a field on UpdateAsync: that
+        /// path is Draft-only by design — it freezes once a booking is submitted and
+        /// invoiced — whereas a note is most useful on a Confirmed booking. Loosening
+        /// EnsureEditableAsync to allow this would weaken a guard that protects totals.
+        ///
+        /// Allowed on any non-terminal booking. A note doesn't affect money, capacity or
+        /// scheduling, so it needs no transaction and writes no history snapshot.
+        /// </summary>
+        public async Task<Booking> SetAdminNoteAsync(Guid bookingId, string? note)
+        {
+            var booking = await _db.Bookings.FindAsync(bookingId)
+                ?? throw new BookingRuleException("Booking not found.");
+
+            if (booking.Status == BookingStatus.Cancelled)
+                throw new BookingRuleException("A cancelled booking can no longer be annotated.");
+
+            var trimmed = note?.Trim();
+            booking.AdminNote = string.IsNullOrEmpty(trimmed) ? null : trimmed;
+            await _db.SaveChangesAsync();
+            return booking;
         }
 
         /// <summary>
@@ -509,6 +951,21 @@ namespace System_ApiTest.Services
             if (booking.Status != BookingStatus.Confirmed)
                 throw new BookingRuleException($"Only a Confirmed booking can be completed; this one is {booking.Status}.");
 
+            // "Completed" means the event has actually finished, so it can't be claimed
+            // before the booking's end instant. Same expression CheckTimeSlotConflictAsync
+            // uses, which degrades correctly for bookings with no explicit end (deliveries,
+            // rentals): it falls back to the event date and start time.
+            //
+            // DateTime.Now, not UtcNow — every other date decision in this file is made in
+            // local (PH) time, and EventDate/StartTime are stored and compared that way.
+            // Mixing in UTC here would let an event be completed up to 8 hours early.
+            var endsAt = (booking.EndDate ?? booking.EventDate)
+                .ToDateTime(booking.EndTime ?? booking.StartTime);
+            if (DateTime.Now < endsAt)
+                throw new BookingRuleException(
+                    $"This booking's scheduled end time hasn't passed yet ({endsAt:MMMM d, yyyy 'at' h:mm tt}) — " +
+                    "it can't be marked Completed.");
+
             await using var tx = await _db.Database.BeginTransactionAsync();
             await WriteHistorySnapshotAsync(bookingId, adminId, "Completed");
             booking.Status = BookingStatus.Completed;
@@ -524,6 +981,8 @@ namespace System_ApiTest.Services
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
+
+            await _notifications.WriteAsync(NotificationKind.BookingCompleted, bookingId);
         }
 
         /// <summary>
@@ -651,9 +1110,10 @@ namespace System_ApiTest.Services
         /// package, same as create). Get-or-creates the calendar day if the date moved.
         /// </summary>
         public async Task<Booking> UpdateAsync(
-            Guid bookingId, Guid changedByAdminId,
+            Guid bookingId, Guid? changedByAdminId,
             string bookingName, DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
-            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId)
+            EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId, string? contactNumber,
+            BookingEventDetails? details = null)
         {
             if (string.IsNullOrWhiteSpace(bookingName))
                 throw new BookingRuleException("Booking name cannot be blank.");
@@ -678,6 +1138,16 @@ namespace System_ApiTest.Services
                 throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
             }
 
+            if (menuPackageId is not null)
+            {
+                var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
+                if (pkg is null)
+                    throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
+                
+                if (guestCount < pkg.MinPax)
+                    throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+            }
+
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
 
             await using var tx = await _db.Database.BeginTransactionAsync();
@@ -687,11 +1157,21 @@ namespace System_ApiTest.Services
             {
                 var leadDays = booking.BookingType == BookingType.FoodDelivery
                     ? settings?.MinLeadDaysDelivery ?? 1
-                    : settings?.MinLeadDaysFullService ?? 3;
+                    : settings?.MinLeadDaysFullService ?? 7;
                 var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
                 if (eventDate < earliest)
                     throw new BookingRuleException(
                         $"The new date must be at least {leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
+            }
+
+            // The window can change here (date and/or times), so re-run the same early
+            // conflict guard as creation. Excludes this booking so it can't clash with
+            // its own current slot.
+            if (booking.EventDate != eventDate || booking.StartTime != start
+                || booking.EndDate != endDate || booking.EndTime != end)
+            {
+                await EnsureSlotOpenForNewWindowAsync(
+                    bookingId, booking.BookingType, eventDate, start, endDate, end);
             }
 
             // Snapshot the current state before mutating it.
@@ -720,8 +1200,13 @@ namespace System_ApiTest.Services
             booking.EndTime = end;
             booking.EventType = type;
             booking.VenueAddress = venueAddress.Trim();
+            booking.ContactNumber = contactNumber?.Trim();
             booking.GuestCount = guestCount;
             booking.MenuPackageId = menuPackageId;
+
+            // Keyed on the NEW event type, so an edit that switches type clears the
+            // details belonging to the old one rather than orphaning them.
+            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
@@ -780,6 +1265,7 @@ namespace System_ApiTest.Services
             _db.BookingMenuItems.Add(link);
             await _db.SaveChangesAsync();
             await RecomputeTotalAsync(bookingId);
+            await NotifyItemAddedAsync(bookingId, itemId);
             return link;
         }
 
@@ -811,7 +1297,28 @@ namespace System_ApiTest.Services
             _db.BookingMenuTrays.Add(link);
             await _db.SaveChangesAsync();
             await RecomputeTotalAsync(bookingId);
+            await NotifyItemAddedAsync(bookingId, trayId);
             return link;
+        }
+
+        /// <summary>
+        /// Staff notification for a line added to a FOOD DELIVERY order — those are the
+        /// ones that need picking and packing, so staff want to know as items land.
+        /// Full-service bookings are assembled over many edits during planning; notifying
+        /// on each one would be noise, so they're deliberately excluded.
+        /// </summary>
+        private async Task NotifyItemAddedAsync(Guid bookingId, Guid lineId)
+        {
+            var isDelivery = await _db.Bookings
+                .Where(b => b.Id == bookingId)
+                .Select(b => b.BookingType == BookingType.FoodDelivery)
+                .FirstOrDefaultAsync();
+            if (!isDelivery)
+                return;
+
+            await _notifications.WriteAsync(
+                NotificationKind.BookingItemAdded, bookingId,
+                period: Notificationwriteservice.Occurrence(lineId));
         }
 
         /// <summary>
@@ -833,13 +1340,12 @@ namespace System_ApiTest.Services
                 .FirstOrDefaultAsync()
                 ?? throw new BookingRuleException("Booking not found.");
 
-            if (booking.BookingType != BookingType.FullService)
+            if (booking.BookingType == BookingType.FoodDelivery)
                 throw new BookingRuleException("Quantity is required for a food delivery order.");
             if (booking.GuestCount is null or <= 0)
                 throw new BookingRuleException("Quantity could not be derived: the booking has no guest count.");
 
-            var serves = Math.Max(1, servesPerTray);
-            return (booking.GuestCount.Value + serves - 1) / serves;   // ceil(guests / serves)
+            return BookingMath.TraysToCover(booking.GuestCount.Value, servesPerTray);   // ceil(guests / serves)
         }
     }
 }

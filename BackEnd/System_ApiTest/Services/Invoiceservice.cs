@@ -58,6 +58,10 @@ namespace System_ApiTest.Services
             }
 
             var settings = await _settings.GetAsync();
+            // Zero under the current settings — VAT was removed by setting the rate to 0
+            // rather than by deleting this line, so that the budget planner (which does
+            // the same multiplication) can never disagree with the invoice. See
+            // Systemsettings.TaxRate.
             var tax = subtotal * settings.TaxRate;
 
             var invoice = new Invoice
@@ -130,7 +134,7 @@ namespace System_ApiTest.Services
             var anyLate = milestones.Any(m => m.IsDeadline && today > m.Due && paid < m.Cumulative);
 
             var isDelivery = booking.BookingType == BookingType.FoodDelivery;
-            var fee = Math.Min(settings.ReservationFee, invoice.GrandTotal);
+            var fee = BookingMath.ReservationFeeFor(booking.BookingType, invoice.GrandTotal, settings.ReservationFee);
 
             invoice.Status =
                 paid >= invoice.GrandTotal ? InvoiceStatus.Paid
@@ -184,13 +188,16 @@ namespace System_ApiTest.Services
             var settings = await _settings.GetAsync();
             var grand = invoice.GrandTotal;
 
-            if (booking.BookingType != BookingType.FullService)
+            // Deliveries settle in one payment on the day. Rentals follow the full-service
+            // milestone plan (deposit → mid-payment → balance), just with the percentage
+            // reservation fee below.
+            if (booking.BookingType == BookingType.FoodDelivery)
                 return new List<MilestonePlanItem>
             {
                 new("Balance due (delivery)", booking.EventDate, 0m, grand, IsDeadline: true)
             };
 
-            var down = Math.Min(settings.ReservationFee, grand);
+            var down = BookingMath.ReservationFeeFor(booking.BookingType, grand, settings.ReservationFee);
             var mid = Math.Max(down, Math.Round(grand * settings.DepositPercentage, 2));
 
             return new List<MilestonePlanItem>

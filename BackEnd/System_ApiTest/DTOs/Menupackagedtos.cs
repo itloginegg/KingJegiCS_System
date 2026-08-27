@@ -95,6 +95,18 @@ namespace System_ApiTest.DTOs
         int DisplayOrder,
         List<SlotCategoryDto> AllowedCategories);
 
+    /// <summary>One stored package photo. Url is wwwroot-relative.</summary>
+    public record MenuPackageImageDto(Guid Id, string Url, string? Caption, int DisplayOrder);
+
+    /// <summary>Caption for a package photo. The file itself is uploaded separately as multipart.</summary>
+    public class MenuPackageImageInputDto
+    {
+        [MaxLength(200)]
+        public string? Caption { get; set; }
+
+        public IFormFile? ImageFile { get; set; }
+    }
+
     public record MenuPackageResponseDto(
         Guid Id,
         string PackageName,
@@ -105,7 +117,9 @@ namespace System_ApiTest.DTOs
         decimal PricePerExtraPax,
         List<string> Inclusions,
         List<PackageSlotDto> Slots,
-        List<MenuItemBriefDto> FixedItems);
+        List<MenuItemBriefDto> FixedItems,
+        /// <summary>The package's own uploaded gallery art, in DisplayOrder.</summary>
+        List<MenuPackageImageDto> Images);
 
     // ===== Customer-facing template (what to render on the "pick your dishes" screen) =====
 

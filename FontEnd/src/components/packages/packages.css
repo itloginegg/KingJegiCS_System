@@ -1,0 +1,274 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Packages carousel — artboard 5a.
+
+   One active card on a light spotlight surface, the rest on the plum fill.
+   The spotlight values are pinned literals in both themes for the reason set
+   out in PackageCard.tsx: 5a is the dark artboard and still draws the centred
+   card near-white, because it inverts against the page rather than following
+   it. Everything else reads a token.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* The spotlight card inverts AGAINST the page rather than following it, which is
+   what makes it read as spotlit. That only works if both themes get a real swap:
+   the near-white card the dark artboard draws is invisible on the light ground
+   (--bg is #faf6f7), so under :root the centred card is the plum one and the
+   flanks are light. .dark reverses both roles below.
+
+   `.pkg-theme` is a tokens-only alias: the layout rules further down this file
+   describe the pre-Tailwind implementation of this carousel and would fight the
+   component's own track, so the component takes this class and not `.pkg-rail`. */
+.pkg-rail,
+.pkg-theme {
+  --pkgc-lift: #2e1a3e;          /* active fill — plum, against a light page */
+  --pkgc-ink: #f7eff4;           /* on the active fill */
+  --pkgc-muted: #c9b8d2;
+  /* On the plum spotlight the brand rose reads 3.1:1 — the same reason
+     index.css forbids --accent on a band. The CTA takes the amber that palette
+     keeps for this exact ground (9.4:1), with plum ink on it. */
+  --pkgc-accent: #e8b45f;
+  --pkgc-accent-hover: #f2ce93;
+  --pkgc-accent-on: #1b1024;
+  --pkgc-side: #ffffff;          /* flanking fill — light, against a light page */
+  --pkgc-side-edge: rgba(27, 16, 36, 0.12);
+  --pkgc-side-ink: #1b1024;
+  --pkgc-side-muted: #7a6b84;
+}
+.dark .pkg-rail,
+.dark .pkg-theme {
+  /* Page is near-black, so the roles swap: spotlight goes light, flanks plum.
+     The rose returns as the CTA — 6.9:1 on the near-white card. */
+  --pkgc-lift: #faf6f7;
+  --pkgc-ink: #1b1024;
+  --pkgc-muted: #7a6b84;
+  --pkgc-accent: #a62a57;
+  --pkgc-accent-hover: #8e1f49;
+  --pkgc-accent-on: #ffffff;
+  --pkgc-side: #241531;
+  --pkgc-side-edge: rgba(247, 239, 244, 0.18);
+  --pkgc-side-ink: #f7eff4;
+  --pkgc-side-muted: #c9b8d2;
+}
+
+/* A flex track, not a 3-column grid: the rail renders every published package,
+   and 5a happens to show three. Widths reproduce its 1 / 1.22 / 1 proportion at
+   N=3 and stay correct at any N. */
+.pkg-rail {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 6px 0;
+}
+.pkg-item { flex: 0 0 300px; min-width: 0; transition: flex-basis 0.3s ease; }
+.pkg-item--idle { cursor: pointer; }
+.pkg-item--active { flex: 0 0 366px; }
+.pkg-item > * { height: 100%; }
+
+/* ── The card ─────────────────────────────────────────────────────── */
+
+.pkgc {
+  display: flex;
+  flex-direction: column;
+  background: var(--pkgc-side);
+  border: 1px solid var(--pkgc-side-edge);
+  border-radius: 22px;
+  padding: 30px;
+  color: var(--pkgc-side-ink);
+  min-width: 0;
+}
+.pkgc--anim { transition: transform 0.3s ease, box-shadow 0.3s ease; }
+/* 1.05, per the packages handoff note. The rail already gives the active card
+   more width; the scale is what lifts it off the two beside it. Applied only
+   with .pkgc--anim, which the carousel omits under prefers-reduced-motion. */
+.pkgc--anim.pkgc--active { transform: scale(1.05); }
+
+.pkgc--active {
+  background: var(--pkgc-lift);
+  border-color: transparent;
+  border-radius: 26px;
+  padding: 36px;
+  color: var(--pkgc-ink);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.4);
+}
+
+.pkgc-name {
+  font-family: var(--font-display);
+  font-size: 1.4375rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: inherit;
+  margin: 0 0 16px;
+}
+.pkgc--active .pkgc-name {
+  font-size: 1.6875rem;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  margin-bottom: 18px;
+}
+
+/* The figure is the comparison, so it takes the numeric face and the largest
+   step on the card — and grows again on the active one. */
+.pkgc-price {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.875rem;
+  font-weight: 500;
+  line-height: 1;
+  color: inherit;
+  margin-bottom: 6px;
+}
+.pkgc--active .pkgc-price { font-size: 2.25rem; }
+
+.pkgc-pax {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--pkgc-side-muted);
+  margin-bottom: 22px;
+}
+.pkgc--active .pkgc-pax { color: var(--pkgc-muted); margin-bottom: 24px; }
+
+/* ── Inclusions (active only) ─────────────────────────────────────── */
+
+.pkgc-list {
+  list-style: none;
+  margin: 0 0 26px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.pkgc-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: #4a3a56;
+}
+.pkgc-list svg { flex: none; color: var(--pkgc-accent); margin-top: 1px; }
+
+/* ── Actions ──────────────────────────────────────────────────────── */
+
+.pkgc-actions {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pkgc-btn {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  padding: 14px 18px;
+  border-radius: var(--r-full);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.pkgc--active .pkgc-btn { font-size: 0.8125rem; padding: 15px 18px; }
+
+.pkgc-btn--book { background: var(--pkgc-accent); color: var(--pkgc-accent-on); }
+.pkgc-btn--book:hover { background: var(--pkgc-accent-hover); }
+
+.pkgc-btn--tray {
+  background: transparent;
+  color: var(--pkgc-ink);
+  border-color: rgba(27, 16, 36, 0.22);
+}
+.pkgc-btn--tray:hover { background: rgba(27, 16, 36, 0.05); }
+
+.pkgc-btn--ghost {
+  background: transparent;
+  color: var(--pkgc-side-ink);
+  border-color: var(--pkgc-side-edge);
+}
+.pkgc-btn--ghost:hover { background: rgba(247, 239, 244, 0.08); }
+
+.pkgc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Rail chrome ──────────────────────────────────────────────────── */
+
+.pkg-rail-wrap { position: relative; }
+
+.pkg-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 28px;
+}
+.pkg-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+  border: none;
+  padding: 0;
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: width 0.25s, background 0.25s;
+}
+.pkg-dot--on { width: 26px; background: var(--accent); }
+.pkg-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.pkg-step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  z-index: 2;
+  transition: background 0.2s, opacity 0.2s;
+}
+.pkg-step:hover:not(:disabled) { background: var(--bg-subtle); }
+.pkg-step:disabled { opacity: 0.3; cursor: not-allowed; }
+.pkg-step--prev { left: -20px; }
+.pkg-step--next { right: -20px; }
+.pkg-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pkg-count {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ══ Responsive ══════════════════════════════════════════════════════
+   Below the nav breakpoint the rail becomes a snap scroller — three columns
+   inside 375px would give each card 100px. The active card keeps its
+   spotlight fill so the centred item still reads as centred.
+   ═════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1020px) {
+  .pkg-rail {
+    display: flex;
+    gap: 16px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding: 4px 0 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .pkg-item, .pkg-item--active {
+    flex: 0 0 min(320px, 82vw);
+    scroll-snap-align: center;
+  }
+  .pkg-step { display: none; }
+}
+
+@media (max-width: 640px) {
+  .pkgc, .pkgc--active { padding: 24px; }
+  .pkgc--active .pkgc-price { font-size: 2rem; }
+}

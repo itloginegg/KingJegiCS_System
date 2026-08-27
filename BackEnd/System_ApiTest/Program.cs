@@ -1,14 +1,22 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System_ApiTest;
 using System_ApiTest.Data;
+using System_ApiTest.Seeding;
 using System_ApiTest.Services;
 using System_ApiTest.Workers;
+using System_ApiTest.Hubs;
+using System_ApiTest.Application;
+using System_ApiTest.Application.Common.Interfaces;
+using System_ApiTest.Infrastructure;
+using System_ApiTest.Endpoints;
 using static System_ApiTest.Services.Jwttokenservice;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -35,8 +43,21 @@ builder.Services.AddCors(options =>
                   return uri.Host is "localhost" or "127.0.0.1";
               })
               .AllowAnyHeader()
-              .AllowAnyMethod());
+              .AllowAnyMethod()
+              .AllowCredentials());
 });
+// camelCase pinned explicitly. SignalR's JSON protocol does NOT inherit the camelCase
+// policy that AddControllers() applies — it has its own serializer options, whose default
+// naming policy leaves C# property names in PascalCase. That never surfaced before because
+// every existing hub message is a bare primitive (an invoice id, or no payload at all);
+// VoiceChunk is the first complex object this codebase sends over a hub, and a TS client
+// reading `chunk.type` off a wire that says `Type` sees undefined on every field.
+// Pinning it here makes the hub contract match the REST API and the TypeScript types.
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -61,15 +82,67 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<Tokendenylistservice>();
 builder.Services.AddScoped<Menutrayservice>();
 builder.Services.AddScoped<Rentalservice>();
-builder.Services.AddScoped<Bookingservice>(); 
+builder.Services.AddScoped<Bookingservice>();
+builder.Services.AddScoped<Bookingresourceservice>();
 builder.Services.AddScoped<Packageservice>();
 builder.Services.AddScoped<Invoiceservice>();
 builder.Services.AddScoped<Paymentservice>();
 builder.Services.AddScoped<Invoiceservice>();
 builder.Services.AddScoped<Systemsettingsservice>();
 builder.Services.AddScoped<Auditlogservice>();
+builder.Services.AddScoped<Suggestionservice>();
+builder.Services.AddScoped<Testimonialservice>();
+builder.Services.AddScoped<Notificationfeedservice>();
+builder.Services.AddScoped<Notificationwriteservice>();
+builder.Services.AddScoped<Announcementservice>();
+builder.Services.AddScoped<Reportservice>();
+builder.Services.AddScoped<Bestsellerservice>();
+builder.Services.AddMemoryCache();   // backs Reportservice's AI sales-summary cache
 builder.Services.AddHostedService<DenylistCleanupWorker>();
+builder.Services.Configure<DraftCleanupOptions>(builder.Configuration.GetSection(DraftCleanupOptions.SectionName));
+builder.Services.AddHostedService<DraftCleanupWorker>();
+builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
+builder.Services.AddHostedService<NotificationWorker>();
+builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.SectionName));
+builder.Services.AddSingleton<Airatelimiter>();
+// A SECOND counter instance, for VoiceHub.Speak (the read-aloud toggle). Airatelimiter
+// keys its windows by user id alone, so sharing the instance above would make reading a
+// reply aloud consume the same hourly budget as asking a question — a customer who turned
+// the speaker on would run out of questions twice as fast.
+builder.Services.AddKeyedSingleton<Airatelimiter>(VoiceHub.ReadAloudLimiterKey);
+builder.Services.AddHttpClient<Assistantservice>();
+// Text-to-speech for the voice pipeline. Singleton because SpeechConfig is immutable and
+// thread-safe; each utterance still gets its own synthesizer. Like the assistant itself
+// this is a soft dependency — with no Speech:ApiKey the voice turn still streams text and
+// the browser speaks it locally, so nothing breaks before the key is provisioned.
+builder.Services.Configure<SpeechOptions>(builder.Configuration.GetSection(SpeechOptions.SectionName));
+builder.Services.AddSingleton<Speechservice>();
 builder.Services.AddHttpClient<PayMongoservice>();
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.Configure<OtpOptions>(builder.Configuration.GetSection(OtpOptions.SectionName));
+builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<OtpService>();
+
+// --- Clean Architecture layers (new features only) ---------------------------------
+// Everything above stays exactly as it was: existing Controllers and services are
+// untouched. New features live in System_ApiTest.Application / .Domain / .Infrastructure
+// and are reached through MediatR + Minimal API endpoints registered further down.
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
+
+// The AddJsonOptions calls above configure MVC's serializer (Mvc.JsonOptions), which
+// Minimal APIs do not read — they use Http.JsonOptions. Without this, the new endpoints
+// would reject the string enums and DateOnly/TimeOnly formats the Controllers accept.
+// This affects Minimal API endpoints only; existing Controllers keep their own options.
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    options.SerializerOptions.Converters.Add(new DateOnlyJsonConverter());
+    options.SerializerOptions.Converters.Add(new TimeOnlyJsonConverter());
+});
+// The new layers talk to the SAME database through the SAME AppDbContext registered
+// above — IApplicationDbContext is just the Application layer's narrow view of it.
+builder.Services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -89,6 +162,20 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
         options.Events = new JwtBearerEvents
         {
+            OnMessageReceived = ctx =>
+            {
+                var accessToken = ctx.Request.Query["access_token"];
+                var path = ctx.HttpContext.Request.Path;
+                // Browsers can't set an Authorization header on a WebSocket handshake, so
+                // SignalR passes the token in the query string. Widened from the single
+                // /hubs/payment path to cover every hub — /hubs/voice needs it too, and
+                // this is one less trap for the next hub added.
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    ctx.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            },
             OnTokenValidated = async ctx =>
             {
                 var jti = ctx.Principal?.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
@@ -121,12 +208,128 @@ else
 }
 
 app.UseCors(FrontendCors);
+app.UseStaticFiles();
 
 app.UseAuthentication();
 
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<PaymentHub>("/hubs/payment");
+app.MapHub<VoiceHub>("/hubs/voice");
+
+// Unauthenticated diagnostics hub, routed ONLY in Development. The route registration is
+// the security boundary — on a deployed server this endpoint does not exist.
+if (app.Environment.IsDevelopment())
+{
+    app.MapHub<VoiceDiagnosticsHub>("/hubs/voice-diagnostics");
+
+    // Exercises the real Speechservice against Azure and reports what came back.
+    // Speechservice deliberately swallows synthesis failures so a dead TTS degrades to
+    // text rather than failing the turn — which also means a misconfigured resource is
+    // invisible. This makes it visible without weakening that behaviour.
+    app.MapGet("/__diag/tts", async (Speechservice speech, IOptions<SpeechOptions> opts, CancellationToken ct) =>
+    {
+        var options = opts.Value;
+        if (!speech.IsConfigured)
+            return Results.Ok(new { configured = false, options.Region, options.Voice });
+
+        var audioBytes = 0;
+        var visemes = 0;
+        await foreach (var chunk in speech.SynthesizeAsync("Testing Azure speech synthesis.", ct))
+        {
+            if (chunk.Audio is not null) audioBytes += chunk.Audio.Length;
+            else visemes++;
+        }
+
+        return Results.Ok(new
+        {
+            configured = true,
+            options.Region,
+            options.Voice,
+            audioBytes,
+            visemes,
+            // Zero audio here is the whole diagnosis: the key is present but Azure rejected
+            // the request. The API log carries the reason.
+            verdict = audioBytes > 0 ? "TTS OK" : "TTS PRODUCED NO AUDIO — see API log for the Azure error",
+        });
+    });
+
+    // Lists the English voices the configured region actually offers. Voice availability
+    // varies by region, and picking an unavailable one fails with a BadRequest that never
+    // reaches the customer — so this is the lookup that turns that into a fixable answer.
+    app.MapGet("/__diag/voices", async (IOptions<SpeechOptions> opts, IHttpClientFactory factory, CancellationToken ct) =>
+    {
+        var options = opts.Value;
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("Ocp-Apim-Subscription-Key", options.ApiKey);
+
+        var url = $"https://{options.Region}.tts.speech.microsoft.com/cognitiveservices/voices/list";
+        using var response = await http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+            return Results.Ok(new { options.Region, error = (int)response.StatusCode });
+
+        var json = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(ct));
+        var english = (json?.AsArray() ?? new System.Text.Json.Nodes.JsonArray())
+            .Where(v => v?["Locale"]?.GetValue<string>()?.StartsWith("en-") == true)
+            .Select(v => new
+            {
+                Name = v?["ShortName"]?.GetValue<string>(),
+                Gender = v?["Gender"]?.GetValue<string>(),
+                Locale = v?["Locale"]?.GetValue<string>(),
+            })
+            .ToList();
+
+        return Results.Ok(new
+        {
+            options.Region,
+            total = english.Count,
+            female = english.Where(v => v.Gender == "Female").Select(v => v.Name).ToList(),
+        });
+    });
+}
+
+// Minimal API endpoints for features built on the Clean Architecture layers.
+// These sit alongside the Controllers above — ASP.NET Core routes both from the same table,
+// so old and new coexist with no conflict. One MapXEndpoints() call per feature.
+app.MapVenueEndpoints();
+
+// Both AI services are soft dependencies that degrade silently by design, which makes a
+// missing key hard to tell apart from a bug. Report their state once at startup —
+// booleans only, never the keys themselves.
+using (var startupScope = app.Services.CreateScope())
+{
+    var startupLog = startupScope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Startup.VoiceStack");
+    var assistant = startupScope.ServiceProvider.GetRequiredService<Assistantservice>();
+    var speech = startupScope.ServiceProvider.GetRequiredService<Speechservice>();
+
+    var speechOptions = startupScope.ServiceProvider
+        .GetRequiredService<IOptions<SpeechOptions>>().Value;
+
+    startupLog.LogInformation(
+        "Assistant (Gemini) configured: {Assistant}. Speech (Azure TTS) configured: {Speech} "
+        + "(region '{Region}', voice '{Voice}').",
+        assistant.IsConfigured, speech.IsConfigured, speechOptions.Region, speechOptions.Voice);
+
+    if (speech.IsConfigured)
+        startupLog.LogInformation(
+            "A Speech key is present, so replies are expected to arrive as server audio. If a "
+            + "reply is silent, look for a 'Speech synthesis canceled' warning below — the most "
+            + "common cause is Speech:Region not matching the region the key was issued for.");
+
+    if (!assistant.IsConfigured)
+        startupLog.LogWarning(
+            "No Ai:ApiKey — voice and text chat will both return 503. Set it with: "
+            + "dotnet user-secrets set \"Ai:ApiKey\" \"<key>\"");
+    if (!speech.IsConfigured)
+        startupLog.LogWarning(
+            "No Speech:ApiKey — replies fall back to the browser's speechSynthesis, with no "
+            + "viseme data for avatar lip-sync. Set it with: "
+            + "dotnet user-secrets set \"Speech:ApiKey\" \"<key>\"");
+}
+
+await DbSeeder.SeedAsync(app.Services);
 
 app.Run();
 

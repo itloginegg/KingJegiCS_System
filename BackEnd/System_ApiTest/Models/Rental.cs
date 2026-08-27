@@ -38,6 +38,14 @@ namespace System_ApiTest.Models
         public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
 
         /// <summary>
+        /// What went wrong, captured when a line is marked Damaged. Per-line rather than
+        /// per-booking, so two damaged items on the same booking don't overwrite each other.
+        /// Kept after a repaired line moves on to Returned — the history is the point.
+        /// </summary>
+        [MaxLength(500)]
+        public string? DamageNote { get; set; }
+
+        /// <summary>
         /// quantity × the linked item's unit price. Not a column — requires RentalItem
         /// to be loaded (Include it). Returns 0 if the item isn't loaded, so always
         /// Include(r => r.RentalItem) before summing for a total.

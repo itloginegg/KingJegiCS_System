@@ -8,8 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+    <PackageReference Include="Microsoft.CognitiveServices.Speech" Version="1.51.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.9" />
     <PackageReference Include="Microsoft.OpenApi" Version="2.9.0" />
@@ -19,6 +21,11 @@
     </PackageReference>
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.7" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\System_ApiTest.Application\System_ApiTest.Application.csproj" />
+    <ProjectReference Include="..\System_ApiTest.Infrastructure\System_ApiTest.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

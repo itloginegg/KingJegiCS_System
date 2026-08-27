@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace System_ApiTest.Models
 {
@@ -74,6 +74,9 @@ namespace System_ApiTest.Models
 
         /// <summary>Soft-deactivation. Inactive items must not be selectable on bookings.</summary>
         public bool IsActive { get; set; } = true;
+
+        [MaxLength(500)]
+        public string? ImageUrl { get; set; }
 
         // Many-to-many to trays (through the join), and the booking links.
         public ICollection<MenuTrayDish> TrayDishes { get; set; } = new List<MenuTrayDish>();

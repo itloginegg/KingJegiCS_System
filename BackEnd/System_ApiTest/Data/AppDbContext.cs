@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System.Text.Json;
@@ -6,7 +6,7 @@ using System_ApiTest.Models;
 
 namespace System_ApiTest.Data
 {
-    public class AppDbContext : DbContext
+    public class AppDbContext : DbContext, System_ApiTest.Application.Common.Interfaces.IApplicationDbContext
     {
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -15,6 +15,7 @@ namespace System_ApiTest.Data
         public DbSet<Admin> Admins => Set<Admin>();
         public DbSet<Auditlog> AuditLogs => Set<Auditlog>();
         public DbSet<Bookinghistory> BookingHistories => Set<Bookinghistory>();
+        public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
 
         // Auth
         public DbSet<Revokedtoken> RevokedTokens => Set<Revokedtoken>();
@@ -39,6 +40,7 @@ namespace System_ApiTest.Data
         public DbSet<Menupackageslot> MenuPackageSlots => Set<Menupackageslot>();
         public DbSet<SlotCategory> SlotCategories => Set<SlotCategory>();
         public DbSet<Menupackagefixeditem> MenuPackageFixedItems => Set<Menupackagefixeditem>();
+        public DbSet<Menupackageimage> MenuPackageImages => Set<Menupackageimage>();
         public DbSet<Bookingpackageselection> BookingPackageSelections => Set<Bookingpackageselection>();
 
         // Configuration
@@ -48,12 +50,45 @@ namespace System_ApiTest.Data
         public DbSet<Invoice> Invoices => Set<Invoice>();
         public DbSet<Payment> Payments => Set<Payment>();
 
-        //Testimonial
-        public DbSet<Testimonial> Testimonials { get; set; }
+        // Operational planning (no money, no stock — see BookingResourceAllocation)
+        public DbSet<BookingResourceAllocation> BookingResourceAllocations => Set<BookingResourceAllocation>();
+
+        // Notifications (background worker idempotency ledger)
+        public DbSet<Sentnotification> SentNotifications => Set<Sentnotification>();
+
+        // Admin broadcasts to the customer base (delivered via the ledger above)
+        public DbSet<Announcement> Announcements => Set<Announcement>();
+
+        // Public "Events by King Jegi" photo gallery — unrelated to announcements above
+        public DbSet<Galleryimage> GalleryImages => Set<Galleryimage>();
+
+        // Virtual assistant (conversation history)
+        public DbSet<Conversation> Conversations => Set<Conversation>();
+        public DbSet<Conversationmessage> ConversationMessages => Set<Conversationmessage>();
+
+        // Support chat (customer ↔ staff)
+        public DbSet<Supportthread> SupportThreads => Set<Supportthread>();
+        public DbSet<Supportmessage> SupportMessages => Set<Supportmessage>();
+
+        // Customer reviews (moderated before they go public)
+        public DbSet<Testimonial> Testimonials => Set<Testimonial>();
+
+        // Entities owned by the Clean Architecture layers (System_ApiTest.Domain).
+        // These are mapped by IEntityTypeConfiguration classes in System_ApiTest.Infrastructure,
+        // not by data annotations, and are reached through MediatR rather than a Controller.
+        public DbSet<System_ApiTest.Domain.Entities.Venue> Venues
+            => Set<System_ApiTest.Domain.Entities.Venue>();
 
         protected override void OnModelCreating(ModelBuilder b)
         {
             base.OnModelCreating(b);
+
+            // Fluent API mappings for entities owned by the new Clean Architecture layers.
+            // Those entities live in System_ApiTest.Domain and carry no EF Core attributes,
+            // so their IEntityTypeConfiguration<T> classes in Infrastructure map them instead.
+            // Existing models below keep using data annotations + the inline config here.
+            b.ApplyConfigurationsFromAssembly(
+                System_ApiTest.Infrastructure.DependencyInjection.ConfigurationsAssembly);
 
             // ---------------- RevokedToken (JWT denylist) ----------------
             b.Entity<Revokedtoken>().HasIndex(t => t.ExpiresAt);
@@ -117,6 +152,7 @@ namespace System_ApiTest.Data
                 e.Property(x => x.EventType).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.DepositStatus).HasConversion<string>().HasMaxLength(20);
+                e.Property(x => x.Source).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.TotalAmount).HasPrecision(18, 2);
 
                 e.ToTable(t =>
@@ -128,6 +164,14 @@ namespace System_ApiTest.Data
                     t.HasCheckConstraint("CK_Booking_EndDateNotBefore", "[EndDate] IS NULL OR [EndDate] >= [EventDate]");
                     t.HasCheckConstraint("CK_Booking_GuestCountPositive", "[GuestCount] IS NULL OR [GuestCount] > 0");
                 });
+            });
+
+            // ---------------- OtpCode ----------------
+            b.Entity<OtpCode>(e =>
+            {
+                e.Property(o => o.Purpose).HasConversion<string>().HasMaxLength(20);
+                // The verify path looks up the latest active code for a user+purpose.
+                e.HasIndex(o => new { o.UserType, o.UserId, o.Purpose, o.ConsumedAt });
             });
 
             // ---------------- BookingHistory ----------------
@@ -300,6 +344,14 @@ namespace System_ApiTest.Data
                  .HasForeignKey(x => x.MenuItemId).OnDelete(DeleteBehavior.Restrict);
             });
 
+            b.Entity<Menupackageimage>(e =>
+            {
+                // Gallery reads are always "this package's images, in order".
+                e.HasIndex(x => new { x.MenuPackageId, x.DisplayOrder });
+                e.HasOne(x => x.MenuPackage).WithMany(p => p.Images)
+                 .HasForeignKey(x => x.MenuPackageId).OnDelete(DeleteBehavior.Cascade);
+            });
+
             b.Entity<Bookingpackageselection>(e =>
             {
                 e.HasKey(x => new { x.BookingId, x.MenuPackageSlotId, x.MenuItemId });
@@ -320,6 +372,8 @@ namespace System_ApiTest.Data
                 e.Property(s => s.DepositPercentage).HasPrecision(9, 4);
                 e.Property(s => s.ReservationFee).HasPrecision(18, 2);
                 e.Property(s => s.EventBufferHours).HasPrecision(5, 2);
+                e.Property(s => s.ChairsPerGuest).HasPrecision(5, 2);
+                e.Property(s => s.UtensilsPerGuest).HasPrecision(5, 2);
                 e.ToTable(t =>
                 {
                     t.HasCheckConstraint("CK_SystemSettings_TaxRateNonNeg", "[TaxRate] >= 0");
@@ -329,6 +383,21 @@ namespace System_ApiTest.Data
                     t.HasCheckConstraint("CK_SystemSettings_BufferNonNeg", "[EventBufferHours] >= 0");
                     t.HasCheckConstraint("CK_SystemSettings_LeadDaysNonNeg",
                         "[MinLeadDaysFullService] >= 0 AND [MinLeadDaysDelivery] >= 0");
+                    // A start at or after the end would make the open-slot window empty
+                    // or negative, so every date would advertise as fully booked.
+                    t.HasCheckConstraint("CK_SystemSettings_OperatingHoursOrder",
+                        "[OperatingHoursEnd] > [OperatingHoursStart]");
+                    // 0 is meaningful ("free the day after pickup"); negative is not.
+                    t.HasCheckConstraint("CK_SystemSettings_TurnaroundNonNeg",
+                        "[RentalTurnaroundDays] >= 0");
+                    // Every one of these is a divisor in the SUGGEST formulas, so zero
+                    // would be a divide-by-zero and a negative would suggest negative
+                    // furniture. Guard at the database, not just in the service.
+                    t.HasCheckConstraint("CK_SystemSettings_SuggestDivisorsPositive",
+                        "[GuestsPerLongTable] >= 1 AND [GuestsPerRoundTable] >= 1 AND " +
+                        "[GuestsPerWaiter] >= 1 AND [GuestsPerServer] >= 1");
+                    t.HasCheckConstraint("CK_SystemSettings_SuggestMultipliersNonNeg",
+                        "[ChairsPerGuest] >= 0 AND [UtensilsPerGuest] >= 0");
                 });
             });
 
@@ -347,6 +416,29 @@ namespace System_ApiTest.Data
                 // Deleting a Booking must not silently delete its Invoice.
                 e.HasOne(i => i.Booking).WithOne(bk => bk.Invoice)
                  .HasForeignKey<Invoice>(i => i.BookingId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- BookingResourceAllocation ----------------
+            b.Entity<BookingResourceAllocation>(e =>
+            {
+                e.HasIndex(a => a.BookingId).IsUnique();   // one resource plan per booking
+
+                // Cascade, unlike Invoice: a resource plan is internal logistics with no
+                // financial or audit standing, so there is nothing to preserve once the
+                // booking it describes is gone.
+                e.HasOne(a => a.Booking).WithOne(bk => bk.ResourceAllocation)
+                 .HasForeignKey<BookingResourceAllocation>(a => a.BookingId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                // Counts are physical objects and people: never negative, and an upper
+                // bound so a slipped keypress can't store a six-figure chair order.
+                e.ToTable(t => t.HasCheckConstraint(
+                    "CK_BookingResourceAllocation_CountsInRange",
+                    "[LongTables] BETWEEN 0 AND 100000 AND [RoundTables] BETWEEN 0 AND 100000 AND " +
+                    "[Chairs] BETWEEN 0 AND 100000 AND [Plates] BETWEEN 0 AND 100000 AND " +
+                    "[Spoons] BETWEEN 0 AND 100000 AND [Forks] BETWEEN 0 AND 100000 AND " +
+                    "[Waiters] BETWEEN 0 AND 100000 AND [Servers] BETWEEN 0 AND 100000 AND " +
+                    "[Others] BETWEEN 0 AND 100000"));
             });
 
             // ---------------- Payment ----------------
@@ -377,6 +469,116 @@ namespace System_ApiTest.Data
 
                 e.HasOne(p => p.Invoice).WithMany(i => i.Payments)
                  .HasForeignKey(p => p.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- SentNotification (worker idempotency ledger) ----------------
+            b.Entity<Sentnotification>(e =>
+            {
+                e.Property(n => n.Kind).HasConversion<string>().HasMaxLength(30);
+
+                // Never send the same notification twice. Tuple-uniqueness: rows with
+                // different Period (or a null vs non-null BookingId) are distinct.
+                // HasFilter(null) overrides EF's default "[BookingId] IS NOT NULL" filter
+                // so the constraint also covers cross-booking rows (owner digest / low
+                // stock) whose BookingId is null — SQL Server treats those NULLs as equal,
+                // giving them the same dedup backstop as booking-scoped rows.
+                e.HasIndex(n => new { n.BookingId, n.Kind, n.Period }).IsUnique().HasFilter(null);
+
+                // Booking may be gone-independent (owner digest / low-stock have null
+                // BookingId); when set, a cascade keeps the ledger tidy if the booking is
+                // ever removed.
+                e.HasOne(n => n.Booking).WithMany()
+                 .HasForeignKey(n => n.BookingId).OnDelete(DeleteBehavior.Cascade);
+
+                // Direct recipient for rows with no booking (support-chat replies). The
+                // customer feed queries this OR the booking's owner, so worker-written
+                // rows keep routing exactly as before.
+                e.HasIndex(n => n.CustomerId);
+                e.HasOne(n => n.Customer).WithMany()
+                 .HasForeignKey(n => n.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- Announcement (admin broadcast) ----------------
+            b.Entity<Announcement>(e =>
+            {
+                // The admin list is newest-first.
+                e.HasIndex(a => a.CreatedAt);
+
+                // An announcement outlives nothing: the admin who posted it can't be
+                // removed out from under it. Same Restrict stance as AuditLog.
+                e.HasOne(a => a.CreatedBy).WithMany()
+                 .HasForeignKey(a => a.CreatedById).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- Gallery image (public "Events by King Jegi") ----------------
+            b.Entity<Galleryimage>(e =>
+            {
+                // Every read is "the gallery, in order".
+                e.HasIndex(g => new { g.DisplayOrder, g.UploadedAt });
+
+                // Same Restrict stance as Announcement.CreatedBy: removing an admin must
+                // not silently delete the photos they uploaded.
+                e.HasOne(g => g.UploadedBy).WithMany()
+                 .HasForeignKey(g => g.UploadedById).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ---------------- Conversation / Conversationmessage (virtual assistant) ----------------
+            b.Entity<Conversation>(e =>
+            {
+                e.HasIndex(c => c.CustomerId);
+                // A customer must exist; keep their threads if they're ever deactivated
+                // (customers are soft-deleted, never removed — Restrict is consistent).
+                e.HasOne(c => c.Customer).WithMany()
+                 .HasForeignKey(c => c.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            b.Entity<Conversationmessage>(e =>
+            {
+                e.Property(m => m.Role).HasConversion<string>().HasMaxLength(10);
+                e.HasIndex(m => new { m.ConversationId, m.Ordinal }).IsUnique();
+                e.HasOne(m => m.Conversation).WithMany(c => c.Messages)
+                 .HasForeignKey(m => m.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- Support chat ----------------
+            b.Entity<Supportthread>(e =>
+            {
+                e.Property(t => t.Status).HasConversion<string>().HasMaxLength(10);
+                // One support thread per customer (get-or-create keys off this).
+                e.HasIndex(t => t.CustomerId).IsUnique();
+                e.HasOne(t => t.Customer).WithMany()
+                 .HasForeignKey(t => t.CustomerId).OnDelete(DeleteBehavior.Restrict);
+            });
+
+            b.Entity<Supportmessage>(e =>
+            {
+                e.Property(m => m.Sender).HasConversion<string>().HasMaxLength(10);
+                e.HasIndex(m => new { m.ThreadId, m.CreatedAt });
+                e.HasOne(m => m.Thread).WithMany(t => t.Messages)
+                 .HasForeignKey(m => m.ThreadId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ---------------- Testimonial ----------------
+            b.Entity<Testimonial>(e =>
+            {
+                e.Property(t => t.Status).HasConversion<string>().HasMaxLength(10);
+
+                // One review per booking — the anti-spam control, enforced in the DB so a
+                // concurrent double-submit can't slip past the service's check.
+                e.HasIndex(t => t.BookingId).IsUnique();
+                // The public list and the moderation queue both read newest-first by state.
+                e.HasIndex(t => new { t.Status, t.SubmittedAt });
+
+                e.ToTable(tb => tb.HasCheckConstraint("CK_Testimonial_RatingRange", "[Rating] >= 1 AND [Rating] <= 5"));
+
+                // Reviews outlive nothing: a customer or booking that's been reviewed
+                // can't be removed out from under it.
+                e.HasOne(t => t.Customer).WithMany()
+                 .HasForeignKey(t => t.CustomerId).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(t => t.Booking).WithMany()
+                 .HasForeignKey(t => t.BookingId).OnDelete(DeleteBehavior.Restrict);
+                e.HasOne(t => t.ModeratedBy).WithMany()
+                 .HasForeignKey(t => t.ModeratedById).OnDelete(DeleteBehavior.Restrict);
             });
         }
     }

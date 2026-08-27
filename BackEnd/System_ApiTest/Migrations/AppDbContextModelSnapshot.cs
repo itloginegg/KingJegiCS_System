@@ -22,6 +22,47 @@ namespace System_ApiTest.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Venue", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<int>("Capacity")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("Name");
+
+                    b.ToTable("Venues", (string)null);
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
                 {
                     b.Property<Guid>("Id")
@@ -72,6 +113,40 @@ namespace System_ApiTest.Migrations
                     b.ToTable("Admins");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Announcement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CreatedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("NotifiedCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("CreatedById");
+
+                    b.ToTable("Announcements");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Auditlog", b =>
                 {
                     b.Property<Guid>("Id")
@@ -118,6 +193,10 @@ namespace System_ApiTest.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("AdminNote")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
                     b.Property<string>("BookingName")
                         .IsRequired()
                         .HasMaxLength(250)
@@ -128,6 +207,10 @@ namespace System_ApiTest.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<string>("BrideName")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
                     b.Property<string>("CancellationRequestReason")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
@@ -137,6 +220,21 @@ namespace System_ApiTest.Migrations
 
                     b.Property<DateTime?>("CancellationRequestedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<int?>("CelebrantAge")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CelebrantName")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("CelebrantSex")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ContactNumber")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -158,15 +256,36 @@ namespace System_ApiTest.Migrations
                     b.Property<DateOnly>("EventDate")
                         .HasColumnType("date");
 
+                    b.Property<string>("EventName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<string>("EventType")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("GroomName")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
 
                     b.Property<int?>("GuestCount")
                         .HasColumnType("int");
 
                     b.Property<Guid?>("MenuPackageId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Motif")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("MotifImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<TimeOnly>("StartTime")
                         .HasColumnType("time");
@@ -175,6 +294,14 @@ namespace System_ApiTest.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Theme")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ThemeImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<decimal>("TotalAmount")
                         .HasPrecision(18, 2)
@@ -250,6 +377,65 @@ namespace System_ApiTest.Migrations
                     b.ToTable("BookingMenuTrays", t =>
                         {
                             t.HasCheckConstraint("CK_BookingMenuTray_QtyPositive", "[Quantity] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.BookingResourceAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ApprovedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BookingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Chairs")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Forks")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsApproved")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("LongTables")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Others")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Plates")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RoundTables")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Servers")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Spoons")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Waiters")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookingId")
+                        .IsUnique();
+
+                    b.ToTable("BookingResourceAllocations", t =>
+                        {
+                            t.HasCheckConstraint("CK_BookingResourceAllocation_CountsInRange", "[LongTables] BETWEEN 0 AND 100000 AND [RoundTables] BETWEEN 0 AND 100000 AND [Chairs] BETWEEN 0 AND 100000 AND [Plates] BETWEEN 0 AND 100000 AND [Spoons] BETWEEN 0 AND 100000 AND [Forks] BETWEEN 0 AND 100000 AND [Waiters] BETWEEN 0 AND 100000 AND [Servers] BETWEEN 0 AND 100000 AND [Others] BETWEEN 0 AND 100000");
                         });
                 });
 
@@ -344,6 +530,70 @@ namespace System_ApiTest.Migrations
                         });
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Conversation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.ToTable("Conversations");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Conversationmessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Ordinal")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<string>("Text")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ToolName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("ToolPayloadJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConversationId", "Ordinal")
+                        .IsUnique();
+
+                    b.ToTable("ConversationMessages");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -368,6 +618,9 @@ namespace System_ApiTest.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
 
+                    b.Property<bool>("IsEmailVerified")
+                        .HasColumnType("bit");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -383,6 +636,39 @@ namespace System_ApiTest.Migrations
                         .IsUnique();
 
                     b.ToTable("Customers");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Galleryimage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Caption")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ImageUrl")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UploadedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UploadedById");
+
+                    b.HasIndex("DisplayOrder", "UploadedAt");
+
+                    b.ToTable("GalleryImages");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Invoice", b =>
@@ -470,6 +756,10 @@ namespace System_ApiTest.Migrations
                     b.Property<string>("DietaryTags")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -574,6 +864,34 @@ namespace System_ApiTest.Migrations
                     b.ToTable("MenuPackageFixedItems");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Menupackageimage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Caption")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ImageUrl")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<Guid>("MenuPackageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MenuPackageId", "DisplayOrder");
+
+                    b.ToTable("MenuPackageImages");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Menupackageslot", b =>
                 {
                     b.Property<Guid>("Id")
@@ -642,6 +960,54 @@ namespace System_ApiTest.Migrations
 
                             t.HasCheckConstraint("CK_MenuTray_ServesMinPositive", "[ServesMin] > 0");
                         });
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.OtpCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UserType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserType", "UserId", "Purpose", "ConsumedAt");
+
+                    b.ToTable("OtpCodes");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Payment", b =>
@@ -742,6 +1108,10 @@ namespace System_ApiTest.Migrations
                     b.Property<Guid>("BookingId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("DamageNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<string>("DeliveryStatus")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -775,6 +1145,10 @@ namespace System_ApiTest.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -820,6 +1194,44 @@ namespace System_ApiTest.Migrations
                     b.HasIndex("ExpiresAt");
 
                     b.ToTable("RevokedTokens");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Sentnotification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("BookingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("BookingId", "Kind", "Period")
+                        .IsUnique();
+
+                    b.ToTable("SentNotifications");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Service", b =>
@@ -904,11 +1316,93 @@ namespace System_ApiTest.Migrations
                         });
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Supportmessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AttachmentContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("AttachmentFileName")
+                        .HasMaxLength(260)
+                        .HasColumnType("nvarchar(260)");
+
+                    b.Property<string>("AttachmentUrl")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ReadByAdminAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ReadByCustomerAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Sender")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<Guid>("SenderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId", "CreatedAt");
+
+                    b.ToTable("SupportMessages");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("LastMessageAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId")
+                        .IsUnique();
+
+                    b.ToTable("SupportThreads");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Systemsettings", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ChairsPerGuest")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
 
                     b.Property<int>("DefaultMaxCapacity")
                         .HasColumnType("int");
@@ -921,10 +1415,31 @@ namespace System_ApiTest.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");
 
+                    b.Property<int>("GuestsPerLongTable")
+                        .HasColumnType("int");
+
+                    b.Property<int>("GuestsPerRoundTable")
+                        .HasColumnType("int");
+
+                    b.Property<int>("GuestsPerServer")
+                        .HasColumnType("int");
+
+                    b.Property<int>("GuestsPerWaiter")
+                        .HasColumnType("int");
+
                     b.Property<int>("MinLeadDaysDelivery")
                         .HasColumnType("int");
 
                     b.Property<int>("MinLeadDaysFullService")
+                        .HasColumnType("int");
+
+                    b.Property<TimeOnly>("OperatingHoursEnd")
+                        .HasColumnType("time");
+
+                    b.Property<TimeOnly>("OperatingHoursStart")
+                        .HasColumnType("time");
+
+                    b.Property<int>("RentalTurnaroundDays")
                         .HasColumnType("int");
 
                     b.Property<decimal>("ReservationFee")
@@ -937,6 +1452,10 @@ namespace System_ApiTest.Migrations
                     b.Property<decimal>("TaxRate")
                         .HasPrecision(9, 4)
                         .HasColumnType("decimal(9,4)");
+
+                    b.Property<decimal>("UtensilsPerGuest")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
 
                     b.HasKey("Id");
 
@@ -953,9 +1472,77 @@ namespace System_ApiTest.Migrations
 
                             t.HasCheckConstraint("CK_SystemSettings_LeadDaysNonNeg", "[MinLeadDaysFullService] >= 0 AND [MinLeadDaysDelivery] >= 0");
 
+                            t.HasCheckConstraint("CK_SystemSettings_OperatingHoursOrder", "[OperatingHoursEnd] > [OperatingHoursStart]");
+
                             t.HasCheckConstraint("CK_SystemSettings_ReservationFeeNonNeg", "[ReservationFee] >= 0");
 
+                            t.HasCheckConstraint("CK_SystemSettings_SuggestDivisorsPositive", "[GuestsPerLongTable] >= 1 AND [GuestsPerRoundTable] >= 1 AND [GuestsPerWaiter] >= 1 AND [GuestsPerServer] >= 1");
+
+                            t.HasCheckConstraint("CK_SystemSettings_SuggestMultipliersNonNeg", "[ChairsPerGuest] >= 0 AND [UtensilsPerGuest] >= 0");
+
                             t.HasCheckConstraint("CK_SystemSettings_TaxRateNonNeg", "[TaxRate] >= 0");
+
+                            t.HasCheckConstraint("CK_SystemSettings_TurnaroundNonNeg", "[RentalTurnaroundDays] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Testimonial", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AuthorName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid>("BookingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ModeratedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ModeratedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ModerationNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("Rating")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<DateTime>("SubmittedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookingId")
+                        .IsUnique();
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("ModeratedById");
+
+                    b.HasIndex("Status", "SubmittedAt");
+
+                    b.ToTable("Testimonials", t =>
+                        {
+                            t.HasCheckConstraint("CK_Testimonial_RatingRange", "[Rating] >= 1 AND [Rating] <= 5");
                         });
                 });
 
@@ -1002,6 +1589,17 @@ namespace System_ApiTest.Migrations
                         .WithMany("CreatedAssistants")
                         .HasForeignKey("CreatedById")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CreatedBy");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Announcement", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Admin", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("CreatedBy");
                 });
@@ -1081,6 +1679,17 @@ namespace System_ApiTest.Migrations
                     b.Navigation("Tray");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.BookingResourceAllocation", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                        .WithOne("ResourceAllocation")
+                        .HasForeignKey("System_ApiTest.Models.BookingResourceAllocation", "BookingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Booking");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Bookinghistory", b =>
                 {
                     b.HasOne("System_ApiTest.Models.Booking", "Booking")
@@ -1124,6 +1733,39 @@ namespace System_ApiTest.Migrations
                     b.Navigation("MenuItem");
 
                     b.Navigation("Slot");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Conversation", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Conversationmessage", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Conversation", "Conversation")
+                        .WithMany("Messages")
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Conversation");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Galleryimage", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Admin", "UploadedBy")
+                        .WithMany()
+                        .HasForeignKey("UploadedById")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("UploadedBy");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Invoice", b =>
@@ -1185,6 +1827,17 @@ namespace System_ApiTest.Migrations
                     b.Navigation("MenuPackage");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Menupackageimage", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
+                        .WithMany("Images")
+                        .HasForeignKey("MenuPackageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MenuPackage");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Menupackageslot", b =>
                 {
                     b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
@@ -1226,6 +1879,23 @@ namespace System_ApiTest.Migrations
                     b.Navigation("RentalItem");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Sentnotification", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                        .WithMany()
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Booking");
+
+                    b.Navigation("Customer");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Service", b =>
                 {
                     b.HasOne("System_ApiTest.Models.Booking", "Booking")
@@ -1256,6 +1926,54 @@ namespace System_ApiTest.Migrations
                     b.Navigation("Slot");
                 });
 
+            modelBuilder.Entity("System_ApiTest.Models.Supportmessage", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Supportthread", "Thread")
+                        .WithMany("Messages")
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Thread");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Testimonial", b =>
+                {
+                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                        .WithMany()
+                        .HasForeignKey("BookingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("System_ApiTest.Models.Admin", "ModeratedBy")
+                        .WithMany()
+                        .HasForeignKey("ModeratedById")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Booking");
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("ModeratedBy");
+                });
+
             modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
                 {
                     b.Navigation("CreatedAssistants");
@@ -1275,12 +1993,19 @@ namespace System_ApiTest.Migrations
 
                     b.Navigation("Rentals");
 
+                    b.Navigation("ResourceAllocation");
+
                     b.Navigation("Services");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Calendarday", b =>
                 {
                     b.Navigation("Bookings");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Conversation", b =>
+                {
+                    b.Navigation("Messages");
                 });
 
             modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
@@ -1303,6 +2028,8 @@ namespace System_ApiTest.Migrations
             modelBuilder.Entity("System_ApiTest.Models.Menupackage", b =>
                 {
                     b.Navigation("FixedItems");
+
+                    b.Navigation("Images");
 
                     b.Navigation("Items");
 
@@ -1331,6 +2058,11 @@ namespace System_ApiTest.Migrations
             modelBuilder.Entity("System_ApiTest.Models.Serviceitem", b =>
                 {
                     b.Navigation("Services");
+                });
+
+            modelBuilder.Entity("System_ApiTest.Models.Supportthread", b =>
+                {
+                    b.Navigation("Messages");
                 });
 #pragma warning restore 612, 618
         }

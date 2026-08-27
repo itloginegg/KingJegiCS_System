@@ -34,6 +34,11 @@ namespace System_ApiTest.Workers
                         var purged = await denylist.PurgeExpiredAsync(DateTime.UtcNow);
                         if (purged > 0)
                             _logger.LogInformation("Denylist cleanup purged {Count} expired token(s).", purged);
+
+                        var otp = scope.ServiceProvider.GetRequiredService<OtpService>();
+                        var otpPurged = await otp.PurgeStaleAsync();
+                        if (otpPurged > 0)
+                            _logger.LogInformation("OTP cleanup purged {Count} stale code(s).", otpPurged);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -54,4 +59,3 @@ namespace System_ApiTest.Workers
         }
     }
 }
- 

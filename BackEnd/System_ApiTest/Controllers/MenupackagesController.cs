@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System_ApiTest.Data;
@@ -13,17 +13,24 @@ namespace System_ApiTest.Controllers
     [Authorize]
     public class MenuPackagesController : ControllerBase
     {
+        /// <summary>Gallery cap per package. Each file is separately capped at 5 MB by ImageUploadHelper.</summary>
+        private const int MaxImagesPerPackage = 12;
+
         private readonly AppDbContext _db;
         private readonly Packageservice _packages;
         private readonly Auditlogservice _audit;
+        private readonly IWebHostEnvironment _env;
 
-        public MenuPackagesController(AppDbContext db, Packageservice packages, Auditlogservice audit)
+        public MenuPackagesController(AppDbContext db, Packageservice packages, Auditlogservice audit,
+                                      IWebHostEnvironment env)
         {
             _db = db;
             _packages = packages;
             _audit = audit;
+            _env = env;
         }
 
+        [AllowAnonymous]   // guests may browse packages (item 1)
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -31,6 +38,7 @@ namespace System_ApiTest.Controllers
             return Ok(packages.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {
@@ -39,6 +47,7 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>The customer-facing template: slots with their eligible items, plus fixed items and inclusions.</summary>
+        [AllowAnonymous]
         [HttpGet("{id:guid}/template")]
         public async Task<IActionResult> Template(Guid id)
         {
@@ -134,17 +143,95 @@ namespace System_ApiTest.Controllers
             pkg.PricePerExtraPax = dto.PricePerExtraPax;
             pkg.Inclusions = dto.Inclusions;
 
-            // Replace fixed items.
-            _db.MenuPackageFixedItems.RemoveRange(pkg.FixedItems);
-            pkg.FixedItems.Clear();
+            var oldFixedItems = pkg.FixedItems.ToList();
+            _db.MenuPackageFixedItems.RemoveRange(oldFixedItems);
+            
             foreach (var fid in fixedItemIds)
-                pkg.FixedItems.Add(new Menupackagefixeditem { MenuPackageId = pkg.Id, MenuItemId = fid });
+            {
+                _db.MenuPackageFixedItems.Add(new Menupackagefixeditem 
+                { 
+                    MenuPackageId = pkg.Id, 
+                    MenuItemId = fid 
+                });
+            }
 
             await _db.SaveChangesAsync();
 
             var saved = await LoadGraph().FirstAsync(p => p.Id == id);
             await _audit.LogAsync(User, AuditAction.UPDATE, "MENU_PACKAGE", id.ToString(), old, ToDto(saved));
             return Ok(ToDto(saved));
+        }
+
+        /// <summary>
+        /// Permanently removes a package, with its slots, fixed-item links and gallery.
+        ///
+        /// Guarded rather than left to the mapping, because every cascade here fails or
+        /// destroys something quietly: Booking.MenuPackageId is SetNull (the booking would
+        /// forget what was ordered), MenuItem.MenuPackageId is SetNull (which trips
+        /// CK_MenuItem_PricedIfStandalone on package-only dishes), and the slot cascade
+        /// collides with the Restrict on BookingPackageSelections.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> Delete(Guid id)
+        {
+            var pkg = await LoadGraph().FirstOrDefaultAsync(p => p.Id == id);
+            if (pkg is null) return NotFound();
+
+            if (await _db.Bookings.AnyAsync(b =>
+                    b.MenuPackageId == id && b.Status != BookingStatus.Cancelled))
+                return Conflict(new { message = "Active bookings are using this package, so it can't be deleted. Cancel or move those bookings first." });
+
+            // Cancelled bookings keep their slot choices and that FK is Restrict, so the
+            // slot cascade would fail on them too — a separate check to say so plainly.
+            if (await _db.BookingPackageSelections.AnyAsync(x => x.Slot.MenuPackageId == id))
+                return Conflict(new { message = "Past bookings recorded dish choices from this package's slots, so it has to stay on file." });
+
+            var attached = await _db.MenuItems.Where(m => m.MenuPackageId == id).ToListAsync();
+
+            // A package-only dish has no standalone tray price, so detaching it would break
+            // CK_MenuItem_PricedIfStandalone — it goes with the package instead. Unless
+            // something outside the package still holds it, which we can't delete away.
+            var packageOnly = attached.Where(m => m.PricePerTray is null).ToList();
+            if (packageOnly.Count > 0)
+            {
+                var ids = packageOnly.Select(m => m.Id).ToList();
+                var held = new HashSet<Guid>(await _db.BookingMenuItems
+                    .Where(x => ids.Contains(x.ItemId)).Select(x => x.ItemId).ToListAsync());
+                held.UnionWith(await _db.MenuTrayDishes
+                    .Where(x => ids.Contains(x.MenuItemId)).Select(x => x.MenuItemId).ToListAsync());
+                held.UnionWith(await _db.MenuPackageFixedItems
+                    .Where(x => ids.Contains(x.MenuItemId) && x.MenuPackageId != id)
+                    .Select(x => x.MenuItemId).ToListAsync());
+                held.UnionWith(await _db.BookingPackageSelections
+                    .Where(x => ids.Contains(x.MenuItemId)).Select(x => x.MenuItemId).ToListAsync());
+
+                if (held.Count > 0)
+                {
+                    var names = packageOnly.Where(m => held.Contains(m.Id))
+                                           .Select(m => m.ItemName).OrderBy(n => n).ToList();
+                    return Conflict(new { message = $"These package-only dishes are still used elsewhere: {string.Join(", ", names)}. Give them a tray price on the Menu tab so they can stand alone, then delete the package." });
+                }
+            }
+
+            // Priced dishes survive on their own; the rest go with the package.
+            foreach (var item in attached.Where(m => m.PricePerTray is not null))
+                item.MenuPackageId = null;
+            _db.MenuItems.RemoveRange(packageOnly);
+
+            var old = ToDto(pkg);
+            var imageUrls = pkg.Images.Select(i => i.ImageUrl).ToList();
+
+            _db.MenuPackages.Remove(pkg);   // cascades to slots, fixed-item links and images
+            await _db.SaveChangesAsync();
+
+            // Only after the rows are gone, same order as RemoveImage — files deleted ahead
+            // of a failed commit would leave gallery entries pointing at nothing.
+            foreach (var url in imageUrls)
+                ImageUploadHelper.DeleteImage(_env, url);
+
+            await _audit.LogAsync(User, AuditAction.DELETE, "MENU_PACKAGE", id.ToString(), old, null);
+            return NoContent();
         }
 
         // ---------------- Slots (granular add / edit / remove) ----------------
@@ -196,18 +283,26 @@ namespace System_ApiTest.Controllers
             slot.ChooseCount = dto.ChooseCount;
             slot.DisplayOrder = dto.DisplayOrder;
 
-            _db.SlotCategories.RemoveRange(slot.AllowedCategories);
-            slot.AllowedCategories.Clear();
+            var oldCats = slot.AllowedCategories.ToList();
+            _db.SlotCategories.RemoveRange(oldCats);
+            
             foreach (var cat in dto.AllowedCategories)
-                slot.AllowedCategories.Add(new SlotCategory
+            {
+                _db.SlotCategories.Add(new SlotCategory
                 {
                     MenuPackageSlotId = slotId,
                     ItemCategory = cat.ItemCategory,
                     CourseCategory = cat.CourseCategory
                 });
-
+            }
             await _db.SaveChangesAsync();
-            return Ok(SlotToDto(slot));
+
+            var updatedSlot = await _db.MenuPackageSlots
+                .Include(s => s.AllowedCategories)
+                .AsNoTracking()
+                .FirstAsync(s => s.Id == slotId);
+
+            return Ok(SlotToDto(updatedSlot));
         }
 
         /// <summary>Removes a slot. Blocked if any booking already has selections for it.</summary>
@@ -232,12 +327,87 @@ namespace System_ApiTest.Controllers
             return NoContent();
         }
 
+        // ---------------- Gallery images ----------------
+
+        /// <summary>
+        /// Adds one photo to a package's gallery. Multipart, same shape as the menu-item
+        /// and rental uploads; validation and the 5 MB cap come from ImageUploadHelper.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{packageId:guid}/images")]
+        public async Task<IActionResult> AddImage(Guid packageId, [FromForm] MenuPackageImageInputDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var exists = await _db.MenuPackages.AnyAsync(p => p.Id == packageId);
+            if (!exists) return NotFound();
+
+            if (dto.ImageFile is null || dto.ImageFile.Length == 0)
+                return BadRequest(new { message = "Choose an image to upload." });
+
+            var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
+            if (!isValid) return BadRequest(new { message = imageError });
+
+            var count = await _db.MenuPackageImages.CountAsync(i => i.MenuPackageId == packageId);
+            if (count >= MaxImagesPerPackage)
+                return BadRequest(new { message = $"A package can carry at most {MaxImagesPerPackage} images." });
+
+            var url = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "packages");
+
+            var image = new Menupackageimage
+            {
+                MenuPackageId = packageId,
+                ImageUrl = url,
+                Caption = string.IsNullOrWhiteSpace(dto.Caption) ? null : dto.Caption.Trim(),
+                // Appended to the end of the existing gallery.
+                DisplayOrder = count
+            };
+
+            _db.MenuPackageImages.Add(image);
+            try
+            {
+                await _db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                ImageUploadHelper.DeleteImage(_env, url);
+                throw;
+            }
+
+            var result = new MenuPackageImageDto(image.Id, image.ImageUrl, image.Caption, image.DisplayOrder);
+            await _audit.LogAsync(User, AuditAction.CREATE, "MENU_PACKAGE_IMAGE", image.Id.ToString(), null, result);
+            return Ok(result);
+        }
+
+        /// <summary>Removes one gallery photo and deletes the file behind it.</summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpDelete("{packageId:guid}/images/{imageId:guid}")]
+        public async Task<IActionResult> RemoveImage(Guid packageId, Guid imageId)
+        {
+            var image = await _db.MenuPackageImages
+                .FirstOrDefaultAsync(i => i.Id == imageId && i.MenuPackageId == packageId);
+            if (image is null) return NotFound();
+
+            var old = new MenuPackageImageDto(image.Id, image.ImageUrl, image.Caption, image.DisplayOrder);
+
+            _db.MenuPackageImages.Remove(image);
+            await _db.SaveChangesAsync();
+
+            // Only after the row is gone — a file deleted ahead of a failed commit would
+            // leave a gallery entry pointing at nothing.
+            ImageUploadHelper.DeleteImage(_env, image.ImageUrl);
+
+            await _audit.LogAsync(User, AuditAction.DELETE, "MENU_PACKAGE_IMAGE", imageId.ToString(), old, null);
+            return NoContent();
+        }
+
         // ---------------- Helpers ----------------
 
         private IQueryable<Menupackage> LoadGraph() =>
             _db.MenuPackages
                 .Include(p => p.Slots).ThenInclude(s => s.AllowedCategories)
-                .Include(p => p.FixedItems).ThenInclude(f => f.MenuItem);
+                .Include(p => p.FixedItems).ThenInclude(f => f.MenuItem)
+                .Include(p => p.Images);
 
         private async Task<string?> ValidateFixedItemsAsync(List<Guid> ids)
         {
@@ -261,7 +431,10 @@ namespace System_ApiTest.Controllers
             new(p.Id, p.PackageName, p.Description, p.BasePrice, p.MinPax, p.MaxPax, p.PricePerExtraPax,
                 p.Inclusions,
                 p.Slots.OrderBy(s => s.DisplayOrder).Select(SlotToDto).ToList(),
-                p.FixedItems.Select(f => Brief(f.MenuItem)).ToList());
+                p.FixedItems.Select(f => Brief(f.MenuItem)).ToList(),
+                p.Images.OrderBy(i => i.DisplayOrder).ThenBy(i => i.Id)
+                        .Select(i => new MenuPackageImageDto(i.Id, i.ImageUrl, i.Caption, i.DisplayOrder))
+                        .ToList());
     }
 }
  

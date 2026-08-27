@@ -1,0 +1,1129 @@
+/* ══════════════════════════════════════════════════════════════════════
+   Landing layout — the plum direction.
+
+   Layout only. Containers, type, buttons, fields, chips and the dialog live
+   in src/styles/ui.css; this sheet is the arrangements that exist on the
+   landing page and nowhere else.
+
+   Every value reads a token from index.css, so light and dark are one sheet
+   rather than two: `.dark` rebinds --surface, --text-primary and the rest,
+   and everything below follows without a single `.dark` rule of its own.
+   The one exception is commented where it appears.
+   ══════════════════════════════════════════════════════════════════════ */
+
+@import '../../styles/ui.css';
+
+/* ══ Hero ═════════════════════════════════════════════════════════════
+   Two columns of equal weight: the pitch on the left, the date picker on
+   the right. The picker used to live in a modal three sections down; the
+   whole point of this layout is that "is my date free" is answerable in
+   the fold, without a click.
+   ═════════════════════════════════════════════════════════════════════ */
+
+.lp-hero {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 560px;
+  background: var(--bg);
+}
+
+/* The hero is full-bleed, but its copy has to start on the same vertical as every
+   section heading below it. Left column is W/2 wide; the wrap's text edge sits at
+   (W − 1200)/2 + 40. Right-aligning a box of W/2 − ((W − 1200)/2 + 40) = 560px
+   hits that edge — the W terms cancel, so one constant holds at every width above
+   the container cap. Below it, a plain 40px gutter does the same job. */
+.lp-hero-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 72px 48px 72px 0;
+  max-width: 560px;
+  justify-self: end;
+  width: 100%;
+}
+
+.lp-hero-media {
+  position: relative;
+  display: flex;
+  /* Bottom-centre: anchored to the foot of the backdrop, centred across it.
+     Dead-centre floated the panel with the photograph split evenly above and
+     below, which read as unplaced rather than seated. */
+  align-items: flex-end;
+  justify-content: center;
+  padding: 28px;
+  overflow: hidden;
+  /* The plum sits under the media rather than beside it, so a slow or failed
+     load degrades to a brand surface instead of white. */
+  background-color: var(--primary);
+}
+
+/* Stacked layers, because a <video> cannot be a background-image. Each fills the
+   column and cross-fades on opacity; only the active one is painted. */
+.lp-hero-layers { position: absolute; inset: 0; }
+.lp-hero-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 1.1s ease;
+}
+.lp-hero-layer.is-on { opacity: 1; }
+
+/* The calendar sits above every layer and stays clickable — the layers are
+   decorative and must never intercept a press meant for a date. */
+/* Behind both hero columns. The photo column paints its own opaque ground over
+   this, so in practice the weather reads behind the headline — which is where it
+   was asked for. pointer-events are off, so nothing can intercept a press. */
+.lp-hero-ambient { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.lp-hero-copy, .lp-hero-media { position: relative; z-index: 1; }
+
+.lp-hero-fore {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-hero-layer { transition: none; }
+}
+
+.lp-stats {
+  display: flex;
+  gap: 36px;
+  flex-wrap: wrap;
+  margin-top: 44px;
+  padding-top: 26px;
+  border-top: 1px solid var(--border);
+}
+.lp-stat-value {
+  font-family: var(--font-numeric);
+  font-size: 1.625rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-primary);
+  margin: 0;
+}
+.lp-stat-label {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+/* ══ Availability calendar ═══════════════════════════════════════════ */
+
+.lp-cal {
+  width: 100%;
+  /* Capped so the panel stays a card on a 2560px monitor rather than a 1000px
+     wide sheet of 30px date cells. */
+  max-width: 520px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--r-xl);
+  padding: 20px 22px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.lp-cal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.lp-cal-month {
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.lp-cal-count {
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+.lp-cal-nav {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-full);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.lp-cal-nav:hover { background: var(--primary-muted); color: var(--text-primary); }
+
+
+/* ── calendar accordion ──
+   Only the month label toggles, never the whole header: the prev/next month
+   buttons sit in that header, and a header-wide target would collapse the panel
+   every time someone changed month.
+
+   Collapsed via grid-template-rows 1fr -> 0fr rather than max-height, so the
+   grid animates to its real height with no magic number to keep in sync. */
+.lp-cal-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+.lp-cal-collapse.is-open { grid-template-rows: 1fr; }
+.lp-cal-collapse > * { overflow: hidden; min-height: 0; }
+
+.lp-cal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+}
+.lp-cal-toggle:hover { color: var(--text-primary); }
+.lp-cal-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.lp-cal-caret { transition: transform 0.3s ease; }
+.lp-cal-toggle[aria-expanded='false'] .lp-cal-caret { transform: rotate(-90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-cal-collapse, .lp-cal-caret { transition: none; }
+}
+.lp-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.lp-cal-dow {
+  font-family: var(--font-numeric);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-muted);
+  text-align: center;
+  padding-bottom: 6px;
+}
+
+.lp-cal-day {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  line-height: 30px;
+  height: 30px;
+  text-align: center;
+  color: var(--text-primary);
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.lp-cal-day:hover { background: var(--primary-muted); }
+
+/* Today is an outline, not a fill — a fill here competes with the selected
+   day, and only one of the two is a choice the visitor made. */
+.lp-cal-day--today { box-shadow: inset 0 0 0 1px var(--border-strong); font-weight: 600; }
+
+.lp-cal-day--past,
+.lp-cal-day--booked {
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.lp-cal-day--past:hover,
+.lp-cal-day--booked:hover { background: transparent; }
+.lp-cal-day--booked { text-decoration: line-through; }
+
+.lp-cal-day--selected,
+.lp-cal-day--selected:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.lp-cal-day:focus-visible,
+.lp-cal-nav:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lp-cal-note {
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 12px 0 0;
+  min-height: 2.2em;
+}
+.lp-cal-note small {
+  display: block;
+  font-size: 0.625rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.lp-cal-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.lp-cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+.lp-cal-swatch { width: 8px; height: 8px; border-radius: var(--r-full); flex: none; }
+
+/* ══ Services ════════════════════════════════════════════════════════
+   Three columns divided by rules rather than boxed into cards: the copy is
+   the content, and three bordered cards would give equal visual weight to
+   the container.
+   ═════════════════════════════════════════════════════════════════════ */
+
+.lp-svc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 28px;
+}
+.lp-svc-col {
+  background: var(--bg);
+  padding: 26px 24px;
+}
+.lp-svc-col:first-child { padding-left: 0; }
+.lp-svc-col:last-child { padding-right: 0; }
+
+.lp-svc-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  text-decoration: none;
+}
+.lp-svc-title {
+  font-family: var(--font-display);
+  font-size: 1.3125rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  margin: 0;
+  transition: color 0.2s;
+}
+.lp-svc-head:hover .lp-svc-title { color: var(--accent); }
+
+.lp-gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.lp-gallery img {
+  width: 100%;
+  height: 260px;
+  object-fit: cover;
+  border-radius: var(--r-xl);
+  background: var(--bg-subtle);
+  display: block;
+}
+
+/* ══ Packages ════════════════════════════════════════════════════════ */
+
+
+
+.lp-pkg-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
+}
+.lp-pkg-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+.lp-pkg-card--featured { border-color: var(--border-accent); }
+
+.lp-pkg-media {
+  height: 150px;
+  background: var(--bg-subtle);
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+.lp-pkg-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  font-family: var(--font-body);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--accent);
+  padding: 5px 10px;
+  border-radius: var(--r-full);
+}
+
+.lp-pkg-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 18px 20px 20px;
+}
+.lp-pkg-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.lp-pkg-name {
+  font-family: var(--font-display);
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.lp-pkg-price {
+  font-family: var(--font-numeric);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.lp-pkg-desc {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 18px;
+}
+.lp-pkg-body .ui-btn { margin-top: auto; }
+
+/* ══ Menu preview ════════════════════════════════════════════════════ */
+
+
+
+.lp-dish-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-dish-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+
+.lp-dish-media {
+  display: block;
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  background: var(--bg-subtle);
+  filter: var(--menu-img-filter);
+}
+.lp-dish-media--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: none;
+}
+
+.lp-dish-body { padding: 14px 16px 16px; }
+.lp-dish-name {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.lp-dish-meta {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* ══ Testimonials ════════════════════════════════════════════════════ */
+
+
+
+.testi-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Scroll reveal. `testi-pending` is only ever added by script, so with JS off
+   or reduced-motion set the cards render in their final state. */
+.testi-pending { opacity: 0; transform: translateY(14px); }
+.testi-in {
+  opacity: 1;
+  transform: none;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .testi-pending { opacity: 1; transform: none; }
+  .testi-in { transition: none; }
+}
+
+.lp-testi-quote {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
+  flex: 1;
+}
+.lp-testi-who { display: flex; align-items: center; gap: 12px; }
+.lp-avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--r-full);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lp-testi-name {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+}
+.lp-testi-meta {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: block;
+}
+
+/* ══ Closing band ════════════════════════════════════════════════════
+   Uses the .dark-band tokens rather than --primary, so it stays a dark band
+   in dark mode instead of flipping to the light rose that --primary becomes.
+   ═════════════════════════════════════════════════════════════════════ */
+
+.lp-cta {
+  background: var(--band-bg);
+  padding: 88px 0;
+  text-align: center;
+}
+.lp-cta .ui-h2 { color: var(--band-text); max-width: 20ch; margin: 0 auto 16px; }
+.lp-cta-lead {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--band-muted);
+  max-width: 52ch;
+  margin: 0 auto 32px;
+}
+.lp-cta .ui-kicker { color: var(--band-accent); }
+.lp-cta-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.lp-cta-fine {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  color: var(--band-muted);
+  margin: 20px 0 0;
+}
+
+/* ══ Footer ══════════════════════════════════════════════════════════ */
+
+.lp-footer {
+  background: var(--bg-subtle);
+  border-top: 1px solid var(--border);
+  padding: 36px 0;
+}
+.lp-footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.lp-footer-mark {
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.lp-footer-links { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.lp-footer-links a {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.lp-footer-links a:hover { color: var(--text-primary); }
+.lp-footer-legal {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* ══ Responsive ══════════════════════════════════════════════════════ */
+
+/* Between the container cap and the nav collapse the page is edge-to-edge, so the
+   hero copy takes a plain gutter instead of the right-aligned 560px box. */
+@media (max-width: 1200px) {
+  .lp-hero-copy { max-width: none; padding-left: 40px; }
+}
+
+@media (max-width: 1020px) {
+  .lp-hero { grid-template-columns: 1fr; min-height: 0; }
+  .lp-hero-copy { padding: 56px 32px; max-width: none; justify-self: stretch; }
+  .lp-hero-media { min-height: 460px; padding: 20px; }
+
+  .lp-svc-grid { grid-template-columns: 1fr 1fr; }
+  .lp-svc-col { padding: 24px; }
+  .lp-svc-col:first-child { padding-left: 24px; }
+  .lp-svc-col:last-child { padding-right: 24px; }
+}
+
+@media (max-width: 640px) {
+  .lp-hero-copy { padding: 44px 20px; }
+  .lp-hero-media { min-height: 420px; padding: 16px; }
+  .lp-stats { gap: 24px; margin-top: 32px; }
+
+  .lp-svc-grid { grid-template-columns: 1fr; }
+  .lp-svc-col { padding: 22px 0; }
+  .lp-svc-col:first-child { padding-left: 0; }
+  .lp-svc-col:last-child { padding-right: 0; }
+
+  .lp-gallery { grid-template-columns: 1fr; }
+  .lp-gallery img { height: 200px; }
+
+  .lp-cta { padding: 64px 0; }
+  .lp-footer-inner { flex-direction: column; align-items: flex-start; }
+}
+
+/* ══ Packages — asymmetric bento ══════════════════════════════════════
+   A 1.45fr featured card beside a stacked pair, not three equal columns.
+   The right column is nudged down 34px and the Custom card indented 36px,
+   so the row reads as one composition with a clear lead rather than a rank
+   of three. Both offsets collapse at the tablet breakpoint.
+   ═════════════════════════════════════════════════════════════════════ */
+
+.lp-pkg-bento {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+/* ── Featured ── */
+/* Plum in both themes: this card is a brand surface like .dark-band, so it
+   takes the band tokens rather than --primary, which flips light in dark. */
+.lp-pkg-hero {
+  background: var(--band-bg);
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(27, 16, 36, 0.16);
+  display: flex;
+  flex-direction: column;
+}
+.lp-pkg-hero-media {
+  height: 250px;
+  background-color: var(--band-bg);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.85;
+  flex: none;
+}
+.lp-pkg-hero-body {
+  padding: 30px 32px 32px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 26px;
+  align-items: end;
+  flex: 1;
+}
+.lp-pkg-hero-kicker {
+  font-family: var(--font-numeric);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--band-accent-soft, #f2c1d1);
+  margin-bottom: 11px;
+}
+.lp-pkg-hero-name {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.032em;
+  color: var(--band-text);
+  margin: 0 0 12px;
+}
+.lp-pkg-hero-desc {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--band-muted);
+  max-width: 38ch;
+  margin: 0;
+}
+.lp-pkg-hero-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 16px;
+}
+.lp-pkg-hero-price {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--band-accent-soft, #f2c1d1);
+  white-space: nowrap;
+}
+
+/* ── Stacked pair ── */
+.lp-pkg-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 34px;
+}
+
+/* Birthday: image beside the copy, not above it. */
+.lp-pkg-side {
+  background: var(--surface);
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  grid-template-columns: 118px 1fr;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-pkg-side:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.lp-pkg-side-media {
+  background-color: var(--bg-subtle);
+  background-size: cover;
+  background-position: center;
+}
+.lp-pkg-side-body { padding: 20px 22px; }
+
+/* Custom: no image, indented so the stack steps rather than stacks square. */
+.lp-pkg-custom {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 22px;
+  margin-left: 36px;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-pkg-custom:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+
+/* Nothing in the catalog to sit beside it — the wide column would read as a hole,
+   so the bento collapses and the step-in nudges reset with it. */
+.lp-pkg-bento--solo { grid-template-columns: 1fr; }
+.lp-pkg-bento--solo .lp-pkg-stack { margin-top: 0; }
+.lp-pkg-bento--solo .lp-pkg-custom { margin-left: 0; }
+
+/* Loading placeholders shaped like the cards they stand in for, so the section
+   holds its height instead of reflowing when the catalog lands. */
+@keyframes lpPkgShimmer { 0% { background-position: -450px 0; } 100% { background-position: 450px 0; } }
+.lp-pkg-skel {
+  background: linear-gradient(90deg, var(--border) 0%, var(--bg-subtle) 40%, var(--border) 80%);
+  background-size: 450px 100%;
+  animation: lpPkgShimmer 1.4s ease-in-out infinite;
+  box-shadow: none;
+  min-height: 430px;
+}
+.lp-pkg-side.lp-pkg-skel { min-height: 160px; }
+@media (prefers-reduced-motion: reduce) { .lp-pkg-skel { animation: none; } }
+
+.lp-pkg-row2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.lp-pkg-title2 {
+  font-family: var(--font-display);
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.lp-pkg-price2 {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.lp-pkg-price2--custom { color: var(--accent); }
+.lp-pkg-desc2 {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 14px;
+}
+
+/* Catalog descriptions are admin-authored and unbounded, so both card copies are
+   clamped: the bento's proportions are the design, and a long menu list would
+   otherwise stretch one column past the other. Scoped to .lp-pkg-side so the
+   Custom card, which isn't a catalog package, keeps its own fixed copy. */
+.lp-pkg-hero-desc,
+.lp-pkg-side .lp-pkg-desc2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+/* ══ Menu — hero dish, medium, compact column ═════════════════════════ */
+
+.lp-dish-bento {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.lp-dish-hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  overflow: hidden;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-dish-hero:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.lp-dish-hero-media { height: 236px; }
+.lp-dish-hero-body { padding: 20px 22px; }
+.lp-dish-hero-name {
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  margin: 0;
+}
+.lp-dish-hero-price {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.lp-dish-mid {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-top: 26px;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-dish-mid:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.lp-dish-mid-media { height: 150px; }
+.lp-dish-mid-body { padding: 16px 18px; }
+.lp-dish-mid-name {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.lp-dish-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 56px;
+}
+.lp-dish-mini {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  transition: transform 0.25s, box-shadow 0.25s;
+}
+.lp-dish-mini:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.lp-dish-mini-body { padding: 14px 16px; }
+.lp-dish-mini-name {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.lp-dish-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 7px;
+}
+.lp-dish-price-sm {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* The catalog is bigger than the four slots above — this says so and offers
+   the way through, rather than letting the section imply the menu is four dishes. */
+.lp-dish-more {
+  border: 1px dashed var(--border-strong);
+  border-radius: 18px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.lp-dish-more:hover { border-color: var(--border-accent); background: var(--accent-muted); }
+
+/* Shared photo-slot ground for every dish tile. */
+.lp-dish-slot {
+  background: var(--bg-subtle);
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-numeric);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.lp-dish-slot img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: var(--menu-img-filter);
+}
+
+/* ══ Testimonials — plum band, featured quote ═════════════════════════ */
+
+.lp-testi-band { background: var(--band-bg); }
+
+/* ── ambient canvas ──
+   The canvas fills the band behind the copy. .lp-testi-fore lifts the text into
+   its own stacking context so the rain can never sit over a quote, and the
+   canvas takes no pointer events so it cannot swallow a click either. */
+.lp-testi-band { position: relative; overflow: hidden; }
+.lp-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  display: block;
+}
+.lp-testi-fore { position: relative; z-index: 1; }
+.lp-testi-bento {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.lp-testi-lead {
+  background: var(--band-glass);
+  border: 1px solid var(--band-glass-border);
+  border-radius: 26px;
+  padding: 34px 34px 30px;
+}
+.lp-testi-mark {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 0.6;
+  color: var(--band-quote, #e8709a);
+  margin-bottom: 18px;
+}
+.lp-testi-lead-quote {
+  font-family: var(--font-display);
+  font-size: 1.5625rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  color: var(--band-text);
+  max-width: 34ch;
+  margin: 0 0 26px;
+}
+.lp-testi-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 30px;
+}
+.lp-testi-small {
+  background: var(--band-glass);
+  border: 1px solid var(--band-glass-border);
+  border-radius: 20px;
+  padding: 22px 24px;
+}
+.lp-testi-small-quote {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--band-text);
+  margin: 0 0 18px;
+}
+.lp-testi-who2 { display: flex; align-items: center; gap: 12px; }
+.lp-avatar-band {
+  border-radius: var(--r-full);
+  background: var(--band-chip);
+  color: var(--band-chip-text);
+  font-family: var(--font-body);
+  font-weight: 600;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lp-avatar-band--lg { width: 40px; height: 40px; font-size: 0.8125rem; }
+.lp-avatar-band--sm { width: 32px; height: 32px; font-size: 0.6875rem; }
+.lp-testi-name2 {
+  display: block;
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--band-text);
+}
+.lp-testi-meta2 {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  color: var(--band-muted);
+  margin-top: 4px;
+}
+
+/* ══ Footer — deep plum, in both themes ══════════════════════════════ */
+
+.lp-footer-dark {
+  background: var(--band-footer, #1b1024);
+  border-top: none;
+  padding: 36px 0;
+}
+.lp-footer-dark .lp-footer-mark { color: var(--band-text); }
+.lp-footer-dark .lp-footer-links a { color: var(--band-muted); font-size: 0.75rem; }
+.lp-footer-dark .lp-footer-links a:hover { color: var(--band-text); }
+.lp-footer-dark .lp-footer-legal { color: var(--band-muted); }
+
+/* ══ Responsive ══════════════════════════════════════════════════════
+   Every offset (the 34/36/26/56/30px nudges) exists to make a wide row read
+   as one composition. Below the tablet breakpoint the columns stack, so the
+   offsets would just be stray indents — they all reset to 0.
+   ═════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1020px) {
+  .lp-pkg-bento { grid-template-columns: 1fr; }
+  .lp-pkg-stack { margin-top: 0; flex-direction: row; }
+  .lp-pkg-stack > * { flex: 1; }
+  .lp-pkg-custom { margin-left: 0; }
+
+  .lp-dish-bento { grid-template-columns: 1fr 1fr; }
+  .lp-dish-mid, .lp-dish-col { margin-top: 0; }
+  .lp-dish-col { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+  .lp-dish-col > * { flex: 1 1 220px; }
+
+  .lp-testi-bento { grid-template-columns: 1fr; }
+  .lp-testi-stack { margin-top: 0; flex-direction: row; }
+  .lp-testi-stack > * { flex: 1; }
+}
+
+@media (max-width: 640px) {
+  .lp-pkg-stack { flex-direction: column; }
+  .lp-pkg-hero-media { height: 190px; }
+  .lp-pkg-hero-body { grid-template-columns: 1fr; gap: 18px; padding: 24px; }
+  .lp-pkg-hero-side { align-items: flex-start; flex-direction: row; justify-content: space-between; width: 100%; }
+  .lp-pkg-hero-name { font-size: 1.625rem; }
+
+  .lp-dish-bento { grid-template-columns: 1fr; }
+  .lp-dish-hero-media { height: 190px; }
+  .lp-dish-col { flex-direction: column; }
+
+  .lp-testi-stack { flex-direction: column; }
+  .lp-testi-lead { padding: 26px 22px; }
+  .lp-testi-lead-quote { font-size: 1.25rem; }
+  .lp-footer-dark .lp-footer-inner { flex-direction: column; align-items: flex-start; }
+}
+
+/* ── ambient ground (Menus, Rentals) ──
+   The canvas fills its wrapper and sits behind the content. .amb-over sections
+   are deliberately semi-transparent so it reads through them; the page's own
+   opaque ground stays underneath, so a section still has a real background if
+   the effect is off (reduced motion) or off screen. */
+.amb-host { position: relative; }
+.amb-host > .lp-ambient { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+/* Transparent, NOT a semi-transparent tint. The sections sit at z-index 1 and
+   the canvas at 0, so any fill here paints straight over the effect: an 80% mix
+   left the 0.05-alpha drops at roughly 0.01 — present in the DOM, invisible on
+   screen. The page's own ground still shows through from <main>, so a section
+   keeps a real background when the effect is off or scrolled away. */
+.amb-over { position: relative; z-index: 1; background: transparent; }

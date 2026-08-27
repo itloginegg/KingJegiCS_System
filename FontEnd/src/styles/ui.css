@@ -1,0 +1,598 @@
+/* ══════════════════════════════════════════════════════════════════════
+   UI primitives — the plum direction.
+
+   The pieces section 00 of the design direction specifies as components:
+   containers, type scale, buttons, fields, the segmented control, chips,
+   status pills, alerts, cards and dialogs. Everything an area-specific
+   sheet builds on top of.
+
+   Every value reads a token from index.css, so light and dark are one sheet
+   rather than two: `.dark` rebinds --surface, --text-primary and the rest,
+   and everything below follows without a single `.dark` rule of its own.
+
+   These were originally written inside components/landing/landing.css. They
+   moved here the moment a second area needed them — one button class in the
+   codebase, not one per screen.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Containers ───────────────────────────────────────────────────────
+   Gutters follow the foundations grid: 20px under 640, 32px to 1020, 40px
+   and a 1200 cap above it. */
+
+.ui-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+
+.ui-section {
+  padding: 88px 0;
+  position: relative;
+}
+.ui-section--tight { padding: 64px 0; }
+
+/* ── Type ─────────────────────────────────────────────────────────── */
+
+.ui-kicker {
+  font-family: var(--font-numeric);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.ui-h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2.375rem, 5vw, 3.875rem);
+  font-weight: 600;
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  color: var(--text-primary);
+  text-wrap: balance;
+  margin: 0 0 20px;
+}
+
+.ui-h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 3.2vw, 2.375rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  text-wrap: balance;
+  margin: 0;
+}
+
+.ui-h3 {
+  font-family: var(--font-display);
+  font-size: 1.3125rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.ui-lead {
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 44ch;
+  text-wrap: pretty;
+  margin: 0 0 30px;
+}
+
+.ui-body {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* Prices, counts, dates. Tabular by construction, so a column of pesos lines
+   up without a per-table font-variant-numeric override. */
+.ui-num {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Section header — flush left, optional trailing link ──────────── */
+
+.ui-sec-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+
+.ui-sec-link {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+.ui-sec-link:hover { color: var(--accent-hover); }
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+
+.ui-btn {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  padding: 16px 28px;
+  border-radius: var(--r-full);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+.ui-btn-accent { background: var(--accent); color: var(--accent-text); }
+.ui-btn-accent:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); box-shadow: var(--shadow-gold); }
+
+.ui-btn-primary { background: var(--primary); color: var(--primary-text); }
+.ui-btn-primary:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-green); }
+
+.ui-btn-outline {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.ui-btn-outline:hover:not(:disabled) { background: var(--primary-muted); }
+
+.ui-btn-ghost { background: transparent; color: var(--accent); }
+.ui-btn-ghost:hover:not(:disabled) { background: var(--accent-muted); }
+
+.ui-btn-danger { background: var(--danger); color: var(--danger-text); }
+.ui-btn-danger:hover:not(:disabled) { filter: brightness(0.94); transform: translateY(-1px); }
+
+/* On a .dark-band section, where --primary and --accent are both wrong: they
+   flip light in dark mode, and a band stays dark in both. The edge is not
+   decoration — in light the chip is near-white on a near-black band and reads
+   on its own; in dark it is #241531 on #120a18, 1.3:1, an invisible button.
+   --band-chip-edge is `transparent` in light, so one declaration covers both. */
+.ui-btn-band {
+  background: var(--band-chip);
+  color: var(--band-chip-text);
+  border-color: var(--band-chip-edge);
+}
+.ui-btn-band:hover:not(:disabled) {
+  background: var(--band-accent);
+  color: var(--band-accent-text);
+  border-color: var(--band-accent);
+  transform: translateY(-1px);
+}
+.ui-btn-band-outline { background: transparent; color: var(--band-text); border-color: var(--band-border); }
+.ui-btn-band-outline:hover:not(:disabled) { background: var(--band-glass); }
+
+.ui-btn-sm { padding: 12px 20px; font-size: 0.8125rem; }
+.ui-btn-xs { padding: 9px 14px; font-size: 0.75rem; }
+.ui-btn-block { width: 100%; }
+
+.ui-btn:disabled,
+.ui-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* A spinner that occupies the same box as nothing, so a button does not
+   resize when it enters its pending state. */
+.ui-spinner {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: var(--r-full);
+  border: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-top-color: currentColor;
+  animation: ui-spin 0.7s linear infinite;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ui-spinner { animation-duration: 2.4s; }
+}
+
+/* ── Focus ────────────────────────────────────────────────────────────
+   One ring for everything interactive. Never the browser default. */
+.ui-btn:focus-visible,
+.ui-sec-link:focus-visible,
+.ui-input:focus-visible,
+.ui-input:focus,
+.ui-seg-opt:focus-visible,
+.ui-chip:focus-visible,
+.ui-option:focus-visible,
+.ui-icon-btn:focus-visible,
+.ui-check input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Kicker pill ──────────────────────────────────────────────────── */
+
+.ui-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  background: var(--accent-muted);
+  padding: 7px 13px;
+  border-radius: var(--r-full);
+  margin-bottom: 22px;
+}
+.ui-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  flex: none;
+}
+.ui-pill-text {
+  font-family: var(--font-body);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* ── Fields ───────────────────────────────────────────────────────── */
+
+.ui-field { display: flex; flex-direction: column; }
+
+.ui-label {
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+/* A label row that also carries a trailing action ("Forgot password?"). */
+.ui-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.ui-label-row .ui-label { margin-bottom: 0; }
+
+.ui-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  line-height: 1.2;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 14px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ui-input::placeholder { color: var(--text-dim); }
+.ui-input:focus,
+.ui-input:focus-visible { border-color: transparent; }
+.ui-input:disabled { background: var(--bg-subtle); opacity: 0.6; cursor: not-allowed; }
+.ui-input--invalid { border-color: var(--danger); }
+.ui-input--invalid:focus-visible { outline-color: var(--danger); }
+
+/* select needs its own arrow — the native one renders in the UA's colours and
+   goes invisible on the dark surface. */
+select.ui-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 19px) calc(50% + 1px), calc(100% - 14px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.ui-hint {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 8px 0 0;
+}
+
+.ui-error {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--danger);
+  margin: 8px 0 0;
+}
+
+/* Native checkbox, themed. accent-color keeps the control a real checkbox —
+   keyboard, indeterminate state and platform semantics intact. */
+.ui-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.ui-check input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Segmented control ────────────────────────────────────────────── */
+
+.ui-seg {
+  display: flex;
+  gap: 6px;
+  background: var(--secondary-muted);
+  padding: 4px;
+  border-radius: var(--r-full);
+}
+.ui-seg-opt {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 11px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.ui-seg-opt:hover { color: var(--text-primary); }
+.ui-seg-opt[aria-selected="true"],
+.ui-seg-opt[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ── Chips (filter pills) ─────────────────────────────────────────── */
+
+.ui-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.ui-chip {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  padding: 9px 16px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.ui-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.ui-chip--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-text);
+  font-weight: 600;
+}
+
+/* ── Status pills ─────────────────────────────────────────────────────
+   The five status-ramp roles plus a neutral. Kept off --accent on purpose:
+   a Pending badge that reads as a Confirmed one is worse than a badge
+   slightly off-palette. */
+
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border-radius: var(--r-full);
+  white-space: nowrap;
+}
+.ui-status--paid    { background: color-mix(in srgb, var(--status-paid) 14%, transparent);    color: var(--status-paid); }
+.ui-status--info    { background: color-mix(in srgb, var(--status-info) 14%, transparent);    color: var(--status-info); }
+.ui-status--refund  { background: color-mix(in srgb, var(--status-refund) 14%, transparent);  color: var(--status-refund); }
+.ui-status--unpaid  { background: color-mix(in srgb, var(--status-unpaid) 14%, transparent);  color: var(--status-unpaid); }
+.ui-status--partial { background: color-mix(in srgb, var(--status-partial) 14%, transparent); color: var(--status-partial); }
+.ui-status--warning { background: var(--warning-muted); color: var(--warning); }
+.ui-status--danger  { background: var(--danger-muted);  color: var(--danger); }
+.ui-status--neutral { background: var(--secondary-muted); color: var(--text-muted); }
+
+/* ── Alerts ───────────────────────────────────────────────────────────
+   Fill at the muted token, border at the base token dimmed to ~28%, so the
+   box reads as one object rather than a tint with a hard edge. */
+
+.ui-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  border: 1px solid;
+}
+.ui-alert svg { flex: none; margin-top: 1px; }
+
+.ui-alert--danger  { background: var(--danger-muted);  border-color: color-mix(in srgb, var(--danger) 28%, transparent);  color: var(--danger-ink); }
+.ui-alert--warning { background: var(--warning-muted); border-color: color-mix(in srgb, var(--warning) 28%, transparent); color: var(--warning); }
+.ui-alert--success { background: color-mix(in srgb, var(--status-paid) 12%, transparent); border-color: color-mix(in srgb, var(--status-paid) 28%, transparent); color: var(--status-paid); }
+.ui-alert--info    { background: var(--accent-muted);  border-color: var(--border-accent); color: var(--accent); }
+
+/* ── Cards ────────────────────────────────────────────────────────── */
+
+.ui-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sm);
+}
+.ui-card--pad { padding: 24px; }
+.ui-card--lift { transition: transform 0.25s, box-shadow 0.25s; }
+.ui-card--lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+
+/* ── Icon button ──────────────────────────────────────────────────── */
+
+.ui-icon-btn {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.ui-icon-btn:hover { background: var(--primary-muted); color: var(--text-primary); }
+.ui-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ui-icon-btn:disabled:hover { background: transparent; color: var(--text-muted); }
+
+/* ── Dialog ───────────────────────────────────────────────────────── */
+
+.ui-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(27, 16, 36, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.ui-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  margin: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2xl);
+  box-shadow: var(--shadow-lg);
+  padding: 28px;
+}
+.ui-dialog--wide { max-width: 640px; }
+
+.ui-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-full);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.ui-dialog-close:hover { background: var(--primary-muted); color: var(--text-primary); }
+
+.ui-dialog-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+.ui-dialog-sub {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+/* ── Option list (a dialog's choices) ─────────────────────────────── */
+
+.ui-options { display: flex; flex-direction: column; gap: 10px; }
+
+.ui-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.ui-option:hover { border-color: var(--border-accent); background: var(--accent-muted); }
+.ui-option-icon { font-size: 1.25rem; line-height: 1.2; flex: none; }
+.ui-option strong {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ui-option small {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+
+@media (max-width: 1020px) {
+  .ui-wrap { padding: 0 32px; }
+  .ui-section { padding: 64px 0; }
+}
+
+@media (max-width: 640px) {
+  .ui-wrap { padding: 0 20px; }
+  .ui-section { padding: 52px 0; }
+}

@@ -18,9 +18,11 @@ namespace System_ApiTest.Controllers
     {
         private readonly AppDbContext _db;
         private readonly Paymentservice _payments;
+        private readonly Auditlogservice _audit;
 
-        public PaymentsController(AppDbContext db, Paymentservice payments)
+        public PaymentsController(AppDbContext db, Paymentservice payments, Auditlogservice audit)
         {
+            _audit = audit;
             _db = db;
             _payments = payments;
         }
@@ -119,6 +121,10 @@ namespace System_ApiTest.Controllers
             try
             {
                 var (payment, url) = await _payments.StartCheckoutAsync(dto.InvoiceId, dto.Amount);
+                // Customer-initiated in the normal case, so this usually no-ops; it
+                // records the times staff start a checkout on someone's behalf.
+                await _audit.LogAsync(User, AuditAction.CREATE, "PAYMENT", payment.Id.ToString(),
+                    null, ToDto(payment));
                 return Ok(new { payment = ToDto(payment), checkoutUrl = url });
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -151,7 +157,72 @@ namespace System_ApiTest.Controllers
 
                 var p = await _payments.RecordAsync(
                     dto.InvoiceId, dto.AmountPaid, dto.Method, paidAt, dto.TransactionReference);
+                await _audit.LogAsync(User, AuditAction.CREATE, "PAYMENT", p.Id.ToString(), null, ToDto(p));
                 return CreatedAtAction(nameof(GetByInvoice), new { invoiceId = dto.InvoiceId }, ToDto(p));
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        /// <summary>
+        /// Logs cash and verifies it in one step (Owner/Assistant only).
+        ///
+        /// Staff-only by nature: a customer can't hand cash to a web form. Unlike
+        /// POST /api/Payments, which leaves the payment Pending for someone to verify
+        /// later, this one runs the deposit sync immediately — so the booking's
+        /// DepositStatus moves off Unpaid and the Confirm button becomes usable without
+        /// a second "confirm the payment" click.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("cash")]
+        public async Task<IActionResult> RecordCash(
+            [FromBody] RecordCashPaymentDto dto,
+            [FromQuery] DateOnly? today,
+            // Resolved per-call rather than added to the constructor, matching how this
+            // controller already pulls PayMongoservice into the webhook action.
+            [FromServices] Invoiceservice invoices)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            try
+            {
+                var payment = await _payments.RecordCashAsync(
+                    dto.InvoiceId, dto.AmountPaid, dto.PaymentDateTime, dto.TransactionReference,
+                    today ?? DateOnly.FromDateTime(DateTime.Now));
+
+                // Read back what the sync changed, so the caller doesn't have to.
+                var summary = await _db.Invoices
+                    .Where(i => i.Id == dto.InvoiceId)
+                    .Select(i => new
+                    {
+                        i.BookingId,
+                        BookingStatus = i.Booking.Status,
+                        i.Booking.DepositStatus,
+                        i.GrandTotal,
+                    })
+                    .FirstAsync();
+
+                var paidTotal = await invoices.GetPaidTotalAsync(dto.InvoiceId);
+
+                // Cash has no gateway record behind it — the audit row is the only
+                // independent trace that this money was taken and by whom.
+                await _audit.LogAsync(User, AuditAction.CREATE, "PAYMENT_CASH", payment.Id.ToString(),
+                    null, new
+                    {
+                        payment.InvoiceId,
+                        payment.AmountPaid,
+                        payment.TransactionReference,
+                        Status = payment.Status.ToString(),
+                        summary.BookingId,
+                        DepositStatusAfter = summary.DepositStatus.ToString(),
+                    });
+
+                return Ok(new CashPaymentResultDto(
+                    ToDto(payment),
+                    summary.BookingId,
+                    summary.BookingStatus.ToString(),
+                    summary.DepositStatus.ToString(),
+                    summary.GrandTotal,
+                    paidTotal));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
@@ -164,8 +235,11 @@ namespace System_ApiTest.Controllers
             if (!await _db.Payments.AnyAsync(p => p.Id == id)) return NotFound();
             try
             {
+                var before = await PaymentSnapshotAsync(id);
                 await _payments.MarkSuccessAsync(id, today ?? DateOnly.FromDateTime(DateTime.Now));
                 var p = await _db.Payments.FindAsync(id);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "PAYMENT", id.ToString(),
+                    before, await PaymentSnapshotAsync(id));
                 return Ok(ToDto(p!));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -183,8 +257,12 @@ namespace System_ApiTest.Controllers
             if (!await _db.Payments.AnyAsync(p => p.Id == id)) return NotFound();
             try
             {
+                var before = await PaymentSnapshotAsync(id);
                 await _payments.RefundAsync(id, dto?.Amount, today ?? DateOnly.FromDateTime(DateTime.Now));
                 var p = await _db.Payments.FindAsync(id);
+                // Money leaving the business — the single most audit-worthy action here.
+                await _audit.LogAsync(User, AuditAction.UPDATE, "PAYMENT_REFUND", id.ToString(),
+                    before, await PaymentSnapshotAsync(id));
                 return Ok(ToDto(p!));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -218,8 +296,11 @@ namespace System_ApiTest.Controllers
             if (!await _db.Payments.AnyAsync(p => p.Id == id)) return NotFound();
             try
             {
+                var before = await PaymentSnapshotAsync(id);
                 await _payments.RejectAsync(id);
                 var fresh = await _db.Payments.FindAsync(id);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "PAYMENT", id.ToString(),
+                    before, await PaymentSnapshotAsync(id));
                 return Ok(ToDto(fresh!));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -234,8 +315,11 @@ namespace System_ApiTest.Controllers
             if (!await _db.Payments.AnyAsync(p => p.Id == id)) return NotFound();
             try
             {
+                var before = await PaymentSnapshotAsync(id);
                 await _payments.DenyRefundAsync(id, dto.Reason);
                 var fresh = await _db.Payments.FindAsync(id);
+                await _audit.LogAsync(User, AuditAction.UPDATE, "PAYMENT_REFUND", id.ToString(),
+                    before, await PaymentSnapshotAsync(id));
                 return Ok(ToDto(fresh!));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
@@ -258,6 +342,50 @@ namespace System_ApiTest.Controllers
                     x.p.RefundRequestedAmount ?? (x.p.AmountPaid - x.p.RefundedAmount),
                     x.p.RefundRequestReason, x.p.RefundRequestedAt,
                     b.Id, b.BookingName, b.Status.ToString(), b.CancellationRequested))
+                .ToListAsync();
+            return Ok(rows);
+        }
+
+        /// <summary>
+        /// Owner view: the most recent customer payments across all bookings, newest
+        /// first, with their booking + customer context for the admin dashboard.
+        /// </summary>
+        /// <param name="date">
+        /// Optional single-day filter on PaymentDateTime. Applied BEFORE Take, so asking
+        /// for a day returns that day's payments rather than whichever of them happen to
+        /// fall inside the newest `take` rows — filtering the page client-side would
+        /// report an empty day for any date older than the most recent 50 payments.
+        /// </param>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("recent")]
+        public async Task<IActionResult> Recent([FromQuery] int take = 50, [FromQuery] DateOnly? date = null)
+        {
+            take = Math.Clamp(take, 1, 200);
+            var payments = _db.Payments.AsQueryable();
+            if (date is not null)
+            {
+                var from = date.Value.ToDateTime(TimeOnly.MinValue);
+                var to = from.AddDays(1);
+                // Half-open range rather than .Date == so the comparison stays sargable
+                // and the query can still use an index on PaymentDateTime.
+                payments = payments.Where(p => p.PaymentDateTime >= from && p.PaymentDateTime < to);
+            }
+
+            var rows = await payments
+                .Join(_db.Invoices, p => p.InvoiceId, i => i.Id, (p, i) => new { p, i })
+                .Join(_db.Bookings, x => x.i.BookingId, b => b.Id, (x, b) => new { x.p, b })
+                .Join(_db.Customers, x => x.b.CustomerId, c => c.Id, (x, c) => new { x.p, x.b, c })
+                .OrderByDescending(x => x.p.PaymentDateTime)
+                .Take(take)
+                .Select(x => new AdminPaymentListItemDto(
+                    x.p.Id, x.p.InvoiceId, x.p.AmountPaid, x.p.RefundedAmount,
+                    x.p.PaymentDateTime, x.p.Method.ToString(), x.p.Status.ToString(),
+                    x.p.TransactionReference, x.p.GatewayProvider, x.p.RefundRequested,
+                    x.b.Id, x.b.BookingName,
+                    x.b.BookingType.ToString(),
+                    x.b.EventType == null ? null : x.b.EventType.ToString(),
+                    x.b.EventDate,
+                    x.c.Id, x.c.FullName, x.c.Email))
                 .ToListAsync();
             return Ok(rows);
         }
@@ -285,6 +413,23 @@ namespace System_ApiTest.Controllers
                 .FirstOrDefaultAsync();
             return customerId is not null && customerId == CurrentUserId();
         }
+
+        /// <summary>
+        /// The fields a payment action actually moves, for audit before/after. Narrow on
+        /// purpose — a status flip shouldn't produce a diff full of unchanged columns.
+        /// </summary>
+        private async Task<object?> PaymentSnapshotAsync(Guid id) =>
+            await _db.Payments.AsNoTracking()
+                .Where(p => p.Id == id)
+                .Select(p => new
+                {
+                    Status = p.Status.ToString(),
+                    p.AmountPaid,
+                    p.RefundedAmount,
+                    p.RefundRequested,
+                    p.RefundRequestDecision,
+                })
+                .FirstOrDefaultAsync();
 
         private static PaymentResponseDto ToDto(Payment p) =>
             new(p.Id, p.InvoiceId, p.AmountPaid, p.RefundedAmount, p.AmountPaid - p.RefundedAmount,

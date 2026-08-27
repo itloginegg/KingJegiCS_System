@@ -1,6 +1,8 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using System_ApiTest.Data;
 using System_ApiTest.Models;
+using System_ApiTest.Hubs;
 
 namespace System_ApiTest.Services
 {
@@ -11,16 +13,35 @@ namespace System_ApiTest.Services
         private readonly Systemsettingsservice _settings;
         private readonly Bookingservice _bookings;
         private readonly PayMongoservice _payMongo;
+        private readonly IHubContext<PaymentHub> _hubContext;
+        private readonly Notificationwriteservice _notifications;
 
         public Paymentservice(AppDbContext db, Invoiceservice invoices,
                               Systemsettingsservice settings, Bookingservice bookings,
-                              PayMongoservice payMongo)
+                              PayMongoservice payMongo, IHubContext<PaymentHub> hubContext,
+                              Notificationwriteservice notifications)
         {
+            _notifications = notifications;
             _db = db;
             _invoices = invoices;
             _settings = settings;
             _bookings = bookings;
             _payMongo = payMongo;
+            _hubContext = hubContext;
+        }
+
+        /// <summary>
+        /// Resolves the booking and customer a payment belongs to, so a notification can
+        /// be routed to both audiences. Returns nulls if the chain is broken, in which
+        /// case the caller simply skips the notification.
+        /// </summary>
+        private async Task<(Guid? BookingId, Guid? CustomerId)> ResolveRecipientsAsync(Guid invoiceId)
+        {
+            var row = await _db.Invoices
+                .Where(i => i.Id == invoiceId)
+                .Select(i => new { i.BookingId, i.Booking.CustomerId })
+                .FirstOrDefaultAsync();
+            return row is null ? (null, null) : (row.BookingId, row.CustomerId);
         }
 
         /// <summary>
@@ -62,9 +83,16 @@ namespace System_ApiTest.Services
             return invoice;
         }
 
+        /// <param name="notifyRecorded">
+        /// Whether to emit the staff "payment recorded, awaiting verification" notice.
+        /// True for every path where verification really is a later, separate step.
+        /// The cash path passes false: it verifies in the same call, so that notice
+        /// would be stale before anyone read it, and RecordCashAsync's MarkSuccessAsync
+        /// emits the accurate PaymentConfirmed one instead.
+        /// </param>
         public async Task<Payment> RecordAsync(
             Guid invoiceId, decimal amount, PaymentMethod method,
-            DateTime? paidAt, string? transactionReference)
+            DateTime? paidAt, string? transactionReference, bool notifyRecorded = true)
         {
             await ValidatePayableAsync(invoiceId, amount);
 
@@ -85,6 +113,52 @@ namespace System_ApiTest.Services
 
             _db.Payments.Add(payment);
             await _db.SaveChangesAsync();
+
+            // Staff-facing: a payment has been recorded and is waiting to be verified.
+            // Keyed on the payment id, so each payment notifies exactly once.
+            if (notifyRecorded)
+            {
+                var (bookingId, _) = await ResolveRecipientsAsync(invoiceId);
+                await _notifications.WriteAsync(
+                    NotificationKind.PaymentRecorded, bookingId, period: payment.Id.ToString("N"));
+            }
+
+            return payment;
+        }
+
+        /// <summary>
+        /// Records cash and verifies it in one step.
+        ///
+        /// The two-step "record, then confirm later" dance exists for money that arrives
+        /// somewhere the system can't see — a bank transfer someone has to go and check.
+        /// Cash handed over a counter has no such gap: the admin recording it IS the
+        /// verification, so splitting it in two just leaves the booking stuck.
+        ///
+        /// That stuckness is the bug this fixes. RecordAsync alone leaves the payment
+        /// Pending, and only MarkSuccessAsync runs SyncInvoiceAndDepositAsync — so
+        /// DepositStatus stayed Unpaid and ConfirmBookingAsync's "no money, no
+        /// confirmation" guard kept refusing, with the money already in the till.
+        ///
+        /// Composed from the two existing methods rather than reimplemented: the
+        /// overpayment guard, the date-still-winnable check, the deposit ladder and the
+        /// invoice re-sync all live in them already, and a second copy would be a second
+        /// thing to keep correct. Sequential, not nested — RecordAsync opens no
+        /// transaction and MarkSuccessAsync opens its own.
+        ///
+        /// Safe for walk-ins specifically because TryAutoConfirmOnReservationAsync
+        /// already refuses to auto-confirm them: verifying cash moves the deposit off
+        /// Unpaid, but committing the calendar slot still needs a deliberate Confirm.
+        /// </summary>
+        public async Task<Payment> RecordCashAsync(
+            Guid invoiceId, decimal amount, DateTime? paidAt, string? transactionReference, DateOnly today)
+        {
+            var payment = await RecordAsync(
+                invoiceId, amount, PaymentMethod.Cash, paidAt, transactionReference, notifyRecorded: false);
+
+            // Same DbContext, so this returns the tracked instance above — `payment`
+            // reflects Status = Success when it comes back.
+            await MarkSuccessAsync(payment.Id, today);
+
             return payment;
         }
 
@@ -161,11 +235,29 @@ namespace System_ApiTest.Services
             // confirmation rolls back — the deposit isn't accepted for an unavailable slot.
             var settings = await _settings.GetAsync();
             var paidNow = alreadyPaid + payment.AmountPaid;
-            if (paidNow >= settings.ReservationFee)
+
+            // The threshold is per booking type — 5% of the total for a rental, the flat
+            // fee otherwise — and capped at the grand total, so paying a small order in
+            // full always secures it (a flat fee larger than the order previously meant
+            // auto-confirm could never fire for it).
+            var bookingType = await _db.Bookings
+                .Where(b => b.Id == payment.Invoice.BookingId)
+                .Select(b => b.BookingType)
+                .FirstAsync();
+            var reservationFee = BookingMath.ReservationFeeFor(
+                bookingType, payment.Invoice.GrandTotal, settings.ReservationFee);
+
+            if (paidNow >= reservationFee)
                 await _bookings.TryAutoConfirmOnReservationAsync(payment.Invoice.BookingId);
 
             await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
             await tx.CommitAsync();
+
+            // Customer-facing, after the commit: their money is verified. This is the
+            // moment the polling worker could never observe.
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.PaymentConfirmed, bookingId, customerId, payment.Id.ToString("N"));
         }
 
         /// <summary>
@@ -186,6 +278,12 @@ namespace System_ApiTest.Services
 
             if (payment.Status is not (PaymentStatus.Success or PaymentStatus.PartiallyRefunded))
                 throw new BookingRuleException("Only a successful payment can be refunded.");
+
+            // A refund must answer a request the customer actually filed. Without this,
+            // an admin could move money back with nothing on record asking for it, and
+            // the customer's first notice would be the refund itself.
+            if (!payment.RefundRequested)
+                throw new BookingRuleException("Customer has not requested a refund on this payment.");
 
             var remaining = payment.AmountPaid - payment.RefundedAmount;
             var toRefund = amount ?? remaining;
@@ -210,6 +308,13 @@ namespace System_ApiTest.Services
 
             await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
             await tx.CommitAsync();
+
+            // A payment can be refunded more than once (partial refunds), so each
+            // refund is its own occurrence rather than a once-per-payment event.
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundApproved, bookingId, customerId,
+                Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>
@@ -242,6 +347,13 @@ namespace System_ApiTest.Services
             payment.RefundRequestedAt = DateTime.Now;
             payment.RefundRequestDecision = null;
             await _db.SaveChangesAsync();
+
+            // Staff-facing: someone is waiting on a decision. A denied request can be
+            // re-filed later, so this is an occurrence rather than a once-only event.
+            var (bookingId, _) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundRequested, bookingId,
+                period: Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>
@@ -273,6 +385,7 @@ namespace System_ApiTest.Services
             try
             {
                 await MarkSuccessAsync(payment.Id, today);
+                await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
                 return "confirmed";
             }
             catch (BookingRuleException ex)
@@ -282,6 +395,7 @@ namespace System_ApiTest.Services
                 // loudly for the owner instead of silently dropping paid money.
                 payment.GatewayStatusRaw = $"paid — NEEDS ATTENTION: {ex.Message}";
                 await _db.SaveChangesAsync();
+                await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
                 return $"paid but not confirmable: {ex.Message}";
             }
         }
@@ -299,6 +413,7 @@ namespace System_ApiTest.Services
             payment.Status = PaymentStatus.Failed;
             payment.GatewayStatusRaw = rawStatus ?? "failed";
             await _db.SaveChangesAsync();
+            await _hubContext.Clients.All.SendAsync("PaymentUpdated", payment.InvoiceId);
             return "marked failed";
         }
 
@@ -331,6 +446,11 @@ namespace System_ApiTest.Services
             payment.RefundRequested = false;
             payment.RefundRequestDecision = decisionReason.Trim();
             await _db.SaveChangesAsync();
+
+            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            await _notifications.WriteAsync(
+                NotificationKind.RefundDenied, bookingId, customerId,
+                Notificationwriteservice.Occurrence(payment.Id));
         }
 
         /// <summary>
@@ -347,7 +467,11 @@ namespace System_ApiTest.Services
                 ?? throw new BookingRuleException("Invoice not found.");
             var settings = await _settings.GetAsync();
             var paid = await _invoices.GetPaidTotalAsync(invoiceId);
-            var fee = Math.Min(settings.ReservationFee, invoice.GrandTotal);
+            var bookingType = await _db.Bookings
+                .Where(b => b.Id == invoice.BookingId)
+                .Select(b => b.BookingType)
+                .FirstAsync();
+            var fee = BookingMath.ReservationFeeFor(bookingType, invoice.GrandTotal, settings.ReservationFee);
 
             await _bookings.RecomputeDepositStatusAsync(invoice.BookingId, paid, fee, invoice.GrandTotal);
         }
