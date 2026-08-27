@@ -188,6 +188,14 @@ export function updatePackage(token: string, id: string, payload: AdminPackageCr
   return sendJson<AdminPackage>(`/api/MenuPackages/${id}`, 'PUT', token, payload);
 }
 
+/**
+ * Permanently deletes a package. The server refuses with 409 while bookings still
+ * reference it, so callers should surface PackageApiError.message as-is.
+ */
+export function deletePackage(token: string, id: string): Promise<void> {
+  return sendJson<void>(`/api/MenuPackages/${id}`, 'DELETE', token);
+}
+
 export function addPackageSlot(token: string, packageId: string, payload: PackageSlotDto): Promise<PackageSlotDto> {
   return sendJson<PackageSlotDto>(`/api/MenuPackages/${packageId}/slots`, 'POST', token, payload);
 }

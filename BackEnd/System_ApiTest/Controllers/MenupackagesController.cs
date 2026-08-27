@@ -162,6 +162,78 @@ namespace System_ApiTest.Controllers
             return Ok(ToDto(saved));
         }
 
+        /// <summary>
+        /// Permanently removes a package, with its slots, fixed-item links and gallery.
+        ///
+        /// Guarded rather than left to the mapping, because every cascade here fails or
+        /// destroys something quietly: Booking.MenuPackageId is SetNull (the booking would
+        /// forget what was ordered), MenuItem.MenuPackageId is SetNull (which trips
+        /// CK_MenuItem_PricedIfStandalone on package-only dishes), and the slot cascade
+        /// collides with the Restrict on BookingPackageSelections.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> Delete(Guid id)
+        {
+            var pkg = await LoadGraph().FirstOrDefaultAsync(p => p.Id == id);
+            if (pkg is null) return NotFound();
+
+            if (await _db.Bookings.AnyAsync(b =>
+                    b.MenuPackageId == id && b.Status != BookingStatus.Cancelled))
+                return Conflict(new { message = "Active bookings are using this package, so it can't be deleted. Cancel or move those bookings first." });
+
+            // Cancelled bookings keep their slot choices and that FK is Restrict, so the
+            // slot cascade would fail on them too — a separate check to say so plainly.
+            if (await _db.BookingPackageSelections.AnyAsync(x => x.Slot.MenuPackageId == id))
+                return Conflict(new { message = "Past bookings recorded dish choices from this package's slots, so it has to stay on file." });
+
+            var attached = await _db.MenuItems.Where(m => m.MenuPackageId == id).ToListAsync();
+
+            // A package-only dish has no standalone tray price, so detaching it would break
+            // CK_MenuItem_PricedIfStandalone — it goes with the package instead. Unless
+            // something outside the package still holds it, which we can't delete away.
+            var packageOnly = attached.Where(m => m.PricePerTray is null).ToList();
+            if (packageOnly.Count > 0)
+            {
+                var ids = packageOnly.Select(m => m.Id).ToList();
+                var held = new HashSet<Guid>(await _db.BookingMenuItems
+                    .Where(x => ids.Contains(x.ItemId)).Select(x => x.ItemId).ToListAsync());
+                held.UnionWith(await _db.MenuTrayDishes
+                    .Where(x => ids.Contains(x.MenuItemId)).Select(x => x.MenuItemId).ToListAsync());
+                held.UnionWith(await _db.MenuPackageFixedItems
+                    .Where(x => ids.Contains(x.MenuItemId) && x.MenuPackageId != id)
+                    .Select(x => x.MenuItemId).ToListAsync());
+                held.UnionWith(await _db.BookingPackageSelections
+                    .Where(x => ids.Contains(x.MenuItemId)).Select(x => x.MenuItemId).ToListAsync());
+
+                if (held.Count > 0)
+                {
+                    var names = packageOnly.Where(m => held.Contains(m.Id))
+                                           .Select(m => m.ItemName).OrderBy(n => n).ToList();
+                    return Conflict(new { message = $"These package-only dishes are still used elsewhere: {string.Join(", ", names)}. Give them a tray price on the Menu tab so they can stand alone, then delete the package." });
+                }
+            }
+
+            // Priced dishes survive on their own; the rest go with the package.
+            foreach (var item in attached.Where(m => m.PricePerTray is not null))
+                item.MenuPackageId = null;
+            _db.MenuItems.RemoveRange(packageOnly);
+
+            var old = ToDto(pkg);
+            var imageUrls = pkg.Images.Select(i => i.ImageUrl).ToList();
+
+            _db.MenuPackages.Remove(pkg);   // cascades to slots, fixed-item links and images
+            await _db.SaveChangesAsync();
+
+            // Only after the rows are gone, same order as RemoveImage — files deleted ahead
+            // of a failed commit would leave gallery entries pointing at nothing.
+            foreach (var url in imageUrls)
+                ImageUploadHelper.DeleteImage(_env, url);
+
+            await _audit.LogAsync(User, AuditAction.DELETE, "MENU_PACKAGE", id.ToString(), old, null);
+            return NoContent();
+        }
+
         // ---------------- Slots (granular add / edit / remove) ----------------
 
         /// <summary>Adds a slot to a package. Always allowed (new slots don't affect existing bookings).</summary>

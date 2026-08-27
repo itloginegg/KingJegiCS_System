@@ -3,6 +3,7 @@ import {
   fetchPackages,
   createPackage,
   updatePackage,
+  deletePackage,
   addPackageSlot,
   updatePackageSlot,
   removePackageSlot,
@@ -418,6 +419,33 @@ export function AdminPackagesTab() {
     }
   };
 
+  /**
+   * Deletes the whole package. The server refuses (409) while bookings still point at
+   * it, so its message is shown verbatim rather than replaced with a generic one.
+   */
+  const removePackage = async (pkg: AdminPackage) => {
+    const ok = window.confirm(
+      `Delete "${pkg.packageName}" permanently?\n\nIts slots, inclusions and gallery photos go with it. This can't be undone.`,
+    );
+    if (!ok) return;
+    const session = readSession();
+    if (!session) return;
+    setSaving(true);
+    setError(null);
+    setFeedback(null);
+    try {
+      await deletePackage(session.token, pkg.id);
+      setSelectedPackageId(null);
+      setPkgFormOpen(false);
+      setFeedback(`"${pkg.packageName}" was deleted.`);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof PackageApiError ? err.message : 'Unable to delete this package.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // -----------------------------------------------------------------------------
   // Render Helpers
   // -----------------------------------------------------------------------------
@@ -516,9 +544,19 @@ export function AdminPackagesTab() {
                   {selectedPackage.description}
                 </p>
               </div>
-              <button type="button" className="adm-btn outline" onClick={() => openPkgForm('edit', selectedPackage)}>
-                Edit Details
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                <button type="button" className="adm-btn outline" onClick={() => openPkgForm('edit', selectedPackage)}>
+                  Edit Details
+                </button>
+                <button
+                  type="button"
+                  className="adm-btn danger"
+                  disabled={saving}
+                  onClick={() => void removePackage(selectedPackage)}
+                >
+                  Delete Package
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>

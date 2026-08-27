@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronLeft, ChevronRight, UtensilsCrossed } from 'lucide-react';
+import { UtensilsCrossed } from 'lucide-react';
 import { fetchPublicMenuItems, getFullImageUrl, type AdminMenuItem } from '../../api/menuAdminApi';
+import { SectionHeading } from './SectionHeading';
 
 /**
  * ItemCategory from Models/Menuitem.cs, in enum order.
@@ -17,6 +18,9 @@ type CategoryTab = 'All' | (typeof ITEM_CATEGORIES)[number];
 
 const TABS: CategoryTab[] = ['All', ...ITEM_CATEGORIES];
 
+/** The bento holds four slots: a hero, a medium, and two compact rows. */
+const PREVIEW_COUNT = 4;
+
 /** ₱ 1,500.00 — never a hardcoded price string. */
 export function formatPeso(amount: number): string {
   return `₱ ${amount.toLocaleString('en-PH', {
@@ -28,7 +32,7 @@ export function formatPeso(amount: number): string {
 /**
  * Shown when the catalog can't be reached.
  *
- * A marketing page must never render an error panel at a visitor, so the carousel
+ * A marketing page must never render an error panel at a visitor, so the grid
  * degrades to three representative dishes instead. Priceless on purpose — these are
  * illustrative, and inventing a price for them would be the same fabrication problem
  * as inventing a rating.
@@ -39,88 +43,38 @@ const FALLBACK_DISHES: AdminMenuItem[] = [
   { id: 'f3', itemName: 'Pancit Bihon', itemCategory: 'Pasta', courseCategory: 'Main', description: '', dietaryTags: [], pricePerTray: null, servesPerTray: 10, menuPackageId: null, isActive: true, imageUrl: null },
 ];
 
-/** One dish frame. imageUrl is nullable on Menuitem, so the placeholder is the norm. */
-function DishImage({ item, size }: { item: AdminMenuItem; size: 'sm' | 'lg' }) {
-  const src = getFullImageUrl(item.imageUrl);
-  const box = size === 'lg' ? 'h-36 w-36' : 'h-24 w-24';
-
-  if (!src) {
-    return (
-      <div
-        className={`${box} flex items-center justify-center rounded-full border border-[var(--band-border)]`}
-        aria-hidden="true"
-      >
-        <UtensilsCrossed
-          size={size === 'lg' ? 34 : 24}
-          strokeWidth={1.4}
-          className="text-[var(--band-muted)]"
-        />
-      </div>
-    );
-  }
+/** One dish photo slot. imageUrl is nullable on Menuitem, so the placeholder is the norm. */
+function DishSlot({ item, label, className }: { item?: AdminMenuItem; label: string; className: string }) {
+  const src = item ? getFullImageUrl(item.imageUrl) : null;
   return (
-    <img
-      src={src}
-      alt=""
-      className={`${box} rounded-full object-cover`}
-      loading="lazy"
-    />
-  );
-}
-
-/**
- * Footer metadata for a dish card.
- *
- * The left slot carries servesPerTray, not a star rating: Menuitem has no rating
- * field and no aggregate exists anywhere in the API, so a number there would be
- * invented. "Serves 10" is real, occupies the same space, and is the thing a
- * catering customer actually needs.
- *
- * The right slot degrades to "Package only" because PricePerTray is nullable —
- * package-only dishes genuinely have no per-tray price.
- */
-function DishFooter({ item, emphasis }: { item: AdminMenuItem; emphasis: boolean }) {
-  const nameTone = emphasis ? 'text-[var(--band-chip-text)]' : 'text-[var(--band-text)]';
-  const mutedTone = emphasis ? 'text-[var(--band-chip-text)] opacity-70' : 'text-[var(--band-muted)]';
-
-  return (
-    <div className="mt-4 flex w-full items-center justify-between gap-3">
-      <span className={`text-xs ${mutedTone}`}>
-        Serves {item.servesPerTray}
-      </span>
-      <span className={`text-sm ${emphasis ? 'font-bold' : 'font-medium'} ${nameTone}`}>
-        {item.pricePerTray === null ? (
-          <span className={`text-xs font-normal ${mutedTone}`}>Package only</span>
-        ) : (
-          formatPeso(item.pricePerTray)
-        )}
-      </span>
+    <div className={`lp-dish-slot ${className}`} aria-hidden="true">
+      {src
+        ? <img src={src} alt="" loading="lazy" decoding="async" />
+        /* The compact rows pass no label — a caption would not fit a 74px square,
+           so they get the utensil mark instead of an empty block. */
+        : label ? <span>{label}</span> : <UtensilsCrossed size={18} strokeWidth={1.5} />}
     </div>
   );
 }
 
+/** PricePerTray is nullable — package-only dishes genuinely have no per-tray price. */
+const priceOf = (item: AdminMenuItem) =>
+  item.pricePerTray === null ? '—' : formatPeso(item.pricePerTray);
+
 /**
- * "Our Special Dish" — an inverted band against the page's otherwise light sections.
+ * "What's on the table" — the menu teaser.
  *
- * Band colours are scoped custom properties rather than semantic tokens, and are
- * hardcoded on purpose: the band has to stay dark in BOTH themes. Deriving it from
- * --primary would work in light mode but turn the band bright teal in dark mode,
- * since --primary flips to #14b8a6 — inverting the inversion.
+ * An asymmetric bento, not an equal grid: one hero dish at 1.5fr, a medium beside
+ * it dropped 26px, and a column of two compact rows dropped 56px, closing on a
+ * dashed "N more dishes" card. Four equal tiles implied the menu was four dishes
+ * and gave the best seller no more weight than the fourth item.
  *
- * Band tokens live in index.css under .dark-band / .dark .dark-band — shared with
- * MenuPage's hero, which has the same must-stay-dark requirement. The override
- * selector is class-based, matching @custom-variant dark in index.css. A [data-theme] selector would never match: this
- * project sets no such attribute anywhere.
- *
- * Unlike the other sections, this one does NOT carry the layered gradient background —
- * a dark band and a light gradient stack can't coexist. CollidingBlobsCanvas is
- * deliberately absent here for the same reason.
+ * The category filter, the live catalog fetch and the fallback behaviour are
+ * unchanged.
  */
 export function MenuPreviewSection() {
   const [items, setItems] = useState<AdminMenuItem[]>([]);
   const [category, setCategory] = useState<CategoryTab>('All');
-  const [index, setIndex] = useState(0);
-  const trackRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,141 +84,107 @@ export function MenuPreviewSection() {
     return () => { cancelled = true; };
   }, []);
 
-  const visible = useMemo(
+  const matching = useMemo(
     () => (category === 'All' ? items : items.filter((i) => i.itemCategory === category)),
     [items, category],
   );
 
-  /* Reset on category change so the index can never point past the end of a shorter
-     list — the bug you get from filtering under a carousel without touching it. */
-  useEffect(() => { setIndex(0); }, [category]);
-
-  const atStart = index <= 0;
-  const atEnd = index >= visible.length - 1;
-
-  const move = (delta: number) =>
-    setIndex((i) => Math.min(Math.max(i + delta, 0), Math.max(visible.length - 1, 0)));
-
-  /* Three-up window: the centre card plus a neighbour each side. */
-  const window3 = visible.length
-    ? [index - 1, index, index + 1].filter((i) => i >= 0 && i < visible.length)
-    : [];
+  const visible = matching.slice(0, PREVIEW_COUNT);
+  const [hero, mid, ...rest] = visible;
+  /* The real remainder, not a fixed number — the card is a count of what the four
+     slots above are not showing. */
+  const more = Math.max(matching.length - visible.length, 0);
 
   return (
-    <section id="menus" className="dark-band relative overflow-hidden bg-[var(--band-bg)]">
-      <div className="mx-auto w-full max-w-[1200px] px-6 py-24 sm:px-10">
-        <div className="flex flex-col items-center gap-y-10 rounded-3xl border border-[var(--band-glass-border)] bg-[var(--band-glass)] p-6 sm:p-10">
-          <h2
-            className="text-center text-3xl font-bold tracking-tight text-[var(--band-text)] sm:text-4xl"
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
-            Our Special Dish
-          </h2>
-
-          {/* ── category pills ── */}
-          <div className="flex flex-wrap items-center justify-center gap-4" role="group" aria-label="Filter dishes by category">
-            {TABS.map((tab) => {
-              const active = tab === category;
-              return (
-                <button
-                  key={tab}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setCategory(tab)}
-                  className={`rounded-full px-5 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--band-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--band-bg)] ${
-                    active
-                      ? 'bg-[var(--band-chip)] font-medium text-[var(--band-chip-text)]'
-                      : 'border border-[var(--band-border)] bg-transparent text-[var(--band-text)] hover:border-[var(--band-text)]'
-                  }`}
-                >
-                  {tab}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* ── carousel ── */}
-          {visible.length === 0 ? (
-            <p className="py-10 text-sm text-[var(--band-muted)]">
-              No dishes in this category yet.
-            </p>
-          ) : (
-            <div className="flex w-full items-center justify-center gap-4 sm:gap-6">
-              <button
-                type="button"
-                aria-label="Previous dish"
-                disabled={atStart}
-                onClick={() => move(-1)}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--band-border)] bg-transparent text-[var(--band-text)] transition-opacity hover:border-[var(--band-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--band-text)] disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                <ChevronLeft size={20} strokeWidth={2} aria-hidden="true" />
-              </button>
-
-              <div
-                ref={trackRef}
-                className="flex flex-1 items-center justify-center gap-4 overflow-hidden py-6 sm:gap-8"
-                role="group"
-                aria-label="Featured dishes"
-                /* Arrow keys drive the carousel; the wrapper is the roving-focus host so
-                   the keys work wherever inside the strip focus happens to sit. */
-                onKeyDown={(e) => {
-                  if (e.key === 'ArrowRight') { e.preventDefault(); move(1); }
-                  else if (e.key === 'ArrowLeft') { e.preventDefault(); move(-1); }
-                  else if (e.key === 'Home') { e.preventDefault(); setIndex(0); }
-                  else if (e.key === 'End') { e.preventDefault(); setIndex(visible.length - 1); }
-                }}
-              >
-                {window3.map((i) => {
-                  const item = visible[i];
-                  const isCentre = i === index;
-                  return (
-                    <article
-                      key={item.id}
-                      aria-current={isCentre ? 'true' : undefined}
-                      tabIndex={isCentre ? 0 : -1}
-                      style={isCentre ? { boxShadow: 'var(--shadow-lg)' } : undefined}
-                      className={`flex shrink-0 flex-col items-center rounded-2xl px-5 py-6 transition-transform duration-300 motion-reduce:transform-none motion-reduce:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--band-text)] ${
-                        isCentre
-                          ? 'w-52 scale-105 border border-[var(--band-chip-edge)] bg-[var(--band-chip)] sm:w-56'
-                          : 'hidden w-44 border border-[var(--band-border)] bg-transparent sm:flex'
-                      }`}
-                    >
-                      <DishImage item={item} size={isCentre ? 'lg' : 'sm'} />
-                      <h3
-                        className={`mt-4 text-center text-base ${
-                          isCentre
-                            ? 'font-bold text-[var(--band-chip-text)]'
-                            : 'font-medium text-[var(--band-text)]'
-                        }`}
-                      >
-                        {item.itemName}
-                      </h3>
-                      <DishFooter item={item} emphasis={isCentre} />
-                    </article>
-                  );
-                })}
-              </div>
-
-              <button
-                type="button"
-                aria-label="Next dish"
-                disabled={atEnd}
-                onClick={() => move(1)}
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--band-border)] bg-transparent text-[var(--band-text)] transition-opacity hover:border-[var(--band-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--band-text)] disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                <ChevronRight size={20} strokeWidth={2} aria-hidden="true" />
-              </button>
+    <section id="menus" className="ui-section" style={{ background: 'var(--bg)' }}>
+      <div className="ui-wrap">
+        <SectionHeading
+          kicker="Menu"
+          title="What’s on the table"
+          aside={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ fontFamily: 'var(--font-numeric)', fontSize: 10, color: 'var(--text-muted)' }}>
+                live catalog
+              </span>
+              <Link to="/menus" className="ui-sec-link">Full menu →</Link>
             </div>
-          )}
+          }
+        />
 
-          <Link
-            to="/menus"
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--band-chip)] px-7 py-3 text-sm font-medium text-[var(--band-chip-text)] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--band-text)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--band-bg)]"
-          >
-            Explore Food
-            <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />
-          </Link>
+        <div className="ui-chips" style={{ marginBottom: 24 }} role="group" aria-label="Filter dishes by category">
+          {TABS.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              aria-pressed={tab === category}
+              onClick={() => setCategory(tab)}
+              className={`ui-chip${tab === category ? ' ui-chip--active' : ''}`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
+
+        {visible.length === 0 ? (
+          <p className="ui-body" style={{ padding: '32px 0' }}>
+            No dishes in this category yet.
+          </p>
+        ) : (
+          <div className="lp-dish-bento">
+            {/* ── Hero dish ── */}
+            {hero && (
+              <article className="lp-dish-hero">
+                <DishSlot item={hero} label="photo slot — hero dish" className="lp-dish-hero-media" />
+                <div className="lp-dish-hero-body">
+                  <div className="ui-sec-head" style={{ margin: 0, alignItems: 'baseline', gap: 10 }}>
+                    <h3 className="lp-dish-hero-name">{hero.itemName}</h3>
+                    <span className="lp-dish-hero-price">{priceOf(hero)}</span>
+                  </div>
+                  <div className="lp-dish-meta" style={{ marginTop: 9 }}>
+                    {hero.itemCategory} · serves {hero.servesPerTray}
+                  </div>
+                </div>
+              </article>
+            )}
+
+            {/* ── Medium ── */}
+            {mid ? (
+              <article className="lp-dish-mid">
+                <DishSlot item={mid} label="photo slot" className="lp-dish-mid-media" />
+                <div className="lp-dish-mid-body">
+                  <div className="lp-dish-meta-row" style={{ marginTop: 0 }}>
+                    <h3 className="lp-dish-mid-name">{mid.itemName}</h3>
+                    <span className="lp-dish-price-sm">{priceOf(mid)}</span>
+                  </div>
+                  <div className="lp-dish-meta" style={{ marginTop: 7 }}>{mid.itemCategory}</div>
+                </div>
+              </article>
+            ) : <div />}
+
+            {/* ── Compact column ── */}
+            <div className="lp-dish-col">
+              {rest.map((item) => (
+                <article key={item.id} className="lp-dish-mini">
+                  <DishSlot item={item} label="" className="" />
+                  <div className="lp-dish-mini-body">
+                    <div className="lp-dish-mini-name">{item.itemName}</div>
+                    <div className="lp-dish-meta-row">
+                      <span className="lp-dish-meta">{item.itemCategory}</span>
+                      <span className="lp-dish-price-sm">{priceOf(item)}</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+
+              {more > 0 && (
+                <Link to="/menus" className="lp-dish-more">
+                  <span className="lp-dish-meta">{more} more {more === 1 ? 'dish' : 'dishes'}</span>
+                  <span className="ui-sec-link">Browse →</span>
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -210,6 +210,12 @@ PublishScripts/
 !**/[Pp]ackages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/[Pp]ackages/repositories.config
+# ...and except the React packages UI, which is app source rather than a NuGet
+# restore folder. Un-ignoring it is also what makes it render: the Tailwind v4
+# scanner skips gitignored files, so utility classes used only inside these
+# components were never generated and the carousel styled itself half-way.
+!FontEnd/src/components/packages/
+!FontEnd/src/components/packages/**
 # NuGet v3's project.json files produces more ignorable files
 *.nuget.props
 *.nuget.targets

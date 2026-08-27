@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
+import {
+  LayoutGrid, CalendarDays, Wallet, Package, Star,
+  UtensilsCrossed, Tent, Wrench, ScrollText, Megaphone, Circle, CalendarClock,
+  X, LogOut, AlertTriangle, RotateCw, Check, Pencil,
+} from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import {
@@ -286,19 +291,33 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
    Status maps & helpers
 ───────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Booking status → badge colour.
+ *
+ * Every entry reads the status ramp, never --accent or --primary. Those two were
+ * survivable under the teal palette, where --accent was a bronze and --primary a
+ * deep teal; under the plum direction --accent is the rose #A62A57 and --danger
+ * the red #DC2626, so a Pending badge and a Cancelled one became two reds, and
+ * Confirmed on --primary rendered as near-black body text rather than a status.
+ * The ramp exists precisely so these five stay separable — see the note on it in
+ * index.css.
+ */
 export const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
   Draft: { label: 'Draft', color: 'var(--text-dim)' },
-  Pending: { label: 'Pending', color: 'var(--accent)' },
-  Confirmed: { label: 'Confirmed', color: 'var(--primary)' },
+  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Confirmed: { label: 'Confirmed', color: 'var(--status-paid)' },
   Completed: { label: 'Completed', color: 'var(--status-info)' },
   Cancelled: { label: 'Cancelled', color: 'var(--danger)' },
 };
 
 type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' | 'Refunded';
 
+/* Same reasoning as RES_STATUS above: ramp roles only. Pending was --accent and
+   Success --primary, which under the plum palette put Pending next to Failed as a
+   second red and rendered Success as near-black text. */
 const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'var(--accent)' },
-  Success: { label: 'Success', color: 'var(--primary)' },
+  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Success: { label: 'Success', color: 'var(--status-paid)' },
   Failed: { label: 'Failed', color: 'var(--danger)' },
   PartiallyRefunded: { label: 'Partially Refunded', color: 'var(--status-refund)' },
   Refunded: { label: 'Refunded', color: 'var(--status-refund)' },
@@ -322,7 +341,7 @@ export type DepositStatusKey = 'Unpaid' | 'Reserved' | 'Partial' | 'Paid';
 
 export const DEPOSIT_STATUS: Record<DepositStatusKey, { label: string; color: string }> = {
   Unpaid: { label: 'Unpaid', color: 'var(--status-unpaid)' },
-  Reserved: { label: 'Reserved', color: 'var(--primary)' },
+  Reserved: { label: 'Reserved', color: 'var(--status-info)' },
   Partial: { label: 'Partial', color: 'var(--status-partial)' },
   Paid: { label: 'Paid', color: 'var(--status-paid)' },
 };
@@ -334,8 +353,8 @@ export const depositStatusMeta = (status: string) =>
   DEPOSIT_STATUS[status as DepositStatusKey] ?? { label: status, color: 'var(--text-dim)' };
 
 const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'var(--accent)' },
-  Approved: { label: 'Approved', color: 'var(--primary)' },
+  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Approved: { label: 'Approved', color: 'var(--status-paid)' },
   Rejected: { label: 'Rejected', color: 'var(--danger)' },
 };
 
@@ -366,6 +385,116 @@ const fmtCompact = (n: number) => {
 };
 
 /** Minimal line icons for the overview KPI cards. */
+/**
+ * The one error card for every admin tab.
+ *
+ * Section 11 of the design direction asks for exactly this: the eight tabs each
+ * carried a near-identical block — same padding, same 30%-danger border, same
+ * ⚠️ glyph, same heading weight, same retry — differing only in their title and
+ * message. Five copies meant five places to fix whenever the treatment moved,
+ * and they had already drifted apart in the danger tint they used.
+ */
+function AdmErrorCard({ title, message, onRetry, retryLabel = 'Try Again', extraAction }: {
+  title: string;
+  message: string;
+  onRetry: () => void;
+  retryLabel?: string;
+  /** Rendered beside the retry. Carries the auth-expiry route back to sign-in,
+      which the menu tab needs and the others do not. */
+  extraAction?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="adm-card"
+      role="alert"
+      style={{
+        padding: '2.75rem 2rem', textAlign: 'center',
+        borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)',
+      }}
+    >
+      {/* Lucide in a tinted disc, per section 11 — the ⚠️ emoji rendered as a
+          fixed-colour platform image and could not follow the danger token. */}
+      <div
+        style={{
+          width: 48, height: 48, margin: '0 auto 0.9rem',
+          borderRadius: 'var(--r-full)', background: 'var(--danger-muted)',
+          color: 'var(--danger)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+      >
+        <AlertTriangle size={22} strokeWidth={1.75} aria-hidden="true" />
+      </div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+        {title}
+      </h3>
+      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8125rem', fontWeight: 400, color: 'var(--danger-ink)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.55 }}>
+        {message}
+      </p>
+      <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+        <button type="button" className="adm-btn outline" onClick={onRetry}>{retryLabel}</button>
+        {extraAction}
+      </div>
+    </div>
+  );
+}
+
+function AdminTabHeader({
+  title,
+  endpoints,
+  searchPlaceholder,
+  searchValue,
+  onSearchChange,
+  actions,
+  onRefresh,
+  refreshing,
+}: {
+  title: string;
+  endpoints?: React.ReactNode;
+  searchPlaceholder?: string;
+  searchValue?: string;
+  onSearchChange?: (val: string) => void;
+  actions?: React.ReactNode;
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
+      <div>
+        <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, lineHeight: 1.1, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>
+          {title}
+        </h2>
+        {endpoints && (
+          <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
+            Live from the backend — {endpoints}
+          </p>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {onSearchChange && (
+          <input
+            type="search"
+            placeholder={searchPlaceholder}
+            value={searchValue ?? ''}
+            onChange={(e) => onSearchChange(e.target.value)}
+            style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, color: 'var(--text-primary)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '999px', padding: '11px 15px', minWidth: '220px' }}
+          />
+        )}
+        {actions}
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            style={{ width: '36px', height: '36px', borderRadius: '999px', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1 }}
+          >
+            <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" className={refreshing ? 'spin' : ''} style={{ color: 'var(--text-secondary)' }} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OvIcon({ name }: { name: 'wallet' | 'clock' | 'calendar' | 'inbox' }) {
   const paths = {
     wallet: (
@@ -859,7 +988,7 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 320px) 1fr', gap: '1rem', alignItems: 'start' }}>
+      <div className="adm-split">
         <div className="adm-card" style={{ padding: '0.4rem', maxHeight: '62vh', overflowY: 'auto' }}>
           {loadingThreads ? (
             <div style={{ padding: '1.2rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</div>
@@ -1512,6 +1641,10 @@ export function AdminDashboardPage() {
   const [serviceSearch, setServiceSearch] = useState('');
   const [servicesLoading, setServicesLoading] = useState(false);
   const [servicesError, setServicesError] = useState<string | null>(null);
+  /* A refused request is a different failure from a broken one: retrying it will
+     fail the same way until the admin signs in again. 11d gives that case its own
+     action rather than a Try Again that cannot succeed. */
+  const [servicesAuthError, setServicesAuthError] = useState(false);
   const [serviceFormOpen, setServiceFormOpen] = useState(false);
   const [serviceFormMode, setServiceFormMode] = useState<'create' | 'edit'>('create');
   const [serviceFormItem, setServiceFormItem] = useState<AdminServiceItemCreate | AdminServiceItemUpdate>({
@@ -2284,11 +2417,13 @@ export function AdminDashboardPage() {
     const session = readSession();
     if (!session) {
       setServicesError('You are not signed in. Sign in with an Owner or Assistant account to load services.');
+      setServicesAuthError(true);
       return;
     }
 
     setServicesLoading(true);
     setServicesError(null);
+    setServicesAuthError(false);
     setServiceFeedback(null);
 
     try {
@@ -2297,6 +2432,7 @@ export function AdminDashboardPage() {
     } catch (err) {
       if (err instanceof ServiceApiError) {
         setServicesError(err.message);
+        setServicesAuthError(err.isAuthError);
       } else {
         setServicesError('Unable to load service catalog. Please try again.');
       }
@@ -2403,6 +2539,7 @@ export function AdminDashboardPage() {
     } catch (err) {
       if (err instanceof ServiceApiError) {
         setServicesError(err.message);
+        setServicesAuthError(err.isAuthError);
       } else {
         setServicesError('Unable to update service status. Please try again.');
       }
@@ -2868,7 +3005,7 @@ export function AdminDashboardPage() {
     Pending: { color: 'var(--text-dim)', label: 'Not yet out' },
     Delivered: { color: 'var(--warning)', label: 'Out' },
     Damaged: { color: 'var(--danger)', label: 'Needs maintenance' },
-    Returned: { color: 'var(--primary)', label: 'Back in stock' },
+    Returned: { color: 'var(--status-paid)', label: 'Back in stock' },
   };
 
   const DELIVERY_ACTION_LABEL: Record<DeliveryStatusName, string> = {
@@ -2981,12 +3118,15 @@ export function AdminDashboardPage() {
     },
   ];
 
-  const NAV: { id: Tab; label: string; icon: string; badge?: number }[] = [
-    { id: 'overview', label: 'Overview', icon: '▦' },
-    { id: 'bookings', label: 'Bookings', icon: '🗓', badge: pendingRes.length },
-    { id: 'payments', label: 'Payments', icon: '₱', badge: pendingPayments.length },
-    { id: 'packages', label: 'Packages', icon: '📦' },
-    { id: 'testimonials', label: 'Testimonials', icon: '★', badge: pendingTesti },
+  /* Lucide at 1.75 stroke, not emoji. The old glyphs (▦ 🗓 ₱ 📦 ★ …) rendered as
+     colour emoji on Windows and Android — they could not take currentColor, so the
+     active nav item's icon stayed multicoloured against the active fill. */
+  const NAV: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+    { id: 'overview', label: 'Overview', icon: <LayoutGrid size={18} strokeWidth={1.75} /> },
+    { id: 'bookings', label: 'Bookings', icon: <CalendarDays size={18} strokeWidth={1.75} />, badge: pendingRes.length },
+    { id: 'payments', label: 'Payments', icon: <Wallet size={18} strokeWidth={1.75} />, badge: pendingPayments.length },
+    { id: 'packages', label: 'Packages', icon: <Package size={18} strokeWidth={1.75} /> },
+    { id: 'testimonials', label: 'Testimonials', icon: <Star size={18} strokeWidth={1.75} />, badge: pendingTesti },
   ];
 
   const isRouteActive = (path: string) => location.pathname === path || location.pathname.startsWith(`${path}/`);
@@ -3023,6 +3163,7 @@ export function AdminDashboardPage() {
           font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
           color: var(--accent);
         }
+        .adm-drawer-close { display: none; }
         .adm-nav { flex: 1; padding: 1rem 0.8rem; display: flex; flex-direction: column; gap: 0.25rem; overflow-y: auto; }
         .adm-nav-caption {
           padding: 0.4rem 0.9rem 0.3rem;
@@ -3085,15 +3226,15 @@ export function AdminDashboardPage() {
           color: var(--text-dim); font-variant-numeric: tabular-nums;
         }
         .adm-nav-item.active .adm-nav-count { color: var(--primary); }
+        /* No tile behind the glyph: that box existed to give an emoji a consistent
+           footprint. A Lucide icon on currentColor needs no container, and dropping
+           it lets eleven nav rows sit closer together in a 250px rail. */
         .adm-nav-icon {
-          width: 27px; height: 27px; flex-shrink: 0;
-          border-radius: var(--r-sm);
-          background: var(--bg-subtle);
-          border: 1px solid var(--border);
+          width: 20px; height: 20px; flex-shrink: 0;
           display: flex; align-items: center; justify-content: center;
-          font-size: 0.78rem;
+          color: currentColor;
         }
-        .adm-nav-item.active .adm-nav-icon { background: var(--primary-muted); border-color: var(--border-accent); }
+        .adm-nav-icon svg { width: 18px; height: 18px; }
         .adm-badge {
           margin-left: auto;
           background: var(--accent-muted); color: var(--accent);
@@ -3115,9 +3256,13 @@ export function AdminDashboardPage() {
           transition: background 0.2s, color 0.2s, border-color 0.2s;
         }
         .adm-foot-btn:hover { color: var(--primary); border-color: var(--border-accent); background: var(--primary-muted); }
+        /* Sign out reads danger at rest, not only on hover — artboard 8b colours it
+           #F2828C in the drawer. A destructive action that looks identical to the
+           theme toggle until you are already pointing at it announces itself too late. */
+        .adm-foot-btn.danger { color: var(--danger); }
         .adm-foot-btn.danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-muted); }
 
-        .adm-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(20, 14, 8, 0.45); display: none; }
+        .adm-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(27, 16, 36, 0.32); display: none; }
 
         /* ── topbar ── */
         .adm-topbar {
@@ -3168,7 +3313,7 @@ export function AdminDashboardPage() {
           border-radius: var(--r-sm);
         }
 
-        .adm-title { font-family: var(--font-display); font-size: 1.4rem; font-weight: 500; color: var(--text-primary); }
+        .adm-title { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; letter-spacing: -0.028em; line-height: 1.1; color: var(--text-primary); }
 
         .adm-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; }
         @media (max-width: 1200px) { .adm-metrics { grid-template-columns: 1fr 1fr; } }
@@ -3202,7 +3347,7 @@ export function AdminDashboardPage() {
           background: var(--bg-subtle); color: var(--text-dim);
           border-radius: var(--r-full); padding: 0.05rem 0.42rem; min-width: 17px; text-align: center;
         }
-        .adm-pill.active .count { background: rgba(255,255,255,0.22); color: var(--primary-text); }
+        .adm-pill.active .count { background: color-mix(in srgb, var(--primary-text) 22%, transparent); color: var(--primary-text); }
 
         /* buttons */
         .adm-btn {
@@ -3316,41 +3461,34 @@ export function AdminDashboardPage() {
         }
 
 
-        /* ── overview redesign ──
-           Self-contained token set so the lime/charcoal dashboard skin stays on the
-           overview tab and doesn't leak into the others, which still run on the
-           house palette. */
+        /* ── overview ──
+           These --ov-* names are kept because ~80 rules below read them, but every
+           one now forwards to a house token instead of carrying its own literal.
+           The tab used to run a self-contained lime-on-charcoal skin (#C0FF00 on
+           #1C1C1C, Inter/Jost) — a third design language sitting between the plum
+           site and the plum admin chrome, and one that needed its own hand-written
+           dark path. Forwarding deletes that path: .dark rebinds --surface,
+           --text-primary and the rest, and everything here follows. Layout values
+           (--ov-r, the grid gap) are unchanged. */
         .adm-ov {
-          --ov-lime: #c0ff00;
-          --ov-lime-2: #a8e400;
-          --ov-lime-soft: #eaffb3;
-          --ov-lime-ink: #4a6b00;
-          --ov-charcoal: #1c1c1c;
-          --ov-ink: #171717;
-          --ov-muted: #8c8c8c;
-          --ov-card: #ffffff;
-          --ov-chip: #f4f4f3;
-          --ov-line: #ececea;
-          --ov-dash: #e2e2df;
-          --ov-neg: #ffe3e7;
-          --ov-neg-ink: #cf3f57;
+          --ov-lime: var(--accent);
+          --ov-lime-2: var(--accent-hover);
+          --ov-lime-soft: var(--accent-muted);
+          --ov-lime-ink: var(--accent);
+          --ov-lime-on: var(--accent-text);
+          --ov-charcoal: var(--primary);
+          --ov-ink: var(--text-primary);
+          --ov-muted: var(--text-muted);
+          --ov-card: var(--surface);
+          --ov-chip: var(--bg-subtle);
+          --ov-line: var(--border);
+          --ov-dash: var(--border-strong);
+          --ov-neg: var(--danger-muted);
+          --ov-neg-ink: var(--danger);
           --ov-r: 22px;
-          --ov-font: "Inter", "Jost", system-ui, -apple-system, sans-serif;
+          --ov-font: var(--font-body);
           font-family: var(--ov-font);
           gap: 1.15rem !important;
-        }
-        .dark .adm-ov {
-          --ov-charcoal: #efeae3;
-          --ov-ink: #f5f0eb;
-          --ov-muted: #9c948a;
-          --ov-card: #17140f;
-          --ov-chip: rgba(245, 240, 235, 0.055);
-          --ov-line: rgba(245, 240, 235, 0.12);
-          --ov-dash: rgba(245, 240, 235, 0.16);
-          --ov-lime-soft: rgba(192, 255, 0, 0.16);
-          --ov-lime-ink: #c0ff00;
-          --ov-neg: rgba(207, 63, 87, 0.18);
-          --ov-neg-ink: #ff8fa1;
         }
         .adm-ov .adm-title {
           font-family: var(--ov-font); font-weight: 600;
@@ -3362,7 +3500,7 @@ export function AdminDashboardPage() {
           border-radius: 50%; background: var(--ov-chip);
           border-color: transparent; color: var(--ov-muted);
         }
-        .adm-ov .adm-iconbtn:hover { background: var(--ov-lime); border-color: transparent; color: #1c1c1c; }
+        .adm-ov .adm-iconbtn:hover { background: var(--ov-lime); border-color: transparent; color: var(--ov-lime-on); }
 
         /* top region — 2x2 KPI grid on the left, sales panel on the right */
         .adm-ov-top {
@@ -3407,17 +3545,21 @@ export function AdminDashboardPage() {
         }
 
         /* the single accent card — rich green with a lime bloom in the corner */
+        /* The featured KPI card is a dark fill in BOTH themes, so its values are
+           pinned literals rather than tokens — the same contract .dark-band has.
+           It was a green gradient under a lime highlight, which belonged to neither
+           the old palette nor this one. */
         .adm-ov-kpi.accent {
           border-color: transparent;
           background:
-            radial-gradient(120% 95% at 92% 4%, rgba(192, 255, 0, 0.55) 0%, rgba(192, 255, 0, 0) 58%),
-            linear-gradient(142deg, #37ad63 0%, #16794a 52%, #073f2c 100%);
-          box-shadow: 0 10px 30px rgba(11, 82, 55, 0.24);
+            radial-gradient(120% 95% at 92% 4%, rgba(242, 193, 209, 0.38) 0%, rgba(242, 193, 209, 0) 58%),
+            linear-gradient(142deg, #4a2c60 0%, #2e1a3e 52%, #1b1024 100%);
+          box-shadow: 0 10px 30px rgba(27, 16, 36, 0.28);
         }
-        .adm-ov-kpi.accent .lbl { color: rgba(255, 255, 255, 0.9); }
-        .adm-ov-kpi.accent .num { color: #ffffff; }
-        .adm-ov-kpi.accent .foot { color: rgba(255, 255, 255, 0.84); }
-        .adm-ov-kpi.accent .ico { background: rgba(255, 255, 255, 0.18); color: #ffffff; }
+        .adm-ov-kpi.accent .lbl { color: rgba(247, 239, 244, 0.9); }
+        .adm-ov-kpi.accent .num { color: #f7eff4; }
+        .adm-ov-kpi.accent .foot { color: rgba(247, 239, 244, 0.84); }
+        .adm-ov-kpi.accent .ico { background: rgba(247, 239, 244, 0.16); color: #f7eff4; }
 
         .adm-ov-badge {
           display: inline-flex; align-items: center; gap: 0.15rem;
@@ -3427,7 +3569,7 @@ export function AdminDashboardPage() {
         }
         .adm-ov-badge.up   { background: var(--ov-lime-soft); color: var(--ov-lime-ink); }
         .adm-ov-badge.down { background: var(--ov-neg); color: var(--ov-neg-ink); }
-        .adm-ov-kpi.accent .adm-ov-badge { background: rgba(192, 255, 0, 0.22); color: var(--ov-lime); }
+        .adm-ov-kpi.accent .adm-ov-badge { background: rgba(242, 193, 209, 0.20); color: #f2c1d1; }
 
         /* sales panel */
         .adm-ov-panel { padding: 1.3rem 1.4rem 1.2rem; display: flex; flex-direction: column; }
@@ -3483,7 +3625,7 @@ export function AdminDashboardPage() {
           color: var(--ov-ink); cursor: pointer;
           transition: background 0.2s, color 0.2s, border-color 0.2s;
         }
-        .adm-ov-btn:hover:not(:disabled) { background: var(--ov-lime); border-color: var(--ov-lime); color: #1c1c1c; }
+        .adm-ov-btn:hover:not(:disabled) { background: var(--ov-lime); border-color: var(--ov-lime); color: var(--ov-lime-on); }
         .adm-ov-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
         /* full-width calendar, anchored below both */
@@ -3527,6 +3669,18 @@ export function AdminDashboardPage() {
         .adm-row { border-bottom: 1px solid var(--border); }
         .adm-row:last-child { border-bottom: none; }
 
+        /* Clickable data rows. The tint is drawn as a full-bleed inset shadow so it
+           layers over whatever the row's own background is — the menu/rental/service
+           rows sit on --surface, the tray rows on a --primary fill, and one rule
+           covers both by picking the tint from the matching foreground token. */
+        .adm-datarow { transition: box-shadow 0.2s ease; }
+        .adm-datarow:hover {
+          box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--text-primary) 5%, transparent);
+        }
+        .adm-datarow--onfill:hover {
+          box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--primary-text) 10%, transparent);
+        }
+
         /* responsive */
         @media (max-width: 900px) {
           .adm-main { margin-left: 0; }
@@ -3534,9 +3688,55 @@ export function AdminDashboardPage() {
           .adm-sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
           .adm-scrim.open { display: block; }
           .adm-burger { display: flex; }
+          .adm-drawer-close { display: flex; }
           .adm-topbar { padding: 0.8rem 1.25rem; }
           .adm-content { padding: 1.5rem 1.25rem 4rem !important; }
           .adm-overview-cols { grid-template-columns: 1fr !important; }
+        }
+
+        /* ── master/detail panes (support threads, booking history) ──
+           Both columns carry a hard min width, so below ~860px the pair overflows
+           the content box instead of shrinking. The detail side is minmax(0, 1fr)
+           rather than 1fr so a wide table inside can't blow the column out either. */
+        .adm-split {
+          display: grid; gap: 1rem; align-items: start;
+          grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+        }
+        .adm-split--history {
+          gap: 14px;
+          grid-template-columns: minmax(190px, 4fr) minmax(240px, 8fr);
+        }
+        @media (max-width: 860px) {
+          .adm-split, .adm-split--history { grid-template-columns: minmax(0, 1fr); }
+        }
+
+        @media (max-width: 640px) {
+          /* Two form columns leave ~130px a field once the overlay and panel padding
+             are taken out — narrower than the inputs' own text. */
+          .adm-modal-panel .form-grid { grid-template-columns: 1fr; }
+          /* Top-aligned so a tall form scrolls from its heading rather than being
+             centred with both ends clipped. */
+          .adm-modal-overlay { padding: 0.75rem; align-items: flex-start; }
+          .adm-modal-panel { max-height: calc(100dvh - 1.5rem); padding: 1.1rem 1rem; }
+          .adm-modal-panel .form-actions > * { flex: 1 1 auto; }
+          /* Seven columns leave ~44px a cell here, so the reserved row height is
+             what makes an empty month fill the screen. */
+          .adm-cal-cell { min-height: 46px; padding: 0.25rem 0.2rem; }
+          .adm-title { font-size: 1.25rem; }
+        }
+
+        /* The tab label is the only elastic thing in the topbar; without this it
+           pushes the bell, theme toggle and avatar off the right edge on a phone. */
+        .adm-topbar-title {
+          min-width: 0; overflow: hidden;
+          text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        @media (max-width: 560px) {
+          .adm-topbar { padding: 0.7rem 1rem; }
+          .adm-content { padding: 1.25rem 1rem 3.5rem !important; }
+          .adm-cal-head { padding: 0.75rem 0.9rem; }
+          .adm-chart { gap: 0.4rem; }
         }
 
         /* ── contract (item 2) ──
@@ -3716,7 +3916,7 @@ export function AdminDashboardPage() {
                      issues an invoice, so reaching this means something upstream
                      skipped generation — worth investigating, not just clicking past. */
                   <div style={{ textAlign: 'center', padding: '2rem 0' }}>
-                    <div style={{ fontSize: '1.6rem', marginBottom: '0.6rem' }}>🧾</div>
+                    <ScrollText size={26} strokeWidth={1.5} aria-hidden="true" style={{ marginBottom: '0.6rem', color: 'var(--text-dim)' }} />
                     <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.4rem' }}>
                       No invoice yet
                     </h4>
@@ -4212,7 +4412,9 @@ export function AdminDashboardPage() {
                 </ol>
 
                 {/* ── signatures ── */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2.5rem', marginTop: '2.4rem' }}>
+                {/* auto-fit rather than 1fr 1fr: the two signature lines stack on a
+                    phone but stay side by side on the printed sheet, which is wide. */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2.5rem', marginTop: '2.4rem' }}>
                   {['Client', 'For King Jegi Catering Services'].map((who) => (
                     <div key={who}>
                       <div style={{ borderTop: '1px solid var(--text-primary)', paddingTop: '0.4rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--text-muted)' }}>
@@ -4234,7 +4436,7 @@ export function AdminDashboardPage() {
         <aside className={`adm-sidebar${sidebarOpen ? ' open' : ''}`}>
           <div className="adm-brand">
             <div className="adm-brand-mark">K</div>
-            <div>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.1 }}>
                 King Jegi
               </div>
@@ -4242,6 +4444,18 @@ export function AdminDashboardPage() {
                 Admin Panel
               </div>
             </div>
+            {/* Drawer close, per artboard 8b. Below 900px the sidebar is a drawer and
+                had no visible dismiss — only the scrim, which is not discoverable and
+                is easy to miss on a narrow screen. Hidden at desktop, where the
+                sidebar is permanent and there is nothing to close. */}
+            <button
+              type="button"
+              className="adm-iconbtn adm-drawer-close"
+              aria-label="Close navigation"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <X size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
           </div>
 
           <nav className="adm-nav" aria-label="Admin navigation">
@@ -4286,7 +4500,7 @@ export function AdminDashboardPage() {
               className={`adm-nav-item${tab === 'menus' ? ' active' : ''}`}
               onClick={() => openTab('menus')}
             >
-              <span className="adm-nav-icon">🍽️</span>
+              <span className="adm-nav-icon"><UtensilsCrossed size={18} strokeWidth={1.75} /></span>
               Menus &amp; Dishes
             </button>
             <button
@@ -4294,7 +4508,7 @@ export function AdminDashboardPage() {
               className={`adm-nav-item${tab === 'rentals' ? ' active' : ''}`}
               onClick={() => openTab('rentals')}
             >
-              <span className="adm-nav-icon">🎪</span>
+              <span className="adm-nav-icon"><Tent size={18} strokeWidth={1.75} /></span>
               Rentals
             </button>
             <button
@@ -4302,23 +4516,14 @@ export function AdminDashboardPage() {
               className={`adm-nav-item${tab === 'services' ? ' active' : ''}`}
               onClick={() => openTab('services')}
             >
-              <span className="adm-nav-icon">🛠️</span>
+              <span className="adm-nav-icon"><Wrench size={18} strokeWidth={1.75} /></span>
               Service Items
             </button>
             <Link
               to="/admin/booking-histories"
               className={`adm-nav-item${isRouteActive('/admin/booking-histories') ? ' active' : ''}`}
             >
-              <span className="adm-nav-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="4" y="4" width="16" height="16" rx="2" />
-                  <path d="M8 2v4" />
-                  <path d="M16 2v4" />
-                  <path d="M4 10h16" />
-                  <path d="M8 14h3" />
-                  <path d="M8 17h6" />
-                </svg>
-              </span>
+              <span className="adm-nav-icon" aria-hidden="true"><CalendarClock size={18} strokeWidth={1.75} /></span>
               Booking Histories
             </Link>
             <button
@@ -4326,7 +4531,7 @@ export function AdminDashboardPage() {
               className={`adm-nav-item${tab === 'audit' ? ' active' : ''}`}
               onClick={() => openTab('audit')}
             >
-              <span className="adm-nav-icon">🧾</span>
+              <span className="adm-nav-icon"><ScrollText size={18} strokeWidth={1.75} /></span>
               Audit Log
             </button>
             <button
@@ -4334,7 +4539,7 @@ export function AdminDashboardPage() {
               className={`adm-nav-item${tab === 'announcements' ? ' active' : ''}`}
               onClick={() => openTab('announcements')}
             >
-              <span className="adm-nav-icon">📣</span>
+              <span className="adm-nav-icon"><Megaphone size={18} strokeWidth={1.75} /></span>
               Announcements
             </button>
             {PLACEHOLDER_ITEMS.map((name) => (
@@ -4344,7 +4549,7 @@ export function AdminDashboardPage() {
                 className={`adm-nav-item${tab === 'placeholder' && placeholderName === name ? ' active' : ''}`}
                 onClick={() => { setPlaceholderName(name); openTab('placeholder'); }}
               >
-                <span className="adm-nav-icon">◌</span>
+                <span className="adm-nav-icon"><Circle size={18} strokeWidth={1.75} /></span>
                 {name}
               </button>
             ))}
@@ -4355,7 +4560,7 @@ export function AdminDashboardPage() {
                 it — an admin had to visit the landing page to change theme. */}
             <ThemeToggle className="adm-foot-btn" showLabel size={14} />
             <button type="button" className="adm-foot-btn danger" onClick={() => void logout()}>
-              ⎋ Logout
+              <LogOut size={15} strokeWidth={1.75} aria-hidden="true" /> Sign out
             </button>
           </div>
         </aside>
@@ -4370,7 +4575,7 @@ export function AdminDashboardPage() {
                 <path d="M4 7h16M4 12h16M4 17h16" />
               </svg>
             </button>
-            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
+            <span className="adm-topbar-title" style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
               {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
@@ -4573,7 +4778,7 @@ export function AdminDashboardPage() {
                                 {salesSummary.summary}
                               </p>
                               <button type="button" className="adm-ov-btn" onClick={() => void loadSalesSummary()} disabled={summaryLoading}>
-                                {summaryLoading ? 'Thinking…' : '↻ Regenerate'}
+                                {summaryLoading ? 'Thinking…' : <><RotateCw size={13} strokeWidth={2} aria-hidden="true" /> Regenerate</>}
                               </button>
                             </>
                           ) : (
@@ -4918,12 +5123,12 @@ export function AdminDashboardPage() {
             {/* ══════════ PAYMENTS (live backend data) ══════════ */}
             {tab === 'payments' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                <div>
-                  <h2 className="adm-title">Payments</h2>
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                    Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
-                  </p>
-                </div>
+                  <div>
+                    <h2 className="adm-title">Payments</h2>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
+                    </p>
+                  </div>
 
                 <PaymentsToolbar
                   search={paymentSearch}
@@ -5076,34 +5281,29 @@ export function AdminDashboardPage() {
 
             {/* ══════════ AUDIT LOG (live backend data, Owner-only) ══════════ */}
             {tab === 'audit' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div className="fade-up" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-md)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
                   <div>
-                    <h2 className="adm-title">Audit Log</h2>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Auditlogs</code> · Owner only
+                    <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Audit Log</h2>
+                    <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
+                      Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--text-muted)' }}>/api/Auditlogs</span> · Owner only
                     </p>
                   </div>
-                  <button type="button" className="adm-btn outline" onClick={() => void loadAuditLogs(auditPage)} disabled={auditLoading}>
-                    {auditLoading ? 'Refreshing…' : '↻ Refresh'}
-                  </button>
+                  <span onClick={() => void loadAuditLogs(auditPage)} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    {auditLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--text-secondary)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--text-secondary)' }} />}
+                  </span>
                 </div>
 
                 {auditError && !auditLoading && (
-                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                      Couldn't load the audit trail
-                    </h3>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                  <div style={{ padding: '1.4rem 1.6rem', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius: '14px', background: 'var(--surface)' }}>
+                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
                       {auditError}
                     </p>
-                    <button type="button" className="adm-btn outline" onClick={() => void loadAuditLogs(auditPage)}>Try Again</button>
                   </div>
                 )}
 
                 {auditLoading && (
-                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '1.4rem 1.6rem' }} aria-hidden="true">
                     <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
                     {[0, 1, 2, 3, 4].map((i) => (
                       <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
@@ -5120,39 +5320,38 @@ export function AdminDashboardPage() {
                 {!auditLoading && !auditError && (
                   <>
                     {auditRows.length === 0 ? (
-                      <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                         {auditPage === 1 ? 'No audit entries recorded yet.' : 'No more entries.'}
                       </div>
                     ) : (
-                      <div className="adm-card" style={{ padding: '0.4rem 1.5rem' }}>
-                        {auditRows.map((row) => {
-                          const actionColor =
-                            row.action === 'CREATE' ? 'var(--primary)'
-                            : row.action === 'DELETE' ? 'var(--danger)'
-                            : 'var(--accent)';
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '4px 18px' }}>
+                        {auditRows.map((row, idx) => {
+                          const actionColor = row.action === 'CREATE' ? 'var(--primary)' : row.action === 'DELETE' ? 'var(--danger)' : 'var(--warning)';
+                          const actionBg = row.action === 'CREATE' ? 'rgba(46,26,62,.12)' : row.action === 'DELETE' ? 'rgba(220,38,38,.12)' : 'rgba(180,116,26,.14)';
                           return (
-                            <div key={row.id} className="adm-row" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', padding: '0.85rem 0' }}>
-                              <div style={{ flex: 1, minWidth: 240 }}>
-                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                                  {row.targetTable}
-                                  <span style={{ color: 'var(--text-dim)', fontWeight: 300 }}> · {row.targetId.substring(0, 8)}</span>
+                            <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 0', borderBottom: idx < auditRows.length - 1 ? '1px solid var(--border)' : 'none', flexWrap: 'wrap' }}>
+                              <div style={{ flex: 1, minWidth: '220px' }}>
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)' }}>
+                                  {row.targetTable}<span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)' }}> · {row.targetId.substring(0, 8)}</span>
                                 </div>
-                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.2rem' }}>
+                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)', marginTop: '4px' }}>
                                   {fmtDateTime(row.changedAt)} · admin {row.adminId.substring(0, 8)}
                                 </div>
                               </div>
-                              <StatusBadge label={row.action} color={actionColor} />
+                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: actionBg, color: actionColor }}>
+                                {row.action}
+                              </span>
                             </div>
                           );
                         })}
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <button type="button" className="adm-btn outline" disabled={auditPage <= 1} onClick={() => void loadAuditLogs(auditPage - 1)}>
+                      <button type="button" disabled={auditPage <= 1} onClick={() => void loadAuditLogs(auditPage - 1)} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border-strong)', padding: '11px 18px', borderRadius: '999px', opacity: auditPage <= 1 ? 0.45 : 1, cursor: auditPage <= 1 ? 'not-allowed' : 'pointer' }}>
                         ‹ Newer
                       </button>
-                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', color: 'var(--text-dim)' }}>Page {auditPage}</span>
-                      <button type="button" className="adm-btn outline" disabled={auditRows.length < AUDIT_PAGE_SIZE} onClick={() => void loadAuditLogs(auditPage + 1)}>
+                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)' }}>Page {auditPage}</span>
+                      <button type="button" disabled={auditRows.length < AUDIT_PAGE_SIZE} onClick={() => void loadAuditLogs(auditPage + 1)} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border-strong)', padding: '11px 18px', borderRadius: '999px', opacity: auditRows.length < AUDIT_PAGE_SIZE ? 0.45 : 1, cursor: auditRows.length < AUDIT_PAGE_SIZE ? 'not-allowed' : 'pointer' }}>
                         Older ›
                       </button>
                     </div>
@@ -5168,90 +5367,90 @@ export function AdminDashboardPage() {
 
             {/* ══════════ TESTIMONIALS ══════════ */}
             {tab === 'testimonials' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div className="fade-up" style={{ background: 'var(--band-bg)', border: '1px solid var(--band-glass-border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
                   <div>
-                    <h2 className="adm-title">Testimonial Moderation</h2>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Testimonials</code> · approved reviews appear on the landing page
+                    <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', lineHeight: 1.1, color: 'var(--band-text)' }}>Testimonial Moderation</h2>
+                    <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--band-muted)' }}>
+                      Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--band-muted)' }}>/api/Testimonials</span> · approved reviews appear on the landing page
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--band-muted)' }}>
                       {pendingTesti} pending review
                     </span>
-                    <button type="button" className="adm-btn outline" onClick={() => void loadTestimonials()} disabled={testiLoading}>
-                      {testiLoading ? 'Refreshing…' : '↻ Refresh'}
-                    </button>
+                    <span onClick={() => void loadTestimonials()} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'rgba(247,239,244,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                      {testiLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)' }} />}
+                    </span>
                   </div>
                 </div>
 
                 {testiError && (
-                  <div className="adm-card" style={{ padding: '1.4rem 1.6rem', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
+                  <div style={{ padding: '1.4rem 1.6rem', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius: '16px' }}>
                     <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
                       {testiError}
                     </p>
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
                   {(['Pending', 'Approved', 'Rejected', 'all'] as const).map((k) => {
                     const count = k === 'all' ? testimonials.length : testimonials.filter((t) => t.status === k).length;
+                    const isActive = testiFilter === k;
                     return (
-                      <button key={k} type="button" className={`adm-pill${testiFilter === k ? ' active' : ''}`} onClick={() => setTestiFilter(k)}>
+                      <span
+                        key={k}
+                        onClick={() => setTestiFilter(k)}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: isActive ? 600 : 500, lineHeight: 1, padding: '10px 15px', borderRadius: '999px', background: isActive ? 'var(--accent)' : 'rgba(247,239,244,.07)', color: isActive ? 'var(--band-bg)' : 'var(--band-muted)', cursor: 'pointer' }}
+                      >
                         {k === 'all' ? 'All' : TESTI_STATUS[k].label}
-                        <span className="count">{count}</span>
-                      </button>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: isActive ? 'var(--band-bg)' : 'var(--band-muted)' }}>{count}</span>
+                      </span>
                     );
                   })}
                 </div>
 
                 {filteredTesti.length === 0 ? (
-                  <div className="adm-card" style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
+                  <div style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--band-muted)', background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '18px' }}>
                     No testimonials in this view.
                   </div>
                 ) : (
                   filteredTesti.map((t) => {
-                    const st = TESTI_STATUS[t.status];
                     return (
-                      <div key={t.id} className="adm-card" style={{ padding: '1.3rem 1.5rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
-                          <div
-                            style={{
-                              width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
-                              background: 'var(--primary-muted)', border: '1px solid var(--border-accent)',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)',
-                            }}
-                          >
+                      <div key={t.id} style={{ background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '18px', padding: '20px 22px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
+                          <span style={{ flex: 'none', width: '42px', height: '42px', borderRadius: '999px', background: 'rgba(232,112,154,.16)', border: '1px solid rgba(232,112,154,.34)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 600, lineHeight: 1, color: 'var(--accent)' }}>
                             {t.authorName.charAt(0)}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 220 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.3rem' }}>
-                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.authorName}</span>
-                              <span style={{ color: 'var(--accent)', fontSize: '0.8rem' }}>
-                                {'★'.repeat(t.rating)}
-                                <span style={{ color: 'var(--border-strong)' }}>{'★'.repeat(5 - t.rating)}</span>
+                          </span>
+                          <div style={{ flex: 1, minWidth: '220px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, lineHeight: 1.15, letterSpacing: '-0.02em', color: 'var(--band-text)' }}>{t.authorName}</span>
+                              <span style={{ display: 'flex', gap: '2px' }} aria-label={`${t.rating} out of 5`}>
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                  <Star key={i} size={13} strokeWidth={1.75} fill={i < t.rating ? 'var(--band-accent)' : 'var(--band-border)'} color={i < t.rating ? 'var(--band-accent)' : 'var(--band-border)'} />
+                                ))}
                               </span>
                             </div>
-                            <p style={{ fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontStyle: 'italic', color: 'var(--text-secondary)', lineHeight: 1.55, margin: '0 0 0.4rem' }}>
+                            <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-body)', fontSize: '15px', fontWeight: 400, lineHeight: 1.6, fontStyle: 'italic', color: 'var(--band-muted)' }}>
                               "{t.body}"
                             </p>
-                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                              Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing “{t.bookingName}” ({fmtDate(t.eventDate)})
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--band-muted)' }}>
+                              Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing "{t.bookingName}" ({fmtDate(t.eventDate)})
                             </span>
                           </div>
-                          <StatusBadge label={st.label} color={st.color} />
+                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(232,180,95,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#E8B45F' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
+                            {t.status}
+                          </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.9rem' }}>
+                        <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', marginTop: '16px' }}>
                           {t.status !== 'Approved' && (
-                            <button type="button" className="adm-btn success" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Approved')}>
-                              {testiBusyId === t.id ? 'Saving…' : '✓ Approve — publish to landing page'}
+                            <button type="button" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Approved')} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: '#1F7A33', color: '#fff', border: 'none', padding: '12px 18px', borderRadius: '999px', cursor: 'pointer' }}>
+                              {testiBusyId === t.id ? 'Saving...' : <><Check size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> Approve — publish to landing page</>}
                             </button>
                           )}
                           {t.status !== 'Rejected' && (
-                            <button type="button" className="adm-btn danger" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Rejected')}>
-                              ✕ {t.status === 'Approved' ? 'Remove from landing page' : 'Reject'}
+                            <button type="button" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Rejected')} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: '#DC2626', color: '#fff', border: 'none', padding: '12px 18px', borderRadius: '999px', cursor: 'pointer' }}>
+                              {testiBusyId === t.id ? 'Saving...' : <><X size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> {t.status === 'Approved' ? 'Remove from landing page' : 'Reject'}</>}
                             </button>
                           )}
                         </div>
@@ -5264,26 +5463,24 @@ export function AdminDashboardPage() {
 
             {/* ══════════ BOOKING HISTORIES (live backend data) ══════════ */}
             {tab === 'histories' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+              <div className="fade-up" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-md)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div>
-                  <h2 className="adm-title">Booking Histories</h2>
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                    Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Bookings/{'{id}'}/history</code>. Every mutating call writes a
-                    snapshot of the booking as it was <em>before</em> the change.
+                  <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Booking Histories</h2>
+                  <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--text-muted)', maxWidth: '56ch' }}>
+                    Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--text-muted)' }}>/api/Bookings/[id]/history</span>. Every mutating call writes a snapshot of the booking as it was <em>before</em> the change.
                   </p>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 4fr) minmax(320px, 8fr)', gap: '1.2rem', alignItems: 'start' }} className="adm-overview-cols">
+                <div className="adm-split adm-split--history">
 
                   {/* booking picker */}
-                  <div className="adm-card" style={{ padding: '1.1rem 1.2rem' }}>
-                    <FieldLabel text="Select a booking" />
+                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
+                    <div style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '10px' }}>Select a booking</div>
                     <input
-                      className="adm-input square"
-                      style={{ margin: '0.5rem 0 0.8rem' }}
+                      placeholder="Search by name…"
+                      style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px', marginBottom: '12px' }}
                       value={historySearch}
                       onChange={(e) => setHistorySearch(e.target.value)}
-                      placeholder="Search by name…"
                     />
                     <div style={{ maxHeight: 460, overflowY: 'auto' }}>
                       {reservations
@@ -5297,22 +5494,22 @@ export function AdminDashboardPage() {
                             type="button"
                             onClick={() => void openHistory(r.id)}
                             style={{
-                              display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
-                              border: 'none', borderBottom: '1px solid var(--border)',
-                              background: historyBookingId === r.id ? 'var(--primary-muted)' : 'transparent',
-                              padding: '0.6rem 0.4rem',
+                              display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer', border: 'none',
+                              padding: '10px 4px', borderBottom: '1px solid var(--border)',
+                              background: historyBookingId === r.id ? 'rgba(46,26,62,.07)' : 'transparent',
+                              borderRadius: historyBookingId === r.id ? '8px' : '0'
                             }}
                           >
-                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)' }}>
                               {r.bookingName}
                             </div>
-                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)' }}>
+                            <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.3, color: 'var(--text-muted)', marginTop: '3px' }}>
                               {fmtDate(r.eventDate)} · {r.status}
                             </div>
                           </button>
                         ))}
                       {reservations.length === 0 && (
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--text-muted)', margin: '1rem 0' }}>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, color: 'var(--text-muted)', margin: '10px 4px' }}>
                           No bookings loaded.
                         </p>
                       )}
@@ -5320,86 +5517,70 @@ export function AdminDashboardPage() {
                   </div>
 
                   {/* revision timeline */}
-                  <div className="adm-card" style={{ padding: '1.3rem 1.5rem' }}>
-                    {!historyBookingId ? (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', textAlign: 'center', margin: '2.5rem 0' }}>
-                        Pick a booking to see how it changed over time.
-                      </p>
-                    ) : historyLoading ? (
-                      <>
-                        <div className="adm-skel" style={{ height: '0.9rem', width: '45%', marginBottom: '1rem' }} aria-hidden="true" />
-                        <div className="adm-skel" style={{ height: '3.6rem', marginBottom: '0.7rem' }} aria-hidden="true" />
-                        <div className="adm-skel" style={{ height: '3.6rem' }} aria-hidden="true" />
-                      </>
-                    ) : historyError ? (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
-                        {historyError}
-                      </p>
-                    ) : historyRows.length === 0 ? (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', textAlign: 'center', margin: '2.5rem 0' }}>
-                        No revisions recorded — this booking hasn't been changed since it was created.
-                      </p>
-                    ) : (() => {
-                      const current = reservations.find((r) => r.id === historyBookingId);
-                      // Newest first, and each row is compared against the state that
-                      // FOLLOWED it: the next snapshot, or the booking as it stands now.
-                      const ordered = [...historyRows].sort((a, b) => b.revisionNumber - a.revisionNumber);
-                      return (
+                  {!historyBookingId ? (
+                    <div style={{ background: 'var(--bg)', border: '1px dashed var(--border-strong)', borderRadius: '14px', padding: '22px', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, lineHeight: 1.5, color: 'var(--text-muted)' }}>
+                      Pick a booking to see how it changed over time.
+                    </div>
+                  ) : (
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '18px 20px' }}>
+                      {historyLoading ? (
                         <>
-                          <FieldLabel text={`${historyRows.length} revision${historyRows.length === 1 ? '' : 's'}`} />
-                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0.1rem 0 1.1rem' }}>
-                            {current?.bookingName ?? 'Booking'}
-                          </h3>
+                          <div className="adm-skel" style={{ height: '0.9rem', width: '45%', marginBottom: '1rem' }} aria-hidden="true" />
+                          <div className="adm-skel" style={{ height: '3.6rem', marginBottom: '0.7rem' }} aria-hidden="true" />
+                          <div className="adm-skel" style={{ height: '3.6rem' }} aria-hidden="true" />
+                        </>
+                      ) : historyError ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, color: 'var(--danger)', margin: 0 }}>
+                          {historyError}
+                        </p>
+                      ) : historyRows.length === 0 ? (
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, color: 'var(--text-muted)', textAlign: 'center', margin: '2rem 0' }}>
+                          No revisions recorded — this booking hasn't been changed since it was created.
+                        </p>
+                      ) : (() => {
+                        const current = reservations.find((r) => r.id === historyBookingId);
+                        const ordered = [...historyRows].sort((a, b) => b.revisionNumber - a.revisionNumber);
+                        return (
+                          <>
+                            {ordered.map((row, idx) => {
+                              const before = parseSnapshot(row.snapshotJson);
+                              const nextRow = historyRows.find((h) => h.revisionNumber === row.revisionNumber + 1);
+                              const after = nextRow ? parseSnapshot(nextRow.snapshotJson) : current ? bookingAsSnapshot(current) : null;
+                              const changes = diffSnapshots(before, after);
+                              
+                              const isLast = idx === ordered.length - 1;
+                              const isFirst = idx === 0;
 
-                          {ordered.map((row) => {
-                            const before = parseSnapshot(row.snapshotJson);
-                            const nextRow = historyRows.find((h) => h.revisionNumber === row.revisionNumber + 1);
-                            const after = nextRow
-                              ? parseSnapshot(nextRow.snapshotJson)
-                              : current ? bookingAsSnapshot(current) : null;
-                            const changes = diffSnapshots(before, after);
-
-                            return (
-                              <div key={row.id} className="adm-row" style={{ padding: '0.9rem 0' }}>
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
-                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    {row.changeReason || 'Edited'}
+                              return (
+                                <div key={row.id} style={{ display: 'flex', gap: '14px', paddingBottom: isLast ? '0' : '16px', paddingTop: isFirst ? '0' : '16px', borderBottom: isLast ? 'none' : '1px solid var(--border)' }}>
+                                  <span style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ width: '9px', height: '9px', borderRadius: '999px', background: isFirst ? 'var(--accent)' : 'var(--border-strong)' }}></span>
+                                    {!isLast && <span style={{ width: '1px', flex: 1, background: 'var(--border)' }}></span>}
                                   </span>
-                                  <StatusBadge label={`rev ${row.revisionNumber}`} color="var(--text-dim)" />
-                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                                    {fmtDateTime(row.snapshotAt)}
-                                    {' · '}
-                                    {/* A null ChangedById means the customer or the system
-                                        made the change, not a staff account. */}
-                                    {row.changedById
-                                      ? `staff ${row.changedById.slice(0, 8)}…`
-                                      : 'customer or system'}
+                                  <span style={{ flex: 1 }}>
+                                    {changes.length === 0 ? (
+                                      <span style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)' }}>
+                                        {row.changeReason || `Revision ${row.revisionNumber}`}
+                                      </span>
+                                    ) : (
+                                      changes.map((c) => (
+                                        <span key={c.key} style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)', marginBottom: '2px' }}>
+                                          {c.label} <span style={{ opacity: 0.6, textDecoration: 'line-through' }}>{c.from}</span> → {c.to}
+                                        </span>
+                                      ))
+                                    )}
+                                    <span style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)', marginTop: '4px' }}>
+                                      {fmtDateTime(row.snapshotAt)} · {row.changedById ? `staff ${row.changedById.slice(0, 8)}` : 'customer'}
+                                    </span>
                                   </span>
                                 </div>
-
-                                {changes.length === 0 ? (
-                                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
-                                    No field-level differences recorded for this revision (line items changed, or the snapshot is identical).
-                                  </p>
-                                ) : (
-                                  <div style={{ display: 'grid', gap: '0.25rem' }}>
-                                    {changes.map((c) => (
-                                      <div key={c.key} style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                                        <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{c.label}:</strong>{' '}
-                                        <span style={{ textDecoration: 'line-through', opacity: 0.7 }}>{c.from}</span>
-                                        {' → '}
-                                        <span style={{ color: 'var(--primary)', fontWeight: 500 }}>{c.to}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </>
-                      );
-                    })()}
-                  </div>
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -5407,50 +5588,34 @@ export function AdminDashboardPage() {
             {/* ══════════ MENUS & DISHES (live backend data) ══════════ */}
             {tab === 'menus' && (
               <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                  <div>
-                    <h2 className="adm-title">Menus &amp; Dishes</h2>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Menuitems</code> · <code style={{ fontSize: '0.66rem' }}>/api/Menutrays</code>
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input
-                      className="adm-input"
-                      type="search"
-                      placeholder="Search dishes and trays…"
-                      value={menuSearch}
-                      onChange={(e) => setMenuSearch(e.target.value)}
-                      style={{ flex: '0 1 260px' }}
-                      aria-label="Search menus and dishes"
-                    />
-                    <button type="button" className="adm-btn primary" onClick={() => openMenuForm('item', 'create')}>
-                      + Add Dish
-                    </button>
-                    <button type="button" className="adm-btn success" onClick={() => openMenuForm('tray', 'create')}>
-                      + Add Tray
-                    </button>
-                    <button type="button" className="adm-btn outline" onClick={() => void loadMenuCatalog()} disabled={menuLoading}>
-                      {menuLoading ? 'Refreshing…' : '↻ Refresh'}
-                    </button>
-                  </div>
-                </div>
+                <AdminTabHeader
+                  title="Menus & Dishes"
+                  endpoints={<><code style={{ fontSize: '11px', fontFamily: 'var(--font-mono)' }}>/api/Menuitems</code> · <code style={{ fontSize: '11px', fontFamily: 'var(--font-mono)' }}>/api/Menutrays</code></>}
+                  searchPlaceholder="Search dishes and trays…"
+                  searchValue={menuSearch}
+                  onSearchChange={setMenuSearch}
+                  onRefresh={() => void loadMenuCatalog()}
+                  refreshing={menuLoading}
+                  actions={
+                    <>
+                      <button type="button" onClick={() => openMenuForm('item', 'create')} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, background: 'var(--accent)', color: 'var(--accent-text)', border: 'none', padding: '11px 16px', borderRadius: '999px', cursor: 'pointer' }}>
+                        + Add Dish
+                      </button>
+                      <button type="button" onClick={() => openMenuForm('tray', 'create')} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, background: 'var(--status-paid)', color: 'var(--accent-text)', border: 'none', padding: '11px 16px', borderRadius: '999px', cursor: 'pointer' }}>
+                        + Add Tray
+                      </button>
+                    </>
+                  }
+                />
 
                 {/* ── error state ── */}
                 {menuError && !menuLoading && (
-                  <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                    <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                      Couldn't load the menu catalog
-                    </h3>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
-                      {menuError}
-                    </p>
-                    <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                      <button type="button" className="adm-btn outline" onClick={() => void loadMenuCatalog()}>Try Again</button>
-                      {menuAuthError && <Link to="/login" className="adm-btn primary">Go to Sign In</Link>}
-                    </div>
-                  </div>
+                  <AdmErrorCard
+                    title="Couldn't load the menu catalog"
+                    message={menuError}
+                    onRetry={() => void loadMenuCatalog()}
+                    extraAction={menuAuthError ? <Link to="/login" className="adm-btn primary">Go to Sign In</Link> : undefined}
+                  />
                 )}
 
                 {/* ── loading skeleton ── */}
@@ -5513,68 +5678,73 @@ export function AdminDashboardPage() {
                           {menuSearch.trim() ? `No dishes match “${menuSearch.trim()}”.` : 'No dishes in this category.'}
                         </p>
                       ) : (
-                        visibleMenuItems.map((m) => (
-                          <div key={m.id} className="adm-row" style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.85rem 0', flexWrap: 'wrap', opacity: m.isActive ? 1 : 0.55 }}>
-                            <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', overflow: 'hidden', flexShrink: 0, background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              {m.imageUrl ? (
-                                <img src={getFullImageUrl(m.imageUrl)!} alt={m.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              ) : (
-                                <span style={{ fontSize: '1.4rem' }}>🍽️</span>
-                              )}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 200 }}>
-                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.02rem', fontWeight: 500, color: 'var(--text-primary)' }}>{m.itemName}</div>
-                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.15rem', lineHeight: 1.5 }}>{m.description}</div>
-                              {m.dietaryTags.length > 0 && (
-                                <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
-                                  {m.dietaryTags.map((t) => (
-                                    <span key={t} style={{ fontFamily: 'var(--font-body)', fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 500, color: 'var(--accent)', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', borderRadius: 'var(--r-full)', padding: '0.12rem 0.5rem' }}>
-                                      {t}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <StatusBadge label={m.itemCategory} color="var(--primary)" />
-                            <StatusBadge label={m.courseCategory} color="var(--status-info)" />
-                            <div style={{ textAlign: 'right', minWidth: 96 }}>
-                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--primary)' }}>
-                                {m.pricePerTray != null ? fmt(m.pricePerTray) : '—'}
-                              </div>
-                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.1rem' }}>
-                                per tray · serves {m.servesPerTray}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                              <StatusBadge label={m.isActive ? 'Active' : 'Inactive'} color={m.isActive ? 'var(--primary)' : 'var(--danger)'} />
-                              <button
-                                type="button"
-                                className="adm-btn info"
-                                onClick={() => openMenuForm('item', 'edit', {
-                                  itemName: m.itemName,
-                                  itemCategory: m.itemCategory,
-                                  courseCategory: m.courseCategory,
-                                  description: m.description,
-                                  dietaryTags: m.dietaryTags,
-                                  pricePerTray: m.pricePerTray,
-                                  servesPerTray: m.servesPerTray,
-                                  menuPackageId: m.menuPackageId,
-                                  imageUrl: m.imageUrl,
-                                }, m.id)}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                className={`adm-btn ${m.isActive ? 'danger' : 'success'}`}
-                                onClick={() => void toggleMenuEntryActive('item', m.id, !m.isActive)}
-                                disabled={menuLoading}
-                              >
-                                {m.isActive ? 'Deactivate' : 'Activate'}
-                              </button>
-                            </div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 110px 100px 90px 44px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Dish</span>
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Category</span>
+                            <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Per tray</span>
+                            <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Serves</span>
+                            <span style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Active</span>
+                            <span></span>
                           </div>
-                        ))
+                          <div>
+                            {visibleMenuItems.map((m) => (
+                              <div key={m.id} className="adm-datarow" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 110px 100px 90px 44px', gap: '10px', padding: '16px 26px', alignItems: 'center', borderBottom: '1px solid var(--border)', opacity: m.isActive ? 1 : 0.55 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                  <div style={{ width: '52px', height: '52px', borderRadius: '14px', background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    {m.imageUrl ? (
+                                      <img src={getFullImageUrl(m.imageUrl)!} alt={m.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '13px' }} />
+                                    ) : (
+                                      <UtensilsCrossed size={22} strokeWidth={1.5} aria-hidden="true" style={{ color: 'var(--text-muted)' }} />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <h4 style={{ margin: '0 0 3px', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 500, lineHeight: 1.15, color: 'var(--text-primary)' }}>{m.itemName}</h4>
+                                    <p style={{ margin: '0 0 6px', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>{m.description}</p>
+                                    {m.dietaryTags.length > 0 && (
+                                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                        {m.dietaryTags.map((t) => (
+                                          <span key={t} style={{ display: 'inline-block', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 500, lineHeight: 1, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent)', background: 'var(--accent-muted)', border: '1px solid var(--border-accent)', borderRadius: '999px', padding: '3px 8px' }}>
+                                            {t}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, color: 'var(--primary)', background: 'var(--primary-muted)', padding: '5px 9px 5px 5px', borderRadius: '6px' }}>
+                                    <span style={{ width: '4px', height: '14px', borderRadius: '999px', background: 'var(--primary)' }}></span>
+                                    {m.itemCategory}
+                                  </span>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, lineHeight: 1, color: 'var(--text-primary)' }}>
+                                    {m.pricePerTray != null ? fmt(m.pricePerTray) : '—'}
+                                  </span>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)' }}>
+                                    {m.servesPerTray != null ? m.servesPerTray : '—'}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em', textTransform: 'uppercase', color: m.isActive ? 'var(--accent-text)' : 'var(--text-primary)', background: m.isActive ? 'var(--accent)' : 'var(--bg-subtle)', border: m.isActive ? 'none' : '1px solid var(--border)', padding: '5px 9px', borderRadius: '999px' }}>
+                                    {m.isActive ? 'Active' : 'Inactive'}
+                                  </span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                  <button type="button" onClick={() => openMenuForm('item', 'edit', { itemName: m.itemName, itemCategory: m.itemCategory, courseCategory: m.courseCategory, description: m.description, dietaryTags: m.dietaryTags, pricePerTray: m.pricePerTray, servesPerTray: m.servesPerTray, menuPackageId: m.menuPackageId, imageUrl: m.imageUrl }, m.id)} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    <Pencil size={14} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+                                  </button>
+                                  <button type="button" onClick={() => void toggleMenuEntryActive('item', m.id, !m.isActive)} disabled={menuLoading} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    {m.isActive ? <X size={14} strokeWidth={2} style={{ color: 'var(--danger)' }} /> : <Check size={14} strokeWidth={2} style={{ color: 'var(--status-paid)' }} />}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
 
@@ -5595,53 +5765,50 @@ export function AdminDashboardPage() {
                           No trays match “{menuSearch.trim()}”.
                         </p>
                       ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1rem' }}>
-                          {visibleMenuTrays.map((t) => (
-                            <div key={t.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '1.1rem 1.2rem', background: 'var(--bg-subtle)', opacity: t.isActive ? 1 : 0.55 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.5rem' }}>
-                                <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', fontWeight: 500, color: 'var(--text-primary)' }}>{t.trayName}</span>
-                                <StatusBadge label={t.isActive ? 'Active' : 'Inactive'} color={t.isActive ? 'var(--primary)' : 'var(--danger)'} />
-                              </div>
-                              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, color: 'var(--primary)', lineHeight: 1 }}>{fmt(t.pricePerTray)}</div>
-                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.25rem 0 0.75rem' }}>
-                                per tray · serves {t.servesMin}–{t.servesMax}
-                              </div>
-                              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.85rem' }}>
-                                <button
-                                  type="button"
-                                  className="adm-btn info"
-                                  onClick={() => openMenuForm('tray', 'edit', {
-                                    trayName: t.trayName,
-                                    pricePerTray: t.pricePerTray,
-                                    servesMin: t.servesMin,
-                                    servesMax: t.servesMax,
-                                    dishItemIds: t.dishes.map((d) => d.id),
-                                  }, t.id)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`adm-btn ${t.isActive ? 'danger' : 'success'}`}
-                                  onClick={() => void toggleMenuEntryActive('tray', t.id, !t.isActive)}
-                                  disabled={menuLoading}
-                                >
-                                  {t.isActive ? 'Deactivate' : 'Activate'}
-                                </button>
-                              </div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                                {t.dishes.map((d) => (
-                                  <span
-                                    key={d.id}
-                                    title={`${d.itemCategory} · ${d.courseCategory}`}
-                                    style={{ fontFamily: 'var(--font-body)', fontSize: '0.64rem', fontWeight: 500, color: 'var(--primary)', background: 'var(--primary-muted)', border: '1px solid var(--border-accent)', borderRadius: 'var(--r-full)', padding: '0.2rem 0.6rem' }}
-                                  >
-                                    {d.itemName}
+                        <div style={{ overflowX: 'auto' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 110px 100px 90px 44px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Tray Name</span>
+                            <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Per tray</span>
+                            <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Serves</span>
+                            <span style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Active</span>
+                            <span></span>
+                          </div>
+                          <div>
+                            {visibleMenuTrays.map((t) => (
+                              <div key={t.id} className="adm-datarow adm-datarow--onfill" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 110px 100px 90px 44px', gap: '10px', padding: '16px 26px', alignItems: 'center', background: 'var(--primary)', borderBottom: '1px solid var(--border)', opacity: t.isActive ? 1 : 0.55 }}>
+                                <div>
+                                  <h4 style={{ margin: '0 0 3px', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 500, lineHeight: 1.15, color: 'var(--primary-text)' }}>{t.trayName}</h4>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                    {t.dishes.map((d, i) => (
+                                      <React.Fragment key={d.id}>
+                                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'color-mix(in srgb, var(--primary-text) 72%, transparent)' }}>{d.itemName}</span>
+                                        {i < t.dishes.length - 1 && <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'color-mix(in srgb, var(--primary-text) 34%, transparent)' }}>·</span>}
+                                      </React.Fragment>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, lineHeight: 1, color: 'var(--primary-text)' }}>{fmt(t.pricePerTray)}</span>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'color-mix(in srgb, var(--primary-text) 72%, transparent)' }}>{t.servesMin} - {t.servesMax}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em', textTransform: 'uppercase', color: t.isActive ? 'var(--accent-text)' : 'var(--primary-text)', background: t.isActive ? 'var(--accent)' : 'color-mix(in srgb, var(--primary-text) 12%, transparent)', padding: '5px 9px', borderRadius: '999px' }}>
+                                    {t.isActive ? 'Active' : 'Inactive'}
                                   </span>
-                                ))}
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                  <button type="button" onClick={() => openMenuForm('tray', 'edit', { trayName: t.trayName, pricePerTray: t.pricePerTray, servesMin: t.servesMin, servesMax: t.servesMax, dishItemIds: t.dishes.map((d) => d.id) }, t.id)} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--primary-text) 22%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    <Pencil size={14} strokeWidth={2} style={{ color: 'color-mix(in srgb, var(--primary-text) 72%, transparent)' }} />
+                                  </button>
+                                  <button type="button" onClick={() => void toggleMenuEntryActive('tray', t.id, !t.isActive)} disabled={menuLoading} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid color-mix(in srgb, var(--primary-text) 22%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    {t.isActive ? <X size={14} strokeWidth={2} style={{ color: 'var(--danger)' }} /> : <Check size={14} strokeWidth={2} style={{ color: 'var(--status-paid)' }} />}
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -5890,51 +6057,33 @@ export function AdminDashboardPage() {
             {/* ══════════ RENTALS (live backend data) ══════════ */}
             {tab === 'rentals' && (
                   <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                      <div>
-                        <h2 className="adm-title">Rentals</h2>
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                          Manage party rental equipment and sync changes with the C# backend.
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <input
-                          className="adm-input"
-                          type="search"
-                          placeholder="Search name or category…"
-                          value={rentalSearch}
-                          onChange={(e) => setRentalSearch(e.target.value)}
-                          style={{ flex: '0 1 260px' }}
-                          aria-label="Search rental items"
-                        />
-                        <button type="button" className="adm-btn primary" onClick={() => openRentalForm('create')}>
+                    <AdminTabHeader
+                      title="Rentals"
+                      endpoints="Manage party rental equipment and sync changes with the C# backend."
+                      searchPlaceholder="Search name or category…"
+                      searchValue={rentalSearch}
+                      onSearchChange={setRentalSearch}
+                      onRefresh={() => void loadRentalCatalog()}
+                      refreshing={rentalsLoading}
+                      actions={
+                        <button type="button" onClick={() => openRentalForm('create')} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, background: 'var(--accent)', color: 'var(--accent-text)', border: 'none', padding: '11px 16px', borderRadius: '999px', cursor: 'pointer' }}>
                           + Add Rental Item
                         </button>
-                        <button type="button" className="adm-btn outline" onClick={() => void loadRentalCatalog()} disabled={rentalsLoading}>
-                          {rentalsLoading ? 'Refreshing…' : '↻ Refresh'}
-                        </button>
-                      </div>
-                    </div>
+                      }
+                    />
 
                     {rentalFeedback && (
-                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--primary) 35%, transparent)', background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>
-                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--primary)' }}>{rentalFeedback}</div>
+                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--status-paid) 35%, transparent)', background: 'color-mix(in srgb, var(--status-paid) 10%, transparent)' }}>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--status-paid)' }}>{rentalFeedback}</div>
                       </div>
                     )}
 
                     {rentalsError && !rentalsLoading && (
-                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                          Rental inventory unavailable
-                        </h3>
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
-                          {rentalsError}
-                        </p>
-                        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                          <button type="button" className="adm-btn outline" onClick={() => void loadRentalCatalog()}>Try Again</button>
-                        </div>
-                      </div>
+                      <AdmErrorCard
+                        title="Rental inventory unavailable"
+                        message={rentalsError}
+                        onRetry={() => void loadRentalCatalog()}
+                      />
                     )}
 
                     {rentalsLoading && (
@@ -5974,62 +6123,59 @@ export function AdminDashboardPage() {
                           </p>
                         ) : (
                           <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
-                              <thead>
-                                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Image</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Name</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Category</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Total</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Out</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Available</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Unit Price</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Status</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Actions</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {visibleRentalItems.map((item) => (
-                                  <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
-                                    <td style={{ padding: '0.75rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <div style={{ width: 48, height: 48, borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        {item.imageUrl ? (
-                                          <img src={getFullImageUrl(item.imageUrl)!} alt={item.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        ) : (
-                                          <span style={{ fontSize: '1.2rem' }}>🎪</span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 500, color: 'var(--text-primary)' }}>{item.itemName}</div>
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', color: 'var(--text-muted)', fontSize: '0.88rem' }}>{item.category}</td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.totalQuantity}</td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.quantityOut}</td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{item.stock}</td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.92rem', fontWeight: 600 }}>{fmt(item.unitPrice)}</td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <StatusBadge label={item.isActive ? 'Active' : 'Inactive'} color={item.isActive ? 'var(--primary)' : 'var(--danger)'} />
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                                        <button type="button" className="adm-btn info" onClick={() => openRentalForm('edit', item)}>
-                                          Edit
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className={`adm-btn ${item.isActive ? 'danger' : 'success'}`}
-                                          onClick={() => void toggleRentalActive(item)}
-                                          disabled={rentalSaving}
-                                        >
-                                          {item.isActive ? 'Deactivate' : 'Activate'}
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 110px 100px 90px 60px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Item</span>
+                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Category</span>
+                              <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Unit price</span>
+                              <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Total</span>
+                              <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Out</span>
+                              <span></span>
+                            </div>
+                            <div>
+                              {visibleRentalItems.map((item) => (
+                                <div key={item.id} className="adm-datarow" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 110px 100px 90px 60px', gap: '10px', padding: '16px 26px', alignItems: 'center', borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                    <div style={{ width: '52px', height: '52px', borderRadius: '14px', background: 'var(--bg-subtle)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                      {item.imageUrl ? (
+                                        <img src={getFullImageUrl(item.imageUrl)!} alt={item.itemName} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '13px' }} />
+                                      ) : (
+                                        <span style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 500, color: 'var(--accent)' }}>{item.itemName.charAt(0).toUpperCase()}</span>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <h4 style={{ margin: '0 0 3px', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 500, lineHeight: 1.15, color: 'var(--text-primary)' }}>{item.itemName}</h4>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, color: 'var(--primary)', background: 'var(--primary-muted)', padding: '5px 9px 5px 5px', borderRadius: '6px' }}>
+                                      <span style={{ width: '4px', height: '14px', borderRadius: '999px', background: 'var(--primary)' }}></span>
+                                      {item.category}
+                                    </span>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <span style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, lineHeight: 1, color: 'var(--text-primary)' }}>{fmt(item.unitPrice)}</span>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)' }}>{item.totalQuantity}</span>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    {item.quantityOut === item.totalQuantity && item.totalQuantity > 0 ? (
+                                      <span style={{ display: 'inline-block', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--danger)', background: 'rgba(220,38,38,.12)', padding: '4px 8px', borderRadius: '4px' }}>{item.quantityOut}</span>
+                                    ) : (
+                                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)' }}>{item.quantityOut}</span>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                    <button type="button" onClick={() => openRentalForm('edit', item)} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      <Pencil size={14} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+                                    </button>
+                                    <button type="button" onClick={() => void toggleRentalActive(item)} disabled={rentalSaving} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      {item.isActive ? <X size={14} strokeWidth={2} style={{ color: 'var(--danger)' }} /> : <Check size={14} strokeWidth={2} style={{ color: 'var(--status-paid)' }} />}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -6049,7 +6195,7 @@ export function AdminDashboardPage() {
                           </h3>
                         </div>
                         <button type="button" className="adm-btn outline" onClick={() => void loadOutstandingRentals()} disabled={returnsLoading}>
-                          {returnsLoading ? 'Refreshing…' : '↻ Refresh'}
+                          {returnsLoading ? 'Refreshing…' : <><RotateCw size={13} strokeWidth={2} aria-hidden="true" /> Refresh</>}
                         </button>
                       </div>
 
@@ -6284,51 +6430,34 @@ export function AdminDashboardPage() {
                 {/* ══════════ SERVICE ITEMS (live backend data) ══════════ */}
                 {tab === 'services' && (
                   <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                      <div>
-                        <h2 className="adm-title">Service Items</h2>
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                          Manage event service offerings (e.g., sound systems, DJs, photo booths) and sync with the C# backend.
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <input
-                          className="adm-input"
-                          type="search"
-                          placeholder="Search service name…"
-                          value={serviceSearch}
-                          onChange={(e) => setServiceSearch(e.target.value)}
-                          style={{ flex: '0 1 260px' }}
-                          aria-label="Search service items"
-                        />
-                        <button type="button" className="adm-btn primary" onClick={() => openServiceForm('create')}>
+                    <AdminTabHeader
+                      title="Service Items"
+                      endpoints="Manage event service offerings (e.g., sound systems, DJs, photo booths) and sync with the C# backend."
+                      searchPlaceholder="Search service name…"
+                      searchValue={serviceSearch}
+                      onSearchChange={setServiceSearch}
+                      onRefresh={() => void loadServiceCatalog()}
+                      refreshing={servicesLoading}
+                      actions={
+                        <button type="button" onClick={() => openServiceForm('create')} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, background: 'var(--accent)', color: 'var(--accent-text)', border: 'none', padding: '11px 16px', borderRadius: '999px', cursor: 'pointer' }}>
                           + Add Service Item
                         </button>
-                        <button type="button" className="adm-btn outline" onClick={() => void loadServiceCatalog()} disabled={servicesLoading}>
-                          {servicesLoading ? 'Refreshing…' : '↻ Refresh'}
-                        </button>
-                      </div>
-                    </div>
+                      }
+                    />
 
                     {serviceFeedback && (
-                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--primary) 35%, transparent)', background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>
-                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--primary)' }}>{serviceFeedback}</div>
+                      <div className="adm-card" style={{ padding: '0.95rem 1rem', borderColor: 'color-mix(in srgb, var(--status-paid) 35%, transparent)', background: 'color-mix(in srgb, var(--status-paid) 10%, transparent)' }}>
+                        <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--status-paid)' }}>{serviceFeedback}</div>
                       </div>
                     )}
 
                     {servicesError && !servicesLoading && (
-                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                          Service catalog unavailable
-                        </h3>
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
-                          {servicesError}
-                        </p>
-                        <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                          <button type="button" className="adm-btn outline" onClick={() => void loadServiceCatalog()}>Try Again</button>
-                        </div>
-                      </div>
+                      <AdmErrorCard
+                        title="Service catalog unavailable"
+                        message={servicesError}
+                        onRetry={() => void loadServiceCatalog()}
+                        extraAction={servicesAuthError ? <Link to="/login" className="adm-btn primary">Go to Sign In</Link> : undefined}
+                      />
                     )}
 
                     {servicesLoading && (
@@ -6367,48 +6496,39 @@ export function AdminDashboardPage() {
                             No services match “{serviceSearch.trim()}”.
                           </p>
                         ) : (
-                          <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
-                              <thead>
-                                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Service Name</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Unit Cost</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Status</th>
-                                  <th style={{ padding: '0.95rem 0.7rem', fontSize: '0.72rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>Actions</th>
-                                </tr>
-                              </thead>
-                              <tbody>
+                            <div style={{ overflowX: 'auto' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 100px 90px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+                                <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Service Name</span>
+                                <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Unit Cost</span>
+                                <span style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Active</span>
+                                <span></span>
+                              </div>
+                              <div>
                                 {visibleServiceItems.map((item) => (
-                                  <tr key={item.id} style={{ borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <div style={{ fontFamily: 'var(--font-display)', fontSize: '0.98rem', fontWeight: 500, color: 'var(--text-primary)' }}>{item.serviceName}</div>
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle', fontFamily: 'var(--font-display)', fontSize: '0.95rem', fontWeight: 600, color: 'var(--primary)' }}>
-                                      {fmt(item.unitCost)}
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <StatusBadge label={item.isActive ? 'Active' : 'Inactive'} color={item.isActive ? 'var(--primary)' : 'var(--danger)'} />
-                                    </td>
-                                    <td style={{ padding: '0.95rem 0.7rem', verticalAlign: 'middle' }}>
-                                      <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-                                        <button type="button" className="adm-btn info" onClick={() => openServiceForm('edit', item)}>
-                                          Edit
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className={`adm-btn ${item.isActive ? 'danger' : 'success'}`}
-                                          onClick={() => void toggleServiceActive(item)}
-                                          disabled={serviceSaving}
-                                        >
-                                          {item.isActive ? 'Deactivate' : 'Activate'}
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
+                                  <div key={item.id} className="adm-datarow" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 100px 90px', gap: '10px', padding: '16px 26px', alignItems: 'center', borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
+                                    <div>
+                                      <h4 style={{ margin: '0', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 500, lineHeight: 1.15, color: 'var(--text-primary)' }}>{item.serviceName}</h4>
+                                    </div>
+                                    <div style={{ textAlign: 'right' }}>
+                                      <span style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, lineHeight: 1, color: 'var(--text-primary)' }}>{fmt(item.unitCost)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em', textTransform: 'uppercase', color: item.isActive ? 'var(--accent-text)' : 'var(--text-primary)', background: item.isActive ? 'var(--accent)' : 'var(--bg-subtle)', border: item.isActive ? 'none' : '1px solid var(--border)', padding: '5px 9px', borderRadius: '999px' }}>
+                                        {item.isActive ? 'Active' : 'Inactive'}
+                                      </span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                                      <button type="button" onClick={() => openServiceForm('edit', item)} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                        <Pencil size={14} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+                                      </button>
+                                      <button type="button" onClick={() => void toggleServiceActive(item)} disabled={serviceSaving} style={{ width: '32px', height: '32px', borderRadius: '999px', background: 'transparent', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                        {item.isActive ? <X size={14} strokeWidth={2} style={{ color: 'var(--danger)' }} /> : <Check size={14} strokeWidth={2} style={{ color: 'var(--status-paid)' }} />}
+                                      </button>
+                                    </div>
+                                  </div>
                                 ))}
-                              </tbody>
-                            </table>
-                          </div>
+                              </div>
+                            </div>
                         )}
                       </div>
                     )}
@@ -6490,68 +6610,56 @@ export function AdminDashboardPage() {
 
                 {/* ══════════ ANNOUNCEMENTS ══════════ */}
                 {tab === 'announcements' && (
-                  <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                  <div className="fade-up" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-md)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     <div>
-                      <h2 className="adm-title">Announcements</h2>
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
+                      <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Announcements</h2>
+                      <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
                         Posting one notifies every active customer through their notification bell.
                       </p>
                     </div>
 
                     {/* compose */}
-                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
-                      <FieldLabel text="New Announcement" />
-                      <div className="form-grid full" style={{ marginTop: '0.7rem' }}>
-                        <div className="form-row">
-                          <label htmlFor="ann-title">Title</label>
-                          <input
-                            id="ann-title"
-                            className="adm-input"
-                            maxLength={150}
-                            placeholder="Holiday hours for December"
-                            value={annTitle}
-                            onChange={(e) => setAnnTitle(e.target.value)}
-                          />
-                        </div>
-                        <div className="form-row">
-                          <label htmlFor="ann-body">Message</label>
-                          <textarea
-                            id="ann-body"
-                            className="adm-input"
-                            rows={5}
-                            maxLength={2000}
-                            placeholder="What do you want every customer to know?"
-                            value={annBody}
-                            onChange={(e) => setAnnBody(e.target.value)}
-                            style={{ resize: 'vertical', fontFamily: 'var(--font-body)' }}
-                          />
-                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', textAlign: 'right' }}>
-                            {annBody.length} / 2000
-                          </div>
-                        </div>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '22px' }}>
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '16px' }}>New Announcement</div>
+                      <label htmlFor="ann-title" style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>Title</label>
+                      <input
+                        id="ann-title"
+                        maxLength={150}
+                        placeholder="Holiday hours for December"
+                        value={annTitle}
+                        onChange={(e) => setAnnTitle(e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '13px', marginBottom: '16px' }}
+                      />
+                      <label htmlFor="ann-body" style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>Message</label>
+                      <textarea
+                        id="ann-body"
+                        rows={5}
+                        maxLength={2000}
+                        placeholder="What do you want every customer to know?"
+                        value={annBody}
+                        onChange={(e) => setAnnBody(e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 400, lineHeight: 1.55, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '13px', minHeight: '104px', resize: 'vertical' }}
+                      />
+                      <div style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)', marginTop: '8px' }}>
+                        {annBody.length} / 2000
                       </div>
-                      {/* No edit or unsend: a notification a customer has already read
-                          can't be recalled, so say so before they post. */}
-                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', marginTop: '0.4rem' }}>
-                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginRight: 'auto' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginTop: '16px' }}>
+                        <span style={{ flex: 1, minWidth: '200px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
                           Announcements can't be edited or unsent once posted.
                         </span>
                         <button
                           type="button"
-                          className="adm-btn primary"
                           disabled={annPosting || !annTitle.trim() || !annBody.trim()}
                           onClick={() => void submitAnnouncement()}
+                          style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 600, lineHeight: 1, background: 'var(--accent)', color: 'var(--accent-text)', border: 'none', padding: '14px 22px', borderRadius: '999px', opacity: (annPosting || !annTitle.trim() || !annBody.trim()) ? 0.45 : 1, cursor: (annPosting || !annTitle.trim() || !annBody.trim()) ? 'not-allowed' : 'pointer' }}
                         >
-                          {annPosting ? 'Posting…' : 'Post & Notify Customers'}
+                          {annPosting ? 'Posting...' : 'Post announcement'}
                         </button>
                       </div>
                     </div>
 
-                    {/* ── Event gallery: a separate feature in the same tab ──
-                        Its own form, its own submit, its own endpoint. Nothing here
-                        reads or writes an announcement, and the composer above never
-                        touches these images. */}
-                    <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
+                    {/* ── Event gallery ── */}
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '22px' }}>
                       <FieldLabel text="Event Gallery" />
                       <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.3rem 0 0.9rem' }}>
                         Photos for the public “Events by King Jegi” gallery. Separate from
@@ -6613,10 +6721,12 @@ export function AdminDashboardPage() {
                         </div>
                       )}
 
-                      {galLoading && galleryImages.length === 0 ? (
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>
-                          Loading the gallery…
-                        </p>
+                      {galLoading ? (
+                        <div style={{ marginTop: '0.9rem', display: 'flex', gap: '0.7rem' }} aria-hidden="true">
+                          {[0, 1, 2].map((i) => (
+                            <div key={i} className="adm-skel" style={{ height: 104, flex: 1, borderRadius: 'var(--r-lg)' }} />
+                          ))}
+                        </div>
                       ) : galleryImages.length === 0 ? (
                         <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.9rem' }}>
                           No gallery photos yet. The public gallery section stays hidden until you add one.
@@ -6675,20 +6785,15 @@ export function AdminDashboardPage() {
                     </div>
 
                     {annError && !annLoading && (
-                      <div className="adm-card" style={{ padding: '2.75rem 2rem', textAlign: 'center', borderColor: 'color-mix(in srgb, var(--danger) 30%, transparent)' }}>
-                        <div style={{ fontSize: '1.5rem', marginBottom: '0.7rem' }}>⚠️</div>
-                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
-                          Couldn't load announcements
-                        </h3>
-                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.83rem', fontWeight: 300, color: 'var(--danger)', maxWidth: 460, margin: '0 auto 1.4rem', lineHeight: 1.65 }}>
+                      <div style={{ padding: '1.4rem 1.6rem', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius: '16px', background: 'var(--surface)' }}>
+                        <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
                           {annError}
                         </p>
-                        <button type="button" className="adm-btn outline" onClick={() => void loadAnnouncements()}>Try Again</button>
                       </div>
                     )}
 
                     {annLoading && (
-                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }} aria-hidden="true">
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '1.4rem 1.6rem' }} aria-hidden="true">
                         <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
                         {[0, 1, 2].map((i) => (
                           <div key={i} style={{ padding: '0.75rem 0', borderBottom: i < 2 ? '1px solid var(--border)' : 'none' }}>
@@ -6698,41 +6803,24 @@ export function AdminDashboardPage() {
                         ))}
                       </div>
                     )}
-
                     {/* history */}
                     {!annLoading && !annError && (
-                      <div className="adm-card" style={{ padding: '1.4rem 1.6rem' }}>
-                        <div style={{ marginBottom: '1rem' }}>
-                          <FieldLabel text="History" />
-                          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-                            Posted ({announcements.length})
-                          </h3>
-                        </div>
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '4px 20px' }}>
                         {announcements.length === 0 ? (
-                          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
+                          <div style={{ padding: '15px 0', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)' }}>
                             Nothing posted yet. Your first announcement will appear here.
-                          </p>
+                          </div>
                         ) : (
-                          announcements.map((a) => (
-                            <div key={a.id} className="adm-row" style={{ padding: '0.9rem 0' }}>
-                              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
-                                <div style={{ flex: 1, minWidth: 220 }}>
-                                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.02rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                                    {a.title}
-                                  </div>
-                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                                    {a.body}
-                                  </div>
-                                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.66rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.45rem' }}>
-                                    {a.createdByName} · {fmtDateTime(a.createdAt)}
-                                  </div>
-                                </div>
-                                {/* 0 reached means the fan-out failed, not that it was
-                                    skipped — surface it rather than hiding a zero. */}
-                                <StatusBadge
-                                  label={a.notifiedCount > 0 ? `${a.notifiedCount} notified` : 'none notified'}
-                                  color={a.notifiedCount > 0 ? 'var(--primary)' : 'var(--danger)'}
-                                />
+                          announcements.map((a, idx) => (
+                            <div key={a.id} style={{ padding: '15px 0', borderBottom: idx < announcements.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)' }}>
+                                {a.title}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1.5, color: 'var(--text-secondary)', marginTop: '5px', whiteSpace: 'pre-wrap' }}>
+                                {a.body}
+                              </div>
+                              <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)', marginTop: '8px' }}>
+                                Posted {fmtDate(a.createdAt)} · sent to {a.notifiedCount} customers
                               </div>
                             </div>
                           ))
@@ -6750,7 +6838,7 @@ export function AdminDashboardPage() {
                   <div className="fade-up">
                 <h2 className="adm-title" style={{ marginBottom: '1.2rem' }}>{placeholderName}</h2>
                 <div className="adm-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.8rem', color: 'var(--text-dim)', marginBottom: '0.8rem' }}>◌</div>
+                  <Circle size={28} strokeWidth={1.5} aria-hidden="true" style={{ color: 'var(--text-dim)', marginBottom: '0.8rem' }} />
                   <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
                     {placeholderName} management arrives when the backend is wired up.
                   </p>

@@ -62,7 +62,7 @@ export function FilterSidebar({
     });
 
   const labelClass =
-    'mb-3 block text-[0.58rem] font-semibold tracking-[0.24em] text-text-muted uppercase';
+    'mb-3 block text-[0.6875rem] font-semibold tracking-[0.08em] text-text-muted uppercase';
 
   return (
     <div style={{ fontFamily: 'var(--font-body)' }}>

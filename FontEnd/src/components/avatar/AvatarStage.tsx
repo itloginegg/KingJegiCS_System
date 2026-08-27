@@ -26,6 +26,15 @@ interface Props {
   state?: VoiceState;
   /** Defaults to the chat-panel bust. */
   framing?: AvatarFraming;
+  /**
+   * Height of the in-panel bust, in px. Feeds `--cw-avatar-size`, which the CSS
+   * clamps rather than applies raw — so a caller can ask for any figure without
+   * being able to push the stage past the panel on a short window.
+   *
+   * Ignored for `full` framing: the standing figure is sized by `.cw-standing`,
+   * where the stage is `height: 100%` of a fixed column.
+   */
+  size?: number;
   /** Zoom for full-body framing. Lower fills more of the frame. Ignored for `bust`. */
   fitMargin?: number;
   /** Forwarded to AvatarModel; changing it re-arms the greeting. See the note there. */
@@ -66,10 +75,23 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+/**
+ * Default bust height. Down from the 175px the CSS used to hardcode — the stage
+ * was taking a third of a short chat panel before a single message showed.
+ */
+const DEFAULT_BUST_SIZE = 150;
+
 /** The pre-Phase-2 monogram, reused verbatim as every fallback. */
-function AvatarFallback({ hint }: { hint?: string }) {
+function AvatarFallback({ hint, size }: { hint?: string; size?: number }) {
+  /* The fallback is a sibling of the stage, not a child, so the variable has to
+     be set on it directly — otherwise the monogram would keep the old fixed box
+     while the 3D stage followed the prop. */
+  const sized =
+    size === undefined
+      ? undefined
+      : ({ '--cw-avatar-size': `${size}px` } as React.CSSProperties);
   return (
-    <div className="cw-avatar-fallback" title={hint}>
+    <div className="cw-avatar-fallback" title={hint} style={sized}>
       <div className="cw-glyph">KJ</div>
     </div>
   );
@@ -109,6 +131,7 @@ export function AvatarStage({
   getPlaybackMs = NO_PLAYBACK,
   state = 'idle',
   framing = 'bust',
+  size = DEFAULT_BUST_SIZE,
   fitMargin,
   greetKey,
   fallback,
@@ -121,7 +144,7 @@ export function AvatarStage({
   const ownVisemes = useRef<VisemeCue[]>([]);
   const visemes = visemesRef ?? ownVisemes;
 
-  const onFailure = fallback ?? <AvatarFallback />;
+  const onFailure = fallback ?? <AvatarFallback size={size} />;
   // `undefined` means "not specified" and inherits the failure node; an explicit null
   // means "show nothing while loading" and must be honoured.
   const whileLoading = loadingFallback === undefined ? onFailure : loadingFallback;
@@ -129,7 +152,10 @@ export function AvatarStage({
   if (!capable) return <>{onFailure}</>;
 
   return (
-    <div className={framing === 'full' ? 'cw-avatar cw-avatar--full' : 'cw-avatar'}>
+    <div
+      className={framing === 'full' ? 'cw-avatar cw-avatar--full' : 'cw-avatar'}
+      style={{ '--cw-avatar-size': `${size}px` } as React.CSSProperties}
+    >
       <AvatarErrorBoundary fallback={onFailure}>
         <Suspense fallback={<>{whileLoading}</>}>
           <AvatarCanvas

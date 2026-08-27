@@ -360,7 +360,7 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
                             key={col.key}
                             scope="col"
                             aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                            className={`whitespace-nowrap px-3 py-2.5 text-[0.72rem] font-semibold text-[var(--text-secondary)] ${
+                            className={`whitespace-nowrap px-3 py-2.5 text-[0.5625rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] ${
                               col.align === 'right' ? 'text-right' : ''
                             }`}
                           >
@@ -400,25 +400,25 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
                             />
                           </td>
 
-                          <td className="whitespace-nowrap px-3 py-3 text-[0.78rem] text-[var(--text-muted)]">
+                          <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {BOOKING_TYPE_LABELS[b.bookingType as BookingTypeName] ?? b.bookingType}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 text-[0.78rem] text-[var(--text-muted)]">
+                          <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {eventTypeLabel(b.eventType) ?? '—'}
                           </td>
-                          <td className="max-w-[210px] truncate px-3 py-3 text-[0.78rem] text-[var(--text-muted)]" title={b.bookingName}>
+                          <td className="max-w-[210px] truncate px-3 py-3 text-[0.75rem] font-medium text-[var(--text-primary)]" title={b.bookingName}>
                             {b.bookingName}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 text-[0.78rem] text-[var(--text-muted)]">
+                          <td className="whitespace-nowrap px-3 py-3 font-mono text-[0.6875rem] tabular-nums text-[var(--text-secondary)]">
                             {b.contactNumber || '—'}
                           </td>
-                          <td className="max-w-[200px] truncate px-3 py-3 text-[0.78rem] text-[var(--text-muted)]" title={b.customerEmail ?? undefined}>
+                          <td className="max-w-[200px] truncate px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]" title={b.customerEmail ?? undefined}>
                             {b.customerEmail || '—'}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-3 text-right text-[0.78rem] text-[var(--text-muted)] tabular-nums">
+                          <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-[0.75rem] tabular-nums text-[var(--text-secondary)]">
                             {isDelivery ? '' : (b.guestCount ?? '—')}
                           </td>
-                          <td className="max-w-[190px] truncate px-3 py-3 text-[0.78rem] text-[var(--text-muted)]" title={b.packageName ?? undefined}>
+                          <td className="max-w-[190px] truncate px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]" title={b.packageName ?? undefined}>
                             {b.packageName || '—'}
                           </td>
 
@@ -440,7 +440,7 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
                           </td>
 
                           {group === 'Confirmed' && (
-                            <td className="max-w-[220px] truncate px-3 py-3 text-[0.78rem] text-[var(--text-muted)]" title={b.adminNote ?? undefined}>
+                            <td className="max-w-[220px] truncate px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]" title={b.adminNote ?? undefined}>
                               {b.adminNote || '—'}
                             </td>
                           )}

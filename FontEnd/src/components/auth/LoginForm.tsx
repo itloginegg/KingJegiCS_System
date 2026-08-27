@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
+import { AlertCircle } from 'lucide-react';
 import type { AuthCredentials, FieldErrors, UserRole } from '../../types/auth';
 import { hasErrors, validateCredentials } from '../../lib/validation';
 
@@ -43,6 +44,9 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
     onSubmit({ email: email.trim(), password, rememberMe, role });
   };
 
+  const emailInvalid = submitted && Boolean(errors.email);
+  const passwordInvalid = submitted && Boolean(errors.password);
+
   return (
     <form
       id="login-panel"
@@ -50,23 +54,18 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
       aria-labelledby={`tab-${role}`}
       onSubmit={handleSubmit}
       noValidate
-      className="mt-6 space-y-5"
+      className="au-form"
     >
       {/* Top-level auth error (server-side). role="alert" announces it to SRs. */}
       {formError && (
-        <div
-          role="alert"
-          className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]"
-        >
-          {formError}
+        <div role="alert" className="ui-alert ui-alert--danger">
+          <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span>{formError}</span>
         </div>
       )}
 
-      {/* Email */}
-      <div className="space-y-1.5">
-        <label htmlFor={emailId} className="block text-sm font-medium text-[var(--text-secondary)]">
-          Email
-        </label>
+      <div className="ui-field">
+        <label htmlFor={emailId} className="ui-label">Email</label>
         <input
           id={emailId}
           type="email"
@@ -78,29 +77,20 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
             setEmail(e.target.value);
             if (submitted) runValidation({ email: e.target.value });
           }}
-          aria-invalid={submitted && Boolean(errors.email)}
+          aria-invalid={emailInvalid}
           aria-describedby={errors.email ? emailErrId : undefined}
           placeholder="you@example.com"
-          className={fieldClasses(submitted && Boolean(errors.email))}
+          className={`ui-input${emailInvalid ? ' ui-input--invalid' : ''}`}
         />
-        {submitted && errors.email && (
-          <p id={emailErrId} className="text-sm text-[var(--danger)]">
-            {errors.email}
-          </p>
-        )}
+        {emailInvalid && <p id={emailErrId} className="ui-error">{errors.email}</p>}
       </div>
 
-      {/* Password */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <label htmlFor={passwordId} className="block text-sm font-medium text-[var(--text-secondary)]">
-            Password
-          </label>
-          <a href="/forgot-password" className="text-sm font-medium text-[var(--primary)] hover:text-[var(--accent)]">
-            Forgot password?
-          </a>
+      <div className="ui-field">
+        <div className="ui-label-row">
+          <label htmlFor={passwordId} className="ui-label">Password</label>
+          <a href="/forgot-password" className="au-inline-link">Forgot password?</a>
         </div>
-        <div className="relative">
+        <div className="au-input-wrap">
           <input
             id={passwordId}
             type={showPassword ? 'text' : 'password'}
@@ -111,58 +101,38 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
               setPassword(e.target.value);
               if (submitted) runValidation({ password: e.target.value });
             }}
-            aria-invalid={submitted && Boolean(errors.password)}
+            aria-invalid={passwordInvalid}
             aria-describedby={errors.password ? passwordErrId : undefined}
             placeholder="••••••••"
-            className={`${fieldClasses(submitted && Boolean(errors.password))} pr-12`}
+            className={`ui-input${passwordInvalid ? ' ui-input--invalid' : ''}`}
           />
           <button
             type="button"
             onClick={() => setShowPassword((s) => !s)}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
             aria-pressed={showPassword}
-            className="absolute inset-y-0 right-0 flex items-center px-3 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] rounded-r-lg"
+            className="au-reveal"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
-        {submitted && errors.password && (
-          <p id={passwordErrId} className="text-sm text-[var(--danger)]">
-            {errors.password}
-          </p>
-        )}
+        {passwordInvalid && <p id={passwordErrId} className="ui-error">{errors.password}</p>}
       </div>
 
-      {/* Remember me */}
-      <label className="flex items-center gap-2.5 text-sm text-[var(--text-secondary)] select-none">
+      <label className="ui-check">
         <input
           type="checkbox"
           name="rememberMe"
           checked={rememberMe}
           onChange={(e) => setRememberMe(e.target.checked)}
-          className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
         />
         Remember me on this device
       </label>
 
-      <button
-        type="submit"
-        disabled={submitting}
-        className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-      >
+      <button type="submit" disabled={submitting} className="ui-btn ui-btn-accent ui-btn-block">
+        {submitting && <span className="ui-spinner" aria-hidden="true" />}
         {submitting ? 'Signing in…' : `Sign in as ${role === 'admin' ? 'Admin' : 'Customer'}`}
       </button>
     </form>
   );
-}
-
-function fieldClasses(invalid: boolean): string {
-  return [
-    'w-full rounded-lg border bg-[var(--surface)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] shadow-sm',
-    'placeholder:text-[var(--text-dim)] transition-colors',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0',
-    invalid
-      ? 'border-[var(--danger)] focus-visible:ring-[var(--danger)]'
-      : 'border-[var(--border-strong)] focus-visible:ring-[var(--primary)]',
-  ].join(' ');
 }

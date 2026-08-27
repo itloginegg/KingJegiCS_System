@@ -16,6 +16,9 @@ interface OtpCodeInputProps {
  * One-box-per-digit code entry. Typing auto-advances, Backspace walks left,
  * and pasting a full code from the email fills every box at once. The value
  * is kept as a single string so the parent just checks `value.length === 6`.
+ *
+ * Boxes are set in the numeric face — a code is digits, and the mono face is
+ * what stops 1/I and 0/O reading alike while someone copies from an email.
  */
 export function OtpCodeInput({
   value,
@@ -73,7 +76,7 @@ export function OtpCodeInput({
   };
 
   return (
-    <div className="flex justify-center gap-2 sm:gap-3">
+    <div className="au-otp">
       {Array.from({ length }, (_, i) => (
         <input
           key={i}
@@ -94,21 +97,9 @@ export function OtpCodeInput({
           aria-label={`Digit ${i + 1} of ${length}`}
           aria-invalid={invalid || undefined}
           aria-describedby={ariaDescribedBy}
-          className={boxClasses(invalid)}
+          className={`au-otp-box${invalid ? ' au-otp-box--invalid' : ''}`}
         />
       ))}
     </div>
   );
-}
-
-function boxClasses(invalid: boolean): string {
-  return [
-    'h-12 w-10 rounded-lg border bg-[var(--surface)] text-center text-lg font-semibold text-[var(--text-primary)] shadow-sm',
-    'transition-colors sm:h-14 sm:w-12 sm:text-xl',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0',
-    'disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60',
-    invalid
-      ? 'border-[var(--danger)] focus-visible:ring-[var(--danger)]'
-      : 'border-[var(--border-strong)] focus-visible:ring-[var(--primary)]',
-  ].join(' ');
 }

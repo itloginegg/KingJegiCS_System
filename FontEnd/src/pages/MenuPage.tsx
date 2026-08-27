@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
+import { AmbientCanvas } from '../components/landing/AmbientCanvas';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import { fetchMenuItems, fetchMenuTrays, getFullImageUrl } from '../api/menuAdminApi';
 import { createBooking, addMenuItem, addMenuTray, submitBooking, BookingApiError } from '../api/bookingApi';
+import { SiteFooter } from '../components/landing/SiteFooter';
+
+/** Stock backdrop for the menu hero until a real asset is dropped in. */
+const MENU_HERO_MEDIA =
+  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=2000&q=80';
 
 const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -386,7 +392,6 @@ export function MenuPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
-  const sectionPad: React.CSSProperties = { padding: '6rem 0', position: 'relative' };
 
   return (
     <>
@@ -404,10 +409,13 @@ export function MenuPage() {
         .mnu-toolbar-inner { max-width: 1200px; margin: 0 auto; padding: 0.9rem 2.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
         .mnu-pills { display: flex; align-items: center; gap: 0.4rem; overflow-x: auto; flex: 1 1 auto; scrollbar-width: none; padding: 2px; }
         .mnu-pills::-webkit-scrollbar { display: none; }
-        .mnu-pill { border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: var(--font-body); font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; padding: 0.5rem 1rem; border-radius: var(--r-full); cursor: pointer; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
-        .mnu-pill:hover { color: var(--primary); border-color: var(--border-accent); }
-        .mnu-pill.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
-        .mnu-pill .count { opacity: 0.6; margin-left: 0.35rem; }
+        /* Sentence case at 13/500, matching .ui-chip. The count rides in the
+           numeric face so a two-digit tally doesn't shift the pill's label. */
+        .mnu-pill { border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); font-family: var(--font-body); font-size: 0.8125rem; letter-spacing: 0; text-transform: none; font-weight: 500; padding: 0.5625rem 1rem; border-radius: var(--r-full); cursor: pointer; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+        .mnu-pill:hover { color: var(--text-primary); border-color: var(--border-strong); }
+        .mnu-pill.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+        .mnu-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .mnu-pill .count { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-size: 0.6875rem; opacity: 0.65; margin-left: 0.4rem; }
         .mnu-search { flex: 0 1 240px; min-width: 170px; display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-full); padding: 0.5rem 1rem; transition: border-color 0.2s; }
         .mnu-search:focus-within { border-color: var(--primary); }
         .mnu-search svg { flex-shrink: 0; color: var(--text-dim); }
@@ -439,7 +447,7 @@ export function MenuPage() {
 
         @keyframes drawerIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes sheetIn { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .mnu-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(20, 14, 8, 0.45); backdrop-filter: blur(3px); display: none; }
+        .mnu-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(27, 16, 36, 0.32); backdrop-filter: blur(3px); display: none; }
         .mnu-drawer { position: fixed; top: 0; right: 0; z-index: 95; height: 100vh; width: 340px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border-accent); box-shadow: -8px 0 48px rgba(0,0,0,0.16); padding: 5.5rem 1.75rem 1.75rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.9rem; animation: drawerIn 0.3s cubic-bezier(0.22,1,0.36,1) both; }
         @media (max-width: 900px) { .mnu-backdrop { display: block; } .mnu-drawer { top: auto; bottom: 0; right: 0; left: 0; width: 100%; max-width: none; height: auto; max-height: 78vh; border-left: none; border-top: 1px solid var(--border-accent); border-radius: var(--r-xl) var(--r-xl) 0 0; padding: 1.5rem 1.5rem 2rem; animation: sheetIn 0.3s cubic-bezier(0.22,1,0.36,1) both; } }
         .mnu-drawer-photo { aspect-ratio: 4 / 3; width: 100%; border-radius: var(--r-lg); background-size: cover; background-position: center; background-color: var(--bg-subtle); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
@@ -456,11 +464,11 @@ export function MenuPage() {
         .mnu-plan-cta:hover { background: var(--primary-hover); }
 
         /* ── checkout modal ── */
-        .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(20, 14, 8, 0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+        .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(27, 16, 36, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
         .mnu-co-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); padding: 1.6rem 1.75rem; display: flex; flex-direction: column; gap: 1rem; }
-        .mnu-co-label { font-family: var(--font-body); font-size: 0.52rem; letter-spacing: 0.26em; text-transform: uppercase; font-weight: 500; color: var(--text-dim); display: block; margin-bottom: 0.4rem; }
-        .mnu-co-input { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0.6rem 0.85rem; font-family: var(--font-body); font-size: 0.85rem; color: var(--text-primary); outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
-        .mnu-co-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted); }
+        .mnu-co-label { font-family: var(--font-body); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.5rem; }
+        .mnu-co-input { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 0.8rem 0.875rem; font-family: var(--font-body); font-size: 0.875rem; color: var(--text-primary); outline: none; transition: border-color 0.2s; }
+        .mnu-co-input:focus, .mnu-co-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
         .mnu-co-line { display: flex; justify-content: space-between; gap: 0.8rem; font-family: var(--font-body); font-size: 0.8rem; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
 
         .btn-primary { background: var(--primary); color: var(--primary-text); border: none; padding: 0.9rem 1.5rem; font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer; border-radius: var(--r-full); transition: background 0.25s, transform 0.2s, box-shadow 0.2s; text-decoration: none; display: inline-block; text-align: center; }
@@ -468,24 +476,32 @@ export function MenuPage() {
         .btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--border-accent); padding: 0.9rem 1.5rem; font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer; border-radius: var(--r-full); transition: background 0.25s, border-color 0.25s, transform 0.2s; text-decoration: none; display: inline-block; text-align: center; }
         .btn-outline:hover { background: var(--primary-muted); border-color: var(--primary); transform: translateY(-2px); }
 
-        /* ── hero search (on the dark band) ── */
+        /* ── hero search ──
+           Reads the normal surface tokens now that the hero is on the blush ground
+           rather than the band, and is flush left with the heading instead of
+           centred under it. */
         .mnu-hero-search {
           display: flex; align-items: center; gap: 0.65rem; width: 100%; max-width: 620px;
-          background: var(--band-chip); border-radius: var(--r-full);
-          padding: 0.4rem 0.4rem 0.4rem 1.15rem; margin: 0 auto;
+          background: var(--surface); border: 1px solid var(--border-strong);
+          border-radius: var(--r-full);
+          padding: 0.35rem 0.35rem 0.35rem 1.15rem; margin: 0;
+          transition: border-color 0.2s;
         }
-        .mnu-hero-search svg { flex-shrink: 0; color: color-mix(in srgb, var(--band-chip-text) 55%, transparent); }
+        .mnu-hero-search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+        .mnu-hero-search svg { flex-shrink: 0; color: var(--text-muted); }
         .mnu-hero-search input {
           flex: 1; min-width: 0; border: none; background: transparent; outline: none;
-          font-family: var(--font-body); font-size: 0.9rem; color: var(--band-chip-text);
+          font-family: var(--font-body); font-size: 0.9375rem; color: var(--text-primary);
         }
-        .mnu-hero-search input::placeholder { color: color-mix(in srgb, var(--band-chip-text) 50%, transparent); }
+        .mnu-hero-search input::placeholder { color: var(--text-dim); }
         .mnu-hero-btn {
           flex-shrink: 0; border: none; cursor: pointer; border-radius: var(--r-full);
-          background: var(--band-accent); color: var(--band-accent-text);
-          font-family: var(--font-body); font-size: 0.8rem; font-weight: 600;
-          padding: 0.6rem 1.4rem;
+          background: var(--accent); color: var(--accent-text);
+          font-family: var(--font-body); font-size: 0.8125rem; font-weight: 600;
+          padding: 0.7rem 1.5rem;
+          transition: background 0.2s;
         }
+        .mnu-hero-btn:hover { background: var(--accent-hover); }
 
         /* ── split view ── */
         .mnu-split { display: grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: 2.5rem; align-items: start; }
@@ -569,21 +585,44 @@ export function MenuPage() {
 
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
 
-        {/* ═══════════════════════ HERO (dark band) ═══════════════════════ */}
-        {/* .dark-band keeps this dark in BOTH themes. var(--primary) could not: it
-            flips to the bright teal in dark, which would make the hero glow.
-            Navbar lives INSIDE this section so .dark-band CSS overrides give
-            nav links band-aware colours in both themes (see index.css). */}
-        <section className="dark-band" style={{ background: 'var(--band-bg)', padding: 'calc(4rem + 80px) 0 4rem', position: 'relative', overflow: 'hidden' }}>
+        {/* ═══════════════════════ HERO ═══════════════════════ */}
+        {/* The dark band is gone from this page. It stays the rentals hero's device
+            only — with both catalogs inverted, /menus and /rentals opened on the
+            same near-black slab and read as one screen. The blush ground is the
+            distinguishing move; the Navbar goes back to its normal tokens because
+            it is no longer inside a band. */}
+        <section style={{ background: 'var(--bg-subtle)', padding: 'calc(4rem + 80px) 0 4rem', position: 'relative', overflow: 'hidden' }}>
+          {/* Background media placeholder, behind the copy. Swap the div for a
+              <video muted playsInline loop autoPlay> when a real clip exists —
+              the overlay above it works the same either way. */}
+          <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+            <div
+              style={{
+                position: 'absolute', inset: 0,
+                backgroundImage: `url(${MENU_HERO_MEDIA})`,
+                backgroundSize: 'cover', backgroundPosition: 'center',
+              }}
+            />
+            {/* Derived from --bg-subtle, the ground this hero already had, rather
+                than a black scrim: this band is LIGHT, and black over it would
+                read as grey haze and drop the heading's contrast. Kept dense
+                enough that --text-primary clears AA over any photograph. */}
+            <div
+              style={{
+                position: 'absolute', inset: 0,
+                background:
+                  'linear-gradient(100deg, color-mix(in srgb, var(--bg-subtle) 95%, transparent) 0%, color-mix(in srgb, var(--bg-subtle) 86%, transparent) 55%, color-mix(in srgb, var(--bg-subtle) 70%, transparent) 100%)',
+              }}
+            />
+          </div>
+
           <Navbar activePage="menus" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
-          <div className="fade-up" style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--band-accent)', marginBottom: '1rem' }}>
-              Full Menu
-            </p>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', fontWeight: 400, lineHeight: 1.1, color: 'var(--band-text)', marginBottom: '1rem' }}>
+          <div className="fade-up" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
+            <p className="ui-kicker">Full menu</p>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.375rem, 5vw, 3.875rem)', fontWeight: 600, lineHeight: 0.98, letterSpacing: '-0.04em', color: 'var(--text-primary)', textWrap: 'balance', margin: '0 0 1rem' }}>
               Everything we cook,<br />in one place.
             </h1>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.95rem', color: 'var(--band-muted)', lineHeight: 1.7, maxWidth: 560, marginBottom: '2rem' }}>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '1.0625rem', color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 560, marginBottom: '2rem' }}>
               {/* Count derived from the loaded catalog — never a fixed number. */}
               {loading
                 ? 'Filipino dishes and party trays, by the tray — filter by category, course, diet or price.'
@@ -608,6 +647,14 @@ export function MenuPage() {
             </form>
           </div>
         </section>
+
+        {/* ── ambient ground ──
+            Wraps only the content BELOW the hero: the hero keeps its own opaque
+            ground and is deliberately outside this wrapper, so nothing here can
+            paint over it. The sections inside go semi-transparent so the canvas
+            reads through them. */}
+        <div className="amb-host">
+          <AmbientCanvas />
 
         {/* ═══════════════════════ QUICK NAV ═══════════════════════ */}
         <div className="mnu-toolbar">
@@ -661,7 +708,7 @@ export function MenuPage() {
 
         {/* ═══════════════════════ BEST VALUE ROW ═══════════════════════ */}
         {!loading && !loadError && trending.length > 0 && (
-          <section style={{ background: 'var(--bg)', padding: '3rem 0 1rem' }}>
+          <section className="amb-over" style={{ padding: '3rem 0 1rem' }}>
             <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
               <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.28em', textTransform: 'uppercase', fontWeight: 600, color: 'var(--accent)', marginBottom: '0.4rem' }}>
                 Best Seller this week
@@ -697,7 +744,7 @@ export function MenuPage() {
         )}
 
         {/* ═══════════════════════ FILTERS + GRID ═══════════════════════ */}
-        <section style={{ background: 'var(--bg)', padding: '2.5rem 0 6rem' }}>
+        <section className="amb-over" style={{ padding: '2.5rem 0 6rem' }}>
           <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
             <div className="mnu-split">
 
@@ -889,30 +936,7 @@ export function MenuPage() {
             </div>
           </div>
         </section>
-
-        {/* ═══════════════════════ CUSTOM MENU CTA ═══════════════════════ */}
-        <section style={{ ...sectionPad, background: 'var(--bg)', paddingTop: '5rem', paddingBottom: '5rem' }}>
-          <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center' }}>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--text-dim)', marginBottom: '1rem' }}>Can't decide?</p>
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 3vw, 2.5rem)', fontWeight: 400, color: 'var(--text-primary)', lineHeight: 1.2, marginBottom: '0.85rem' }}>
-              Let us craft a <em style={{ color: 'var(--accent)', fontStyle: 'italic' }}>custom menu</em> for your event
-            </h3>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.92rem', color: 'var(--text-muted)', lineHeight: 1.7, fontWeight: 300, maxWidth: 540, margin: '0 auto 2rem' }}>
-              Planning a full event? Tell us about your guests and style — we'll build a menu and a quote that fit.
-            </p>
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <a href="/book" className="btn-primary">Plan a Full Event</a>
-              <a href="/packages" className="btn-outline">See Our Packages</a>
-            </div>
-          </div>
-        </section>
-
-        {/* ═══════════════════════ FOOTER ═══════════════════════ */}
-        <footer style={{ background: 'var(--bg-subtle)', borderTop: '1px solid var(--border)', padding: '3rem 2.5rem', textAlign: 'center' }}>
-          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', letterSpacing: '0.2em', textTransform: 'uppercase', color: 'var(--text-dim)' }}>
-            © {new Date().getFullYear()} King Jegi Party Need and Catering Services · Calamba, Laguna
-          </p>
-        </footer>
+        </div>
       </main>
 
       {/* ═══════════════════════ DETAIL DRAWER ═══════════════════════ */}
@@ -949,7 +973,10 @@ export function MenuPage() {
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
             <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{cartCount}</strong>
             {' '}item{cartCount === 1 ? '' : 's'} ·{' '}
-            <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, color: 'var(--primary)', fontSize: '0.85rem' }}>{fmtPHP(cartTotal)}</span>
+            {/* Money in the numeric face, per the artboards' treatment of every
+                total — the display face was setting a running figure that changes
+                on each tap, so the digits shifted width as it counted. */}
+            <span style={{ fontFamily: 'var(--font-numeric)', fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: 'var(--text-primary)', fontSize: '0.8125rem' }}>{fmtPHP(cartTotal)}</span>
           </p>
           <button type="button" className="mnu-plan-clear" onClick={() => setCart({})}>Clear</button>
           <button type="button" className="mnu-plan-cta" onClick={() => { setCheckoutError(''); setCheckoutOpen(true); }}>Checkout →</button>
@@ -999,6 +1026,8 @@ export function MenuPage() {
           </div>
         </div>
       )}
+
+                    <SiteFooter />
 
     </>
   );

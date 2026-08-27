@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Calendar, ChevronDown, List, Search, SlidersHorizontal } from 'lucide-react';
+import { Calendar, ChevronDown, Search, SlidersHorizontal } from 'lucide-react';
 import { BOOKING_TYPE_LABELS, type BookingResponse, type BookingTypeName } from '../../../api/bookingApi';
 import { DatePickerPopover } from './DatePickerPopover';
 import { METHOD_COLORS, methodColor, methodLabel } from './types';
@@ -85,110 +85,103 @@ export function PaymentsToolbar({
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* left */}
-        <div className="flex flex-1 flex-wrap items-center gap-2">
-          <div className="relative min-w-[190px] flex-1 sm:max-w-xs">
-            <Search
-              size={15}
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-            />
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search Payment"
-              aria-label="Search payments by invoice, customer or reference"
-              className="w-full rounded-full border border-transparent bg-[var(--bg-subtle)] py-2 pl-9 pr-3.5 text-[0.8rem] text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus-visible:border-[var(--primary)] focus-visible:bg-[var(--surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-muted)]"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={onToggleFilter}
-            aria-expanded={filterOpen}
-            className={`flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[0.78rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] ${
-              filterOpen || activeFilters > 0
-                ? 'border-[var(--primary)] bg-[var(--primary-muted)] text-[var(--primary)]'
-                : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)]'
-            }`}
-          >
-            <SlidersHorizontal size={15} strokeWidth={1.8} />
-            Filter
-            {activeFilters > 0 && (
-              <span className="ml-0.5 rounded-full bg-[var(--primary)] px-1.5 text-[0.62rem] font-semibold text-[var(--primary-text)]">
-                {activeFilters}
-              </span>
-            )}
-          </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[250px]">
+          <Search
+            size={15}
+            strokeWidth={1.8}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+          />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search invoice or customer..."
+            aria-label="Search payments by invoice, customer or reference"
+            className="w-full rounded-full border border-[var(--border)] bg-[var(--surface)] py-2 pl-9 pr-3.5 text-[0.8rem] text-[var(--text-primary)] placeholder:text-[var(--text-dim)] focus-visible:border-[var(--primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-muted)]"
+          />
         </div>
 
-        {/* right */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div ref={cashRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setCashOpen((o) => !o)}
-              aria-haspopup="menu"
-              aria-expanded={cashOpen}
-              disabled={cashCandidates.length === 0}
-              title={cashCandidates.length === 0 ? 'No bookings have an outstanding balance.' : undefined}
-              className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-[0.78rem] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setDateOpen((o) => !o)}
+            aria-haspopup="dialog"
+            aria-expanded={dateOpen}
+            className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2 text-[0.78rem] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+          >
+            <Calendar size={15} strokeWidth={1.8} className="text-[var(--text-muted)]" />
+            {prettyDate}
+            <ChevronDown size={14} strokeWidth={2} className="text-[var(--text-muted)]" />
+          </button>
+
+          {dateOpen && (
+            <DatePickerPopover value={date} onChange={onDateChange} onClose={() => setDateOpen(false)} />
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={onToggleFilter}
+          aria-expanded={filterOpen}
+          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-[0.78rem] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] ${
+            filterOpen || activeFilters > 0
+              ? 'border-[var(--primary)] bg-[var(--primary-muted)] text-[var(--primary)]'
+              : 'border-[var(--border)] text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]'
+          }`}
+        >
+          <SlidersHorizontal size={15} strokeWidth={1.8} />
+          Filters
+          {activeFilters > 0 && (
+            <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#9D2553] text-[0.6rem] font-bold text-white">
+              {activeFilters}
+            </span>
+          )}
+        </button>
+
+        <div ref={cashRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setCashOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={cashOpen}
+            disabled={cashCandidates.length === 0}
+            title={cashCandidates.length === 0 ? 'No bookings have an outstanding balance.' : undefined}
+            className="flex items-center gap-2 rounded-full px-5 py-2 text-[0.78rem] font-semibold text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ backgroundColor: '#9D2553' }}
+          >
+            Log cash
+          </button>
+
+          {cashOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full z-40 mt-1 max-h-72 w-[19rem] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-[var(--shadow-lg)]"
             >
-              <List size={15} strokeWidth={1.8} className="text-[var(--text-muted)]" />
-              Log Cash Payment for…
-              <ChevronDown size={14} strokeWidth={2} className="text-[var(--text-muted)]" />
-            </button>
-
-            {cashOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-40 mt-1 max-h-72 w-[19rem] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-[var(--shadow-lg)]"
-              >
-                {cashCandidates.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => { setCashOpen(false); onLogCash(b); }}
-                    className="block w-full px-3.5 py-2 text-left text-[0.78rem] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-subtle)] focus:bg-[var(--bg-subtle)] focus-visible:outline-none"
-                  >
-                    <span className="block truncate font-medium text-[var(--text-primary)]">{b.bookingName}</span>
-                    <span className="block text-[0.7rem] text-[var(--text-muted)]">
-                      {b.eventDate} · deposit {b.depositStatus}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setDateOpen((o) => !o)}
-              aria-haspopup="dialog"
-              aria-expanded={dateOpen}
-              className="flex items-center gap-2 rounded-full border border-orange-400 bg-[var(--surface)] px-3.5 py-2 text-[0.78rem] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
-            >
-              <Calendar size={15} strokeWidth={1.8} className="text-[var(--text-muted)]" />
-              {prettyDate}
-              <ChevronDown size={14} strokeWidth={2} className="text-[var(--text-muted)]" />
-            </button>
-
-            {dateOpen && (
-              <DatePickerPopover value={date} onChange={onDateChange} onClose={() => setDateOpen(false)} />
-            )}
-          </div>
+              {cashCandidates.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setCashOpen(false); onLogCash(b); }}
+                  className="block w-full px-3.5 py-2 text-left text-[0.78rem] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-subtle)] focus:bg-[var(--bg-subtle)] focus-visible:outline-none"
+                >
+                  <span className="block truncate font-medium text-[var(--text-primary)]">{b.bookingName}</span>
+                  <span className="block text-[0.7rem] text-[var(--text-muted)]">
+                    {b.eventDate} · deposit {b.depositStatus}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {filterOpen && (
         <div className="mt-3 flex flex-col gap-2.5 border-t border-[var(--border)] pt-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-20 text-[0.68rem] font-semibold uppercase tracking-wider text-[var(--text-dim)]">Status</span>
+            <span className="w-20 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">Status</span>
             {STATUS_OPTIONS.map((k) => (
               <button key={k} type="button" onClick={() => onStatusFilterChange(k)} className={chip(statusFilter === k)}>
                 {k === 'all' ? 'All' : methodLabel(k)}
@@ -197,7 +190,7 @@ export function PaymentsToolbar({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-20 text-[0.68rem] font-semibold uppercase tracking-wider text-[var(--text-dim)]">Method</span>
+            <span className="w-20 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">Method</span>
             {METHOD_OPTIONS.map((k) => (
               <button
                 key={k}
@@ -214,7 +207,7 @@ export function PaymentsToolbar({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-20 text-[0.68rem] font-semibold uppercase tracking-wider text-[var(--text-dim)]">Booking</span>
+            <span className="w-20 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">Booking</span>
             {TYPE_OPTIONS.map((k) => (
               <button key={k} type="button" onClick={() => onTypeFilterChange(k)} className={chip(typeFilter === k)}>
                 {k === 'all' ? 'All Types' : BOOKING_TYPE_LABELS[k]}

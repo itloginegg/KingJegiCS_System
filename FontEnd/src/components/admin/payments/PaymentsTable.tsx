@@ -216,7 +216,7 @@ export function PaymentsTable({
               const meta = statusMeta(p.status);
               return (
                 <tr key={p.id} className="border-b border-[var(--border)] last:border-b-0">
-                  <td className="whitespace-nowrap px-4 py-3 text-[0.8rem] font-medium tabular-nums text-[var(--text-primary)]">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-[0.75rem] font-medium tabular-nums text-[var(--text-primary)]">
                     <span title={p.invoiceId}>{shortId(p.invoiceId)}</span>
                   </td>
 
@@ -234,13 +234,13 @@ export function PaymentsTable({
                   </td>
 
                   <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <span className="block text-[0.82rem] font-semibold tabular-nums text-[var(--text-primary)]">
+                    <span className="block font-mono text-[0.8125rem] font-medium tabular-nums text-[var(--text-primary)]">
                       {peso(p.amountPaid)}
                     </span>
                     {/* Only when money has actually gone back — otherwise every row
                         carries a redundant "₱0.00 refunded". */}
                     {p.refundedAmount > 0 && (
-                      <span className="block text-[0.68rem] tabular-nums text-[var(--text-muted)]">
+                      <span className="block font-mono text-[0.6875rem] tabular-nums text-[var(--text-muted)]">
                         −{peso(p.refundedAmount)} refunded · {peso(remaining)} left
                       </span>
                     )}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, Mic, Paperclip, Send, Volume2, VolumeX, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { readSession } from '../../lib/tokenStorage';
@@ -134,9 +135,16 @@ const AVATAR_UI = {
    */
   minViewportWidth: 768,
 
-  /** Avatar column size. The chat panel offsets itself by `widthPx` automatically. */
-  widthPx: 300,
-  heightPx: 600,
+  /**
+   * Avatar column size. The chat panel offsets itself by `widthPx` automatically.
+   *
+   * Stepped down from 300x600. At the old size the column plus the 370px panel
+   * took ~670px of a 768px viewport at the breakpoint, leaving the pair almost
+   * edge to edge; the figure also stood taller than most laptop viewports, so
+   * maxHeightVh was doing the real sizing rather than heightPx.
+   */
+  widthPx: 260,
+  heightPx: 520,
 
   /**
    * How tightly the figure fills its column — the "scale" control.
@@ -419,7 +427,7 @@ function StandingAvatar({
 function TeaserPanel({ loggedIn, onClose }: { loggedIn: boolean; onClose: () => void }) {
   return (
     <div className="cw-panel cw-teaser" role="dialog" aria-label="Assistant">
-      <button type="button" className="cw-close" onClick={onClose} aria-label="Close">✕</button>
+      <button type="button" className="cw-close" onClick={onClose} aria-label="Close"><X size={14} strokeWidth={2} aria-hidden="true" /></button>
       <p className="cw-teaser-title">Kumusta! 👋</p>
       <p className="cw-teaser-body">
         {loggedIn
@@ -438,6 +446,7 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [headAvatarFailed, setHeadAvatarFailed] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [showBudgetCta, setShowBudgetCta] = useState(false);
@@ -607,10 +616,39 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
           its state, and the note in StandingAvatar about what it does not yet mirror. */}
 
       <div className="cw-head">
+        {/* Artboard 10b puts an avatar circle at the head. Deliberately the STILL
+            image, not a second AvatarStage: the note above explains why the live VRM
+            was pulled from this header, and that reasoning (a duplicate face, a
+            second WebGL context, a second model download) still holds. onError drops
+            to the monogram rather than leaving a broken frame. */}
+        <span className="cw-glyph" aria-hidden="true">
+          {headAvatarFailed
+            ? 'KJ'
+            : <img src="/avatar/standing.webp" alt="" onError={() => setHeadAvatarFailed(true)} />}
+        </span>
+
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="cw-head-title">King Jegi Assistant</div>
-          <button type="button" className="cw-switch" onClick={onSwitch}>Talk to staff →</button>
+          {/* The status line replaces the switch link's old slot only while a voice
+              call is live — 10b is captioned "voice active" and shows a dot plus the
+              session state there. Idle keeps the link, which is the only route to
+              Chat Support. */}
+          {voice.active ? (
+            <div className="cw-head-sub">
+              <span className={`cw-statusdot ${voice.state}`} aria-hidden="true" />
+              {voice.state === 'listening' ? 'Listening'
+                : voice.state === 'speaking' ? 'Speaking'
+                : voice.state === 'thinking' ? 'Thinking'
+                : 'Connecting'}
+            </div>
+          ) : (
+            <button type="button" className="cw-switch" onClick={onSwitch}>Talk to staff →</button>
+          )}
         </div>
+
+        {voice.active && (
+          <button type="button" className="cw-switch" onClick={onSwitch}>Chat Support</button>
+        )}
         {ttsSupported && (
           <button
             type="button"
@@ -619,10 +657,12 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
             aria-label={speak ? 'Stop reading replies aloud' : 'Read replies aloud'}
             title="Read replies aloud"
           >
-            {speak ? '🔊' : '🔈'}
+            {speak
+              ? <Volume2 size={17} strokeWidth={1.75} aria-hidden="true" />
+              : <VolumeX size={17} strokeWidth={1.75} aria-hidden="true" />}
           </button>
         )}
-        <button type="button" className="cw-close" onClick={onClose} aria-label="Close">✕</button>
+        <button type="button" className="cw-close" onClick={onClose} aria-label="Close"><X size={14} strokeWidth={2} aria-hidden="true" /></button>
       </div>
 
       <div className="cw-body">
@@ -652,7 +692,7 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
         {voiceOffered && (
           <button
             type="button"
-            className={`cw-icon${voice.active ? ' on' : ''}`}
+            className={`cw-icon${voice.active ? ' on accent' : ''}`}
             onClick={() => (voice.active ? voice.stop() : void voice.start())}
             aria-label={voice.active ? 'End voice conversation' : 'Start a voice conversation'}
             aria-pressed={voice.active}
@@ -660,11 +700,13 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
               ? 'End voice conversation'
               : 'Talk to the assistant. Speech is transcribed by your browser, which sends audio to Google.'}
           >
-            🎤
+            <Mic size={17} strokeWidth={1.75} aria-hidden="true" />
           </button>
         )}
         <input className="cw-input" placeholder={voice.active ? 'Listening — or type instead…' : 'Write a message…'} value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Message input" />
-        <button type="submit" className="cw-btn primary" disabled={sending || !input.trim()}>{sending ? '…' : 'Send'}</button>
+        <button type="submit" className="cw-icon accent" disabled={sending || !input.trim()} aria-label="Send message">
+          {sending ? <span className="cw-sending" aria-hidden="true" /> : <Send size={16} strokeWidth={1.75} aria-hidden="true" />}
+        </button>
       </form>
     </div>
   );
@@ -710,7 +752,7 @@ function SupportAttachment({ url, fileName, isImage, hasText }: {
 
   // No href yet = the optimistic echo of a message still uploading.
   if (!href) {
-    return <div className="cw-attach-pending" style={spacing}>📎 {fileName} — sending…</div>;
+    return <div className="cw-attach-pending" style={spacing}><Paperclip size={12} strokeWidth={1.75} aria-hidden="true" /> {fileName} — sending…</div>;
   }
 
   if (isImage) {
@@ -723,7 +765,7 @@ function SupportAttachment({ url, fileName, isImage, hasText }: {
 
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" download={fileName ?? undefined} className="cw-attach-link" style={spacing}>
-      📎 {fileName ?? 'Download attachment'}
+      <Paperclip size={12} strokeWidth={1.75} aria-hidden="true" /> {fileName ?? 'Download attachment'}
     </a>
   );
 }
@@ -812,7 +854,7 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
           <button type="button" className="cw-switch" onClick={onSwitch}>← Assistant</button>
         </div>
         <button type="button" className="cw-icon" onClick={() => void load()} aria-label="Refresh" title="Refresh">⟳</button>
-        <button type="button" className="cw-close" onClick={onClose} aria-label="Close">✕</button>
+        <button type="button" className="cw-close" onClick={onClose} aria-label="Close"><X size={14} strokeWidth={2} aria-hidden="true" /></button>
       </div>
       <div className="cw-body">
         {loading ? (
@@ -831,14 +873,22 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
           </div>
         ))}
         {sending && <div className="cw-bubble me" style={{ opacity: 0.6 }}>…</div>}
-        {error && <div className="cw-hint" style={{ color: 'var(--danger)' }}>{error}</div>}
+        {/* Tinted alert inside the transcript, per artboard 10c — it was a centred
+            line of red text that read as another message from the team rather than
+            as a failure of the one you just sent. */}
+        {error && (
+          <div className="cw-alert" role="alert">
+            <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
 
       {attachment && (
         <div className="cw-attach-chip">
-          <span className="cw-attach-name" title={attachment.name}>📎 {attachment.name}</span>
-          <button type="button" onClick={clearAttachment} aria-label="Remove attachment">✕</button>
+          <span className="cw-attach-name" title={attachment.name}><Paperclip size={12} strokeWidth={1.75} aria-hidden="true" /> {attachment.name}</span>
+          <button type="button" onClick={clearAttachment} aria-label="Remove attachment"><X size={12} strokeWidth={2} aria-hidden="true" /></button>
         </div>
       )}
 
@@ -869,10 +919,12 @@ function SupportPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: ()
           aria-label="Attach an image or PDF"
           title="Attach an image or PDF (max 10 MB)"
         >
-          📎
+          <Paperclip size={17} strokeWidth={1.75} aria-hidden="true" />
         </button>
         <input className="cw-input" placeholder="Message our team…" value={input} onChange={(e) => setInput(e.target.value)} disabled={sending} aria-label="Message input" />
-        <button type="submit" className="cw-btn primary" disabled={sending || (!input.trim() && !attachment)}>{sending ? '…' : 'Send'}</button>
+        <button type="submit" className="cw-icon accent" disabled={sending || (!input.trim() && !attachment)} aria-label="Send message">
+          {sending ? <span className="cw-sending" aria-hidden="true" /> : <Send size={16} strokeWidth={1.75} aria-hidden="true" />}
+        </button>
       </form>
     </div>
   );
@@ -903,33 +955,43 @@ function ChatStyles() {
       .cw-panel {
         position: fixed; right: 1.5rem; bottom: 5.5rem; z-index: 60;
         width: min(370px, calc(100vw - 3rem));
-        background: var(--surface); border: 1px solid var(--border-accent);
-        border-radius: var(--r-xl); box-shadow: var(--shadow-lg);
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 24px; box-shadow: var(--shadow-lg);
         display: flex; flex-direction: column; overflow: hidden;
         animation: cwIn 0.22s ease both;
       }
       @keyframes cwIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
       .cw-close {
         width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
-        border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+        border: none; background: var(--secondary-muted); color: var(--text-muted);
         cursor: pointer; font-size: 0.75rem; display: flex; align-items: center; justify-content: center;
       }
       .cw-close:hover { background: var(--bg-subtle); color: var(--text-primary); }
 
       /* teaser */
-      .cw-teaser { padding: 1.25rem 1.35rem; }
+      .cw-teaser { padding: 1.5rem; }
       .cw-teaser .cw-close { position: absolute; top: 0.8rem; right: 0.8rem; }
-      .cw-teaser-title { font-family: var(--font-display); font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.4rem; }
-      .cw-teaser-body { font-family: var(--font-body); font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; font-weight: 300; }
+      .cw-teaser-title { font-family: var(--font-display); font-size: 1.25rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; color: var(--text-primary); margin: 0 0 0.625rem; }
+      .cw-teaser-body { font-family: var(--font-body); font-size: 0.875rem; color: var(--text-secondary); line-height: 1.55; font-weight: 400; margin: 0 0 1.125rem; }
 
       /* chat */
-      .cw-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.9rem 1rem; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, var(--accent-muted) 0%, var(--surface) 100%); }
-      .cw-glyph { width: 34px; height: 34px; flex-shrink: 0; border-radius: var(--r-lg); background: var(--primary-muted); border: 1px solid var(--border-accent); display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 0.9rem; font-weight: 600; color: var(--primary); }
-      .cw-head-title { font-family: var(--font-display); font-size: 1rem; font-weight: 500; color: var(--text-primary); }
-      .cw-head-sub { font-family: var(--font-body); font-size: 0.6rem; font-weight: 300; color: var(--text-dim); }
-      .cw-switch { border: none; background: transparent; padding: 0; cursor: pointer; font-family: var(--font-body); font-size: 0.6rem; letter-spacing: 0.08em; color: var(--primary); }
+      .cw-head { display: flex; align-items: center; gap: 0.7rem; padding: 1rem 1.125rem; border-bottom: 1px solid var(--border); }
+      .cw-glyph { width: 34px; height: 34px; flex-shrink: 0; border-radius: var(--r-full); background: var(--bg-subtle); display: flex; align-items: center; justify-content: center; font-family: var(--font-body); font-size: 0.6875rem; font-weight: 600; color: var(--accent); overflow: hidden; }
+      .cw-glyph img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; display: block; }
+      /* Green while listening, amber while the model works, accent while it talks —
+         the same three states VoiceBar names, so the header and the strip agree. */
+      .cw-statusdot { width: 6px; height: 6px; border-radius: var(--r-full); flex: none; background: var(--text-muted); }
+      .cw-statusdot.listening { background: var(--status-paid); }
+      .cw-statusdot.thinking { background: var(--warning); }
+      .cw-statusdot.speaking { background: var(--accent); }
+      .cw-head-title { font-family: var(--font-body); font-size: 0.875rem; font-weight: 600; line-height: 1.1; color: var(--text-primary); }
+      .cw-head-sub { display: flex; align-items: center; gap: 6px; font-family: var(--font-body); font-size: 0.6875rem; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+      .cw-switch { border: none; background: transparent; padding: 0; cursor: pointer; font-family: var(--font-body); font-size: 0.6875rem; font-weight: 500; letter-spacing: 0; color: var(--accent); }
       .cw-switch:hover { text-decoration: underline; }
       .cw-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.7rem; height: min(58vh, 440px); overflow-y: auto; }
+      /* danger tint at 12% with a 28% edge — the shared alert treatment. */
+      .cw-alert { display: flex; align-items: flex-start; gap: 10px; background: var(--danger-muted); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); border-radius: 14px; padding: 12px 14px; font-family: var(--font-body); font-size: 0.75rem; line-height: 1.45; color: var(--danger-ink); }
+      .cw-alert svg { flex: none; margin-top: 1px; }
       .cw-hint { text-align: center; color: var(--text-dim); font-family: var(--font-body); font-size: 0.78rem; padding: 1.5rem 0.5rem; line-height: 1.6; }
 
       /* ── attachments ── */
@@ -944,27 +1006,40 @@ function ChatStyles() {
       }
       .cw-attach-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .cw-attach-chip button { background: transparent; border: none; cursor: pointer; color: var(--text-dim); font-size: 0.72rem; padding: 0; }
-      .cw-bubble.assistant, .cw-bubble.me { position: static; width: auto; height: auto; max-width: 82%; padding: 0.6rem 0.8rem; border-radius: var(--r-xl); font-family: var(--font-body); font-size: 0.8rem; font-weight: 300; line-height: 1.55; box-shadow: none; display: block; white-space: pre-wrap; }
-      .cw-bubble.assistant { align-self: flex-start; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: var(--r-sm); }
-      .cw-bubble.me { align-self: flex-end; background: var(--primary); color: var(--primary-text); border-bottom-right-radius: var(--r-sm); }
-      .cw-foot { display: flex; gap: 0.5rem; padding: 0.8rem 1rem; border-top: 1px solid var(--border); }
-      .cw-input { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-full); padding: 0.55rem 0.9rem; font-family: var(--font-body); font-size: 0.8rem; color: var(--text-primary); outline: none; }
-      .cw-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted); }
-      .cw-btn { font-family: var(--font-body); font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 0.55rem 1rem; border-radius: var(--r-full); cursor: pointer; border: 1px solid transparent; text-decoration: none; display: inline-flex; align-items: center; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
-      .cw-btn.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
-      .cw-btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
-      .cw-btn.outline { background: transparent; color: var(--primary); border-color: var(--border-accent); }
-      .cw-btn.outline:hover { background: var(--primary-muted); border-color: var(--primary); }
+      .cw-bubble.assistant, .cw-bubble.me { position: static; width: auto; height: auto; max-width: 82%; padding: 0.6875rem 0.875rem; border-radius: 16px; font-family: var(--font-body); font-size: 0.8125rem; font-weight: 400; line-height: 1.5; box-shadow: none; display: block; white-space: pre-wrap; }
+      .cw-bubble.assistant { align-self: flex-start; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: 4px; }
+      .cw-bubble.me { align-self: flex-end; background: var(--accent); color: var(--accent-text); border: 1px solid transparent; border-bottom-right-radius: 4px; }
+      .cw-foot { display: flex; align-items: center; gap: 0.5rem; padding: 0.875rem 1rem; border-top: 1px solid var(--border); }
+      .cw-input { flex: 1; min-width: 0; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--r-full); padding: 0.7rem 1rem; font-family: var(--font-body); font-size: 0.8125rem; color: var(--text-primary); outline: none; }
+      .cw-input:focus, .cw-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+      .cw-btn { font-family: var(--font-body); font-size: 0.75rem; letter-spacing: 0.01em; text-transform: none; font-weight: 600; padding: 0.75rem 1.125rem; border-radius: var(--r-full); cursor: pointer; border: 1px solid transparent; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+      .cw-btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+      .cw-btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .cw-btn.outline { background: transparent; color: var(--text-primary); border-color: var(--border-strong); }
+      .cw-btn.outline:hover { background: var(--primary-muted); }
       .cw-btn:disabled { opacity: 0.55; cursor: not-allowed; }
-      .cw-icon { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; transition: background 0.2s, border-color 0.2s; }
+      .cw-icon { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; border: none; background: var(--secondary-muted); color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, color 0.2s; }
+      .cw-icon:hover { background: var(--primary-muted); color: var(--text-primary); }
+      /* Send, and a live mic, take the accent fill — 10b shows the mic filled
+         while a voice session is running, so it reads as armed rather than idle. */
+      .cw-icon.accent { background: var(--accent); color: var(--accent-text); }
+      .cw-icon.accent:hover { background: var(--accent-hover); color: var(--accent-text); }
+      .cw-icon:disabled { opacity: 0.45; cursor: not-allowed; }
+      .cw-sending { width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 35%, transparent); border-top-color: currentColor; animation: cwSpin 0.7s linear infinite; }
+      @keyframes cwSpin { to { transform: rotate(360deg); } }
       .cw-icon:hover { border-color: var(--border-accent); }
       .cw-icon.on { background: var(--primary-muted); border-color: var(--primary); }
       .cw-icon.on { animation: cwPulse 1.2s ease-in-out infinite; }
       @keyframes cwPulse { 0%,100% { box-shadow: 0 0 0 0 var(--primary-muted); } 50% { box-shadow: 0 0 0 4px var(--primary-muted); } }
 
       /* ── 3D avatar stage ── */
+      /* Height comes from AvatarStage's size prop via --cw-avatar-size, but is
+         clamped here rather than applied raw: the floor stops a small value
+         collapsing the stage, and the 42vh ceiling stops a large one from eating
+         a short chat panel before a single message shows. */
       .cw-avatar {
-        height: 175px; width: 100%; flex-shrink: 0;
+        --cw-avatar-h: clamp(110px, var(--cw-avatar-size, 150px), 42vh);
+        height: var(--cw-avatar-h); width: 100%; flex-shrink: 0;
         background: radial-gradient(120% 90% at 50% 15%, var(--accent-muted) 0%, var(--surface) 70%);
         border-bottom: 1px solid var(--border);
         cursor: default;
@@ -1024,13 +1099,22 @@ function ChatStyles() {
         .cw-dock--with-avatar .cw-panel { right: 1.5rem; }
       }
 
+      /* Same clamp as .cw-avatar so the monogram occupies exactly the box the 3D
+         stage would have — swapping between them must not shift the panel. */
       .cw-avatar-fallback {
-        height: 175px; width: 100%; flex-shrink: 0;
+        --cw-avatar-h: clamp(110px, var(--cw-avatar-size, 150px), 42vh);
+        height: var(--cw-avatar-h); width: 100%; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
         background: radial-gradient(120% 90% at 50% 15%, var(--accent-muted) 0%, var(--surface) 70%);
         border-bottom: 1px solid var(--border);
       }
-      .cw-avatar-fallback .cw-glyph { width: 56px; height: 56px; font-size: 1.35rem; }
+      /* Ratios taken from the original fixed pair (56/175 and 21.6/175), so the
+         glyph keeps its proportion at any size instead of pinning to 56px. */
+      .cw-avatar-fallback .cw-glyph {
+        width: calc(var(--cw-avatar-h) * 0.32);
+        height: calc(var(--cw-avatar-h) * 0.32);
+        font-size: calc(var(--cw-avatar-h) * 0.123);
+      }
 
       /* ── voice session status strip ── */
       .cw-voicebar {

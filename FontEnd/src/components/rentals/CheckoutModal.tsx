@@ -27,7 +27,7 @@ const RESERVATION_RATE = 0.05;
 const FIELD =
   'w-full rounded-lg border border-border bg-surface px-3 py-2 text-[0.82rem] text-text-primary focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none';
 const FIELD_LABEL =
-  'mb-1.5 block text-[0.62rem] font-semibold tracking-[0.18em] text-text-muted uppercase';
+  'mb-1.5 block text-[0.6875rem] font-semibold tracking-[0.08em] text-text-muted uppercase';
 
 /**
  * Rental checkout.
@@ -162,7 +162,7 @@ export function CheckoutModal({
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div>
             <p
-              className="mb-1 text-[0.58rem] font-semibold tracking-[0.24em] text-text-muted uppercase"
+              className="mb-1 text-[0.6875rem] font-semibold tracking-[0.08em] text-text-muted uppercase"
               style={{ fontFamily: 'var(--font-body)' }}
             >
               Rental booking

@@ -119,7 +119,7 @@ export function RefundConfirmModal({ payment, request, busy, onCancel, onConfirm
         )}
 
         <label className="mt-4 block">
-          <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-[var(--text-dim)]">
+          <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
             Refund amount
           </span>
           <input

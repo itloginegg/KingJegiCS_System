@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react';
 import { Search } from 'lucide-react';
 
+/** Stock backdrop until a real asset is dropped in. */
+const HERO_MEDIA_FALLBACK =
+  'https://images.unsplash.com/photo-1519671482749-fd09be7ccebf?auto=format&fit=crop&w=2000&q=80';
+
 /**
  * Rentals hero — an inverted band, the same pattern as MenuPreviewSection and
  * MenuPage's hero.
@@ -20,22 +24,58 @@ export function RentalHero({
   query,
   onQueryChange,
   children,
+  media,
 }: {
   /** Raw search text. Owned by RentalPage — this input is fully controlled. */
   query: string;
   onQueryChange: (next: string) => void;
   /** Slot for the Navbar, so it inherits the band's colour overrides. */
   children?: ReactNode;
+  /** Background layer. Omit for the stock photograph. */
+  media?: { type: 'image'; src: string } | { type: 'video'; src: string; poster?: string };
 }) {
   return (
     <section className="dark-band relative overflow-hidden bg-[var(--band-bg)]">
+      {/* Background media, behind everything. The plum stays as the section fill,
+          so a slow or failed load degrades to the brand surface, not to white. */}
+      <div className="absolute inset-0 z-0" aria-hidden="true">
+        {media?.type === 'video' ? (
+          <video
+            className="h-full w-full object-cover"
+            src={media.src}
+            poster={media.poster}
+            /* Muted is structural, not taste: autoplay is only legal muted. */
+            muted
+            playsInline
+            loop
+            autoPlay
+            preload="metadata"
+          />
+        ) : (
+          <div
+            className="h-full w-full bg-cover bg-center"
+            style={{ backgroundImage: `url(${media?.src ?? HERO_MEDIA_FALLBACK})` }}
+          />
+        )}
+        {/* The tint is the band token, not a flat black scrim — black reads as a
+            grey film and drifts off-palette. Graded so it stays densest under the
+            copy and opens up on the far side. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(100deg, color-mix(in srgb, var(--band-bg) 93%, transparent) 0%, color-mix(in srgb, var(--band-bg) 78%, transparent) 55%, color-mix(in srgb, var(--band-bg) 58%, transparent) 100%)',
+          }}
+        />
+      </div>
+
       {children}
 
       {/* Top padding clears the Navbar, which overlays rather than stacks —
           same allowance MenuPage's hero makes. */}
-      <div className="mx-auto w-full max-w-[1200px] px-6 pt-[calc(4rem+80px)] pb-16 text-center sm:px-10 md:text-left">
+      <div className="relative z-10 mx-auto w-full max-w-[1200px] px-6 pt-[calc(4rem+80px)] pb-16 text-center sm:px-10 md:text-left">
         <p
-          className="mb-4 text-[0.62rem] font-semibold tracking-[0.3em] text-[var(--gold-on-band)] uppercase"
+          className="mb-4 text-[0.6875rem] font-semibold tracking-[0.14em] text-[var(--band-accent)] uppercase"
           style={{ fontFamily: 'var(--font-body)' }}
         >
           Equipment for rent

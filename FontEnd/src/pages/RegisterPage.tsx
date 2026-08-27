@@ -1,5 +1,6 @@
 import { useId, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { RegistrationFieldErrors } from '../types/auth';
 import {
   register,
@@ -9,6 +10,8 @@ import {
 } from '../api/authApi';
 import { hasErrors, validateRegistration } from '../lib/validation';
 import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
+import { AuthLayout } from '../components/auth/AuthLayout';
+import { OtpCodeInput } from '../components/auth/OtpCodeInput';
 import { formatPhPhone, toE164 } from '../lib/phone';
 import { useAuth } from '../hooks/useAuth';
 import { dashboardPathFor } from '../routes/paths';
@@ -17,6 +20,10 @@ import { dashboardPathFor } from '../routes/paths';
  * Customer self-registration. Talks to POST /api/Customers/register and, on
  * success, shows an inline email verification step so the account can be
  * confirmed before the user signs in.
+ *
+ * The card became the shared two-panel shell, and the verification step now
+ * drives OtpCodeInput rather than its own letter-spaced text field — the same
+ * change made on the sign-in side, so both codes behave identically.
  */
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -157,243 +164,179 @@ export function RegisterPage() {
     }
   };
 
-  const field = (
-    name: keyof typeof values,
-    label: string,
-    input: React.ReactNode,
-  ) => (
-    <div className="space-y-1.5">
-      <label
-        htmlFor={fieldId(name)}
-        className="block text-sm font-medium text-[var(--text-secondary)]"
-      >
-        {label}
-      </label>
-      {input}
-      {submitted && errors[name] && (
-        <p id={errId(name)} className="text-sm text-[var(--danger)]">
-          {errors[name]}
-        </p>
-      )}
-    </div>
-  );
+  const invalid = (name: keyof typeof values) => submitted && Boolean(errors[name]);
 
   const inputProps = (name: keyof typeof values) => ({
     id: fieldId(name),
     value: values[name],
     onChange: setField(name),
-    'aria-invalid': submitted && Boolean(errors[name]),
-    'aria-describedby': submitted && errors[name] ? errId(name) : undefined,
-    className: fieldClasses(submitted && Boolean(errors[name])),
+    'aria-invalid': invalid(name),
+    'aria-describedby': invalid(name) ? errId(name) : undefined,
+    className: `ui-input${invalid(name) ? ' ui-input--invalid' : ''}`,
   });
 
+  const field = (name: keyof typeof values, label: string, input: React.ReactNode) => (
+    <div className="ui-field">
+      <label htmlFor={fieldId(name)} className="ui-label">{label}</label>
+      {input}
+      {invalid(name) && <p id={errId(name)} className="ui-error">{errors[name]}</p>}
+    </div>
+  );
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--bg-subtle)] px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-lg)] sm:p-8">
-          <header className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-              {verificationEmail ? 'Verify your email' : 'Create your account'}
-            </h1>
-            <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-              {verificationEmail
-                ? 'Enter the code we sent to your inbox to confirm your account.'
-                : 'Book events, order menus, and track everything in one place'}
-            </p>
-          </header>
-
-          {verificationEmail ? (
-            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-5">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-[var(--text-secondary)]">Verification sent to</p>
-                <p className="text-sm text-[var(--text-primary)]">{verificationEmail}</p>
-              </div>
-
-              {verificationError && (
-                <div role="alert" className="mt-4 rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]">
-                  {verificationError}
-                </div>
-              )}
-
-              {verificationSuccess && (
-                <div role="status" className="mt-4 rounded-lg border border-[var(--border-accent)] bg-[var(--primary-muted)] px-4 py-3 text-sm text-[var(--primary)]">
-                  {verificationSuccess}
-                </div>
-              )}
-
-              <form onSubmit={handleVerificationSubmit} className="mt-4 space-y-4">
-                <div className="space-y-1.5">
-                  <label htmlFor="verification-code" className="block text-sm font-medium text-[var(--text-secondary)]">
-                    Verification code
-                  </label>
-                  <input
-                    id="verification-code"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={verificationCode}
-                    onChange={(event) => {
-                      const nextValue = event.target.value.replace(/\D/g, '').slice(0, 6);
-                      setVerificationCode(nextValue);
-                      if (verificationError) setVerificationError(null);
-                    }}
-                    className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3.5 py-2.5 text-center text-lg font-semibold tracking-[0.35em] text-[var(--text-primary)] shadow-sm placeholder:text-[var(--text-dim)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-                    placeholder="123456"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={verifyingEmail}
-                  className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {verifyingEmail ? 'Verifying…' : 'Verify email'}
-                </button>
-              </form>
-
-              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <button
-                  type="button"
-                  onClick={handleResendCode}
-                  disabled={resendingCode}
-                  className="text-sm font-medium text-[var(--primary)] hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {resendingCode ? 'Sending…' : 'Resend code'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVerificationEmail(null);
-                    setVerificationCode('');
-                    setVerificationError(null);
-                    setVerificationSuccess(null);
-                  }}
-                  className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                >
-                  Use a different email
-                </button>
-              </div>
+    <AuthLayout
+      brandTitle="One account for every celebration."
+      brandBody="Book events, order menus, and track everything in one place."
+      brandFoot={
+        <div className="au-brand-note">
+          <div className="au-brand-note-kicker">After you submit</div>
+          <p>
+            This card swaps to <em>Verify your email</em> — six code boxes, a resend
+            link, then a redirect to sign in.
+          </p>
+        </div>
+      }
+      title={verificationEmail ? 'Verify your email' : 'Create your account'}
+      subtitle={
+        verificationEmail
+          ? `Enter the 6-digit code we sent to ${verificationEmail}.`
+          : 'Book events, order menus, and track everything in one place'
+      }
+      footer={
+        verificationEmail ? undefined : (
+          <>Already have an account? <Link to="/login">Sign in</Link></>
+        )
+      }
+    >
+      {verificationEmail ? (
+        <form onSubmit={handleVerificationSubmit} className="au-form">
+          {verificationError && (
+            <div role="alert" className="ui-alert ui-alert--danger">
+              <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+              <span>{verificationError}</span>
             </div>
-          ) : (
-            <form onSubmit={handleSubmit} noValidate className="mt-6 space-y-5">
-              {/* Server-side failure (e.g. "email already exists"). */}
-              {formError && (
-                <div
-                  role="alert"
-                  className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]"
-                >
-                  {formError}
-                </div>
-              )}
+          )}
 
-              {field(
-                'fullName',
-                'Full name',
+          {verificationSuccess && (
+            <div role="status" className="ui-alert ui-alert--success">
+              <CheckCircle2 size={18} strokeWidth={1.75} aria-hidden="true" />
+              <span>{verificationSuccess}</span>
+            </div>
+          )}
+
+          <div className="ui-field">
+            <span className="ui-label" id="verify-label">Verification code</span>
+            <OtpCodeInput
+              value={verificationCode}
+              onChange={(next) => {
+                setVerificationCode(next);
+                if (verificationError) setVerificationError(null);
+              }}
+              disabled={verifyingEmail}
+              invalid={Boolean(verificationError)}
+              ariaDescribedBy="verify-label"
+            />
+          </div>
+
+          <button type="submit" disabled={verifyingEmail} className="ui-btn ui-btn-accent ui-btn-block">
+            {verifyingEmail && <span className="ui-spinner" aria-hidden="true" />}
+            {verifyingEmail ? 'Verifying…' : 'Verify email'}
+          </button>
+
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+            <button
+              type="button"
+              onClick={handleResendCode}
+              disabled={resendingCode}
+              className="ui-btn ui-btn-ghost ui-btn-xs"
+            >
+              {resendingCode ? 'Sending…' : 'Resend code'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setVerificationEmail(null);
+                setVerificationCode('');
+                setVerificationError(null);
+                setVerificationSuccess(null);
+              }}
+              className="ui-btn ui-btn-ghost ui-btn-xs"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Use a different email
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate className="au-form">
+          {/* Server-side failure (e.g. "email already exists"). */}
+          {formError && (
+            <div role="alert" className="ui-alert ui-alert--danger">
+              <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {field('fullName', 'Full name',
+            <input {...inputProps('fullName')} type="text" name="fullName" autoComplete="name" placeholder="Juan Dela Cruz" />)}
+
+          {field('email', 'Email',
+            <input {...inputProps('email')} type="email" name="email" autoComplete="email" inputMode="email" placeholder="you@example.com" />)}
+
+          {field('phoneNumber', 'Phone number',
+            <PhoneNumberInput
+              {...inputProps('phoneNumber')}
+              name="phoneNumber"
+              value={formatPhPhone(values.phoneNumber)}
+              onChange={setPhoneNumber}
+            />)}
+
+          {/* Password and its confirmation share a row: they are one decision, and
+              stacking them pushed the submit button under the fold on a laptop. */}
+          <div className="au-row">
+            <div className="ui-field">
+              <label htmlFor={fieldId('password')} className="ui-label">Password</label>
+              <div className="au-input-wrap">
                 <input
-                  {...inputProps('fullName')}
-                  type="text"
-                  name="fullName"
-                  autoComplete="name"
-                  placeholder="Juan Dela Cruz"
-                />,
-              )}
-
-              {field(
-                'email',
-                'Email',
-                <input
-                  {...inputProps('email')}
-                  type="email"
-                  name="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="you@example.com"
-                />,
-              )}
-
-              {field(
-                'phoneNumber',
-                'Phone number',
-                <PhoneNumberInput
-                  {...inputProps('phoneNumber')}
-                  name="phoneNumber"
-                  value={formatPhPhone(values.phoneNumber)}
-                  onChange={setPhoneNumber}
-                />,
-              )}
-
-              {field(
-                'password',
-                'Password',
-                <div className="relative">
-                  <input
-                    {...inputProps('password')}
-                    type={showPassword ? 'text' : 'password'}
-                    name="password"
-                    autoComplete="new-password"
-                    placeholder="••••••••"
-                    className={`${fieldClasses(submitted && Boolean(errors.password))} pr-12`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((s) => !s)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    aria-pressed={showPassword}
-                    className="absolute inset-y-0 right-0 flex items-center rounded-r-lg px-3 text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-                  >
-                    {showPassword ? 'Hide' : 'Show'}
-                  </button>
-                </div>,
-              )}
-              <p className="-mt-3 text-xs text-[var(--text-dim)]">
-                At least 8 characters, mixing uppercase and lowercase letters.
-              </p>
-
-              {field(
-                'confirmPassword',
-                'Confirm password',
-                <input
-                  {...inputProps('confirmPassword')}
+                  {...inputProps('password')}
                   type={showPassword ? 'text' : 'password'}
-                  name="confirmPassword"
+                  name="password"
                   autoComplete="new-password"
                   placeholder="••••••••"
-                />,
-              )}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="au-reveal"
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {invalid('password') && <p id={errId('password')} className="ui-error">{errors.password}</p>}
+            </div>
 
-              <button
-                type="submit"
-                disabled={submitting}
-                className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {submitting ? 'Creating account…' : 'Create account'}
-              </button>
-            </form>
-          )}
-        </div>
+            {field('confirmPassword', 'Confirm password',
+              <input
+                {...inputProps('confirmPassword')}
+                type={showPassword ? 'text' : 'password'}
+                name="confirmPassword"
+                autoComplete="new-password"
+                placeholder="••••••••"
+              />)}
+          </div>
 
-        <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
-          Already have an account?{' '}
-          <Link
-            to="/login"
-            className="font-medium text-[var(--primary)] hover:text-[var(--accent)]"
-          >
-            Back to Login
-          </Link>
-        </p>
-      </div>
-    </main>
+          <p className="ui-hint" style={{ marginTop: -8 }}>
+            At least 8 characters, with both uppercase and lowercase letters.
+          </p>
+
+          <button type="submit" disabled={submitting} className="ui-btn ui-btn-accent ui-btn-block">
+            {submitting && <span className="ui-spinner" aria-hidden="true" />}
+            {submitting ? 'Creating account…' : 'Create account'}
+          </button>
+        </form>
+      )}
+    </AuthLayout>
   );
-}
-
-function fieldClasses(invalid: boolean): string {
-  return [
-    'w-full rounded-lg border bg-[var(--surface)] px-3.5 py-2.5 text-sm text-[var(--text-primary)] shadow-sm',
-    'placeholder:text-[var(--text-dim)] transition-colors',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-0',
-    invalid
-      ? 'border-[var(--danger)] focus-visible:ring-[var(--danger)]'
-      : 'border-[var(--border-strong)] focus-visible:ring-[var(--primary)]',
-  ].join(' ');
 }

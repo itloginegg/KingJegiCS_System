@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { AlertCircle, Check } from 'lucide-react';
 import { Navbar } from '../components/landing/Navbar';
 import { PlanByBudget } from '../components/suggestions/PlanByBudget';
 import { HERO_CARDS, HeroLayout } from '../components/booking/HeroLayout';
@@ -40,6 +41,7 @@ import {
   type PackageTemplateResponse,
 } from '../api/bookingApi';
 import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules } from '../api/calendarApi';
+import { SiteFooter } from '../components/landing/SiteFooter';
 
 /* ── constants ────────────────────────────────────────────────────────── */
 
@@ -105,6 +107,8 @@ export function BookingPage() {
     presetDate?: string;
     /** 'plan' opens Step 0's Plan-by-Budget panel rather than a wizard flow. */
     presetFlow?: ServiceFlow | 'plan';
+    /** Preselects a package, so /packages' "Book this package" lands on step 3 with it chosen. */
+    presetPackageId?: string;
   };
   const presetService = preset.presetFlow === 'plan' ? null : preset.presetFlow ?? null;
 
@@ -163,6 +167,10 @@ export function BookingPage() {
 
   // API state
   const [bookingId, setBookingId] = useState<string | null>(null);
+  /* When the server last accepted a write for this draft. A Draft row has existed
+     from step 2 onward since long before this redesign — it was simply never shown,
+     so leaving mid-wizard felt like losing the work. */
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
   const [bookingResponse, setBookingResponse] = useState<BookingResponse | null>(null);
   const [creatingBooking, setCreatingBooking] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
@@ -177,7 +185,7 @@ export function BookingPage() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
   // Step 3 — Selection mode
-  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(preset.presetPackageId ?? null);
   const [packageTemplate, setPackageTemplate] = useState<PackageTemplateResponse | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
 
@@ -463,7 +471,7 @@ export function BookingPage() {
      with details still missing so that admin walk-ins (often just a date and a type
      over the phone) aren't blocked. A customer going through the wizard, though,
      knows these answers, so asking up front saves a follow-up call. */
-  const detailsComplete =
+  const detailsComplete = serviceFlow === 'rentals' ? true :
     detailGroup === 'couple' ? Boolean(groomName.trim() && brideName.trim())
       : detailGroup === 'celebrant'
         ? Boolean(celebrantName.trim() && celebrantSex.trim() && celebrantAge.trim())
@@ -671,12 +679,14 @@ export function BookingPage() {
         };
         const result = await updateBooking(session.token, bookingId, updatePayload);
         setBookingResponse(result);
+        setDraftSavedAt(new Date());
         await uploadPendingImages(session.token, bookingId);
         setStep(3);
       } else {
         const result = await createBooking(session.token, payload);
         setBookingId(result.id);
         setBookingResponse(result);
+        setDraftSavedAt(new Date());
         // Only now can the images go up: they need multipart and a booking id, and
         // the Draft that create just returned is the first point both exist.
         await uploadPendingImages(session.token, result.id);
@@ -783,36 +793,83 @@ export function BookingPage() {
         @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .fade-up { animation: fadeUp 0.7s ease both; }
 
-        /* ── page layout ── */
-        .bk-container{max-width:880px;margin:0 auto}
+        /* ── page layout ──
+           1200 rather than 880: the container now holds a 260px rail beside the
+           step card, and 880 would leave the card narrower than it was before. */
+        .bk-container{max-width:1200px;margin:0 auto}
+        .bk-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:2rem;align-items:start}
+        .bk-main{min-width:0}
 
-        /* ── stepper ── */
-        .bk-stepper{display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:2.5rem;flex-wrap:wrap}
-        .bk-step-item{display:flex;align-items:center;gap:.55rem;font-family:var(--font-body);font-size:.6rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;color:var(--text-dim);transition:color .3s}
-        .bk-step-item.active{color:var(--primary)}
-        .bk-step-item.done{color:var(--primary);opacity:.7}
-        .bk-step-num{width:30px;height:30px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:.78rem;font-weight:600;background:var(--surface);border:2px solid var(--border);color:var(--text-dim);transition:all .3s}
-        .bk-step-item.active .bk-step-num{background:var(--primary);border-color:var(--primary);color:var(--primary-text)}
-        .bk-step-item.done .bk-step-num{background:var(--primary-muted);border-color:var(--primary);color:var(--primary)}
-        .bk-step-line{width:48px;height:2px;background:var(--border);margin:0 .4rem;border-radius:1px;transition:background .3s}
-        .bk-step-line.done{background:var(--primary)}
+        /* Sticky so the total stays on screen through a long step-3 catalog.
+           96px clears the fixed navbar. */
+        .bk-rail-inner{position:sticky;top:96px;display:flex;flex-direction:column;gap:1.25rem}
+
+        .bk-draft{display:flex;align-items:center;gap:.4rem;margin:0;font-family:var(--font-body);font-size:.75rem;font-weight:500;color:var(--status-paid)}
+
+        /* ── stepper (vertical rail) ── */
+        .bk-stepper{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.15rem}
+        .bk-step-item{display:flex;align-items:center;gap:.7rem;padding:.5rem 0;font-family:var(--font-body);font-size:.8125rem;font-weight:500;color:var(--text-muted);transition:color .3s;position:relative}
+        /* The connector is drawn from the item rather than as its own element, so
+           the list stays a real <ol> of four <li>s for a screen reader. */
+        .bk-step-item:not(:last-child)::after{content:'';position:absolute;left:14px;top:34px;width:2px;height:calc(100% - 28px);background:var(--border);border-radius:1px}
+        .bk-step-item.done::after{background:var(--primary)}
+        .bk-step-item.active{color:var(--text-primary);font-weight:600}
+        .bk-step-item.done{color:var(--text-secondary)}
+        .bk-step-num{width:28px;height:28px;flex-shrink:0;border-radius:var(--r-full);display:flex;align-items:center;justify-content:center;font-family:var(--font-numeric);font-size:.75rem;font-weight:500;background:var(--surface);border:1px solid var(--border-strong);color:var(--text-muted);transition:background .3s,border-color .3s,color .3s;z-index:1}
+        .bk-step-item.active .bk-step-num{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
+        .bk-step-item.done .bk-step-num{background:var(--primary);border-color:var(--primary);color:var(--primary-text)}
+
+        /* ── progress bar (below the rail breakpoint) ── */
+        .bk-progress{display:none}
+        .bk-progress-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin-bottom:.5rem}
+        .bk-progress-head span:first-child{font-family:var(--font-numeric);font-size:.625rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted)}
+        .bk-progress-head span:last-child{font-family:var(--font-body);font-size:.875rem;font-weight:600;color:var(--text-primary)}
+        .bk-progress-track{height:4px;border-radius:var(--r-full);background:var(--border);overflow:hidden}
+        .bk-progress-fill{height:100%;background:var(--accent);border-radius:var(--r-full);transition:width .35s ease}
+
+        /* ── running total ── */
+        .bk-summary{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:1.1rem 1.25rem;box-shadow:var(--shadow-sm)}
+        .bk-summary-kicker{font-family:var(--font-numeric);font-size:9px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);margin-bottom:.4rem}
+        .bk-summary-total{font-family:var(--font-numeric);font-variant-numeric:tabular-nums;font-size:1.5rem;font-weight:500;color:var(--text-primary);letter-spacing:-.01em;margin-bottom:.9rem}
+        .bk-summary-list{margin:0;padding-top:.9rem;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:.5rem}
+        .bk-summary-list > div{display:flex;justify-content:space-between;align-items:baseline;gap:.75rem}
+        .bk-summary-list dt{font-family:var(--font-body);font-size:.75rem;color:var(--text-muted)}
+        .bk-summary-list dd{margin:0;font-family:var(--font-body);font-size:.75rem;font-weight:600;color:var(--text-primary);text-align:right;overflow-wrap:anywhere}
+
+        /* Rail collapses at the foundations' nav breakpoint. */
+        @media(max-width:1020px){
+          .bk-layout{grid-template-columns:1fr;gap:1.5rem}
+          .bk-rail-inner{position:static;gap:1rem}
+          .bk-stepper{display:none}
+          .bk-progress{display:block}
+          .bk-summary{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+          .bk-summary-kicker{margin:0}
+          .bk-summary-total{margin:0;font-size:1.25rem}
+          .bk-summary-list{display:none}
+        }
 
         /* ── card ── */
-        .bk-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:2rem 2.25rem;box-shadow:var(--shadow-md);transition:border-color .25s,box-shadow .25s,transform .25s}
-        .bk-card:hover{border-color:var(--border-accent);box-shadow:var(--shadow-lg)}
-        .bk-heading{font-family:var(--font-display);font-size:1.5rem;font-weight:600;color:var(--text-primary);margin:0 0 .35rem}
-        .bk-sub{font-family:var(--font-body);font-size:.8rem;font-weight:300;color:var(--text-muted);margin:0 0 1.6rem}
+        /* Three grounds, one step apart: the section is --bg-subtle, the card --bg,
+           and the fields inside it --surface. The card used to be --surface too,
+           which left every input the same colour as the card it sat on and relying
+           on its border alone to exist. */
+        .bk-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-xl);padding:2rem 2.25rem;box-shadow:var(--shadow-md)}
+        .bk-heading{font-family:var(--font-display);font-size:1.5rem;font-weight:600;letter-spacing:-.02em;color:var(--text-primary);margin:0 0 .35rem}
+        .bk-sub{font-family:var(--font-body);font-size:.875rem;font-weight:400;line-height:1.5;color:var(--text-muted);margin:0 0 1.6rem}
 
         /* ── form ── */
         .bk-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
         @media(max-width:600px){.bk-grid{grid-template-columns:1fr}}
         .bk-grid-3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:1.1rem}
         @media(max-width:600px){.bk-grid-3{grid-template-columns:1fr}}
-        .bk-field{display:flex;flex-direction:column;gap:.35rem}
+        .bk-field{display:flex;flex-direction:column;gap:.5rem}
         .bk-field.full{grid-column:1/-1}
-        .bk-label{font-family:var(--font-body);font-size:.58rem;letter-spacing:.22em;text-transform:uppercase;font-weight:500;color:var(--text-dim)}
-        .bk-input{background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--r-lg);padding:.72rem 1rem;font-family:var(--font-body);font-size:.85rem;font-weight:300;color:var(--text-primary);outline:none;transition:border-color .2s,box-shadow .2s}
-        .bk-input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-muted)}
+        .bk-label{font-family:var(--font-body);font-size:.6875rem;line-height:1;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--text-muted)}
+        /* --surface, not --bg-subtle: the card is already --surface in light, so a
+           --bg-subtle field disappeared into it. The field now sits on the same
+           step the rest of the app's inputs use, with the accent focus ring. */
+        .bk-input{background:var(--surface);border:1px solid var(--border-strong);border-radius:12px;padding:.875rem;font-family:var(--font-body);font-size:.9375rem;line-height:1.2;font-weight:400;color:var(--text-primary);outline:none;transition:border-color .2s}
+        .bk-input:focus,.bk-input:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
         .bk-input::placeholder{color:var(--text-dim)}
 
         /* ── event type cards ── */
@@ -824,9 +881,12 @@ export function BookingPage() {
         .bk-type-label{font-family:var(--font-body);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;font-weight:500;color:var(--text-primary)}
 
         /* ── buttons ── */
-        .bk-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.8rem}
-        .bk-btn{font-family:var(--font-body);font-size:.64rem;letter-spacing:.18em;text-transform:uppercase;font-weight:500;padding:.85rem 1.4rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;gap:.45rem;transition:all .25s}
-        .bk-btn:disabled{opacity:.4;cursor:not-allowed}
+        .bk-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1.8rem;flex-wrap:wrap}
+        /* Sentence case at 14/600 rather than 10px uppercase on .18em tracking —
+           the old label was narrower than the icon beside it. */
+        .bk-btn{font-family:var(--font-body);font-size:.875rem;letter-spacing:.01em;font-weight:600;line-height:1;padding:1rem 1.75rem;border-radius:var(--r-full);border:1px solid transparent;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:.5rem;white-space:nowrap;transition:background .2s,color .2s,border-color .2s,transform .2s,box-shadow .2s}
+        .bk-btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+        .bk-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
         .bk-btn.danger{background:var(--danger);color:var(--danger-text);border-color:var(--danger)}
         .bk-btn.danger:hover:not(:disabled){filter:brightness(.92);transform:translateY(-2px)}
 
@@ -836,10 +896,13 @@ export function BookingPage() {
         .bk-modal-title{font-family:var(--font-display);font-size:1.35rem;font-weight:500;color:var(--text-primary);margin:0 0 .6rem}
         .bk-modal-body{font-family:var(--font-body);font-size:.84rem;font-weight:300;color:var(--text-muted);line-height:1.7;margin:0 0 1.5rem}
         .bk-modal-actions{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:flex-end}
-        .bk-btn.primary{background:var(--primary);color:var(--primary-text);border-color:var(--primary)}
-        .bk-btn.primary:hover:not(:disabled){background:var(--primary-hover);transform:translateY(-2px);box-shadow:var(--shadow-green)}
-        .bk-btn.outline{background:transparent;color:var(--primary);border-color:var(--border-accent)}
-        .bk-btn.outline:hover:not(:disabled){background:var(--primary-muted);border-color:var(--primary);transform:translateY(-2px)}
+        /* The forward action is the rose in this direction — --accent is "the button
+           you press", --primary is structure. Back stays a neutral outline so the
+           pair reads as one primary and one escape rather than two equal choices. */
+        .bk-btn.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+        .bk-btn.primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover);transform:translateY(-1px);box-shadow:var(--shadow-gold)}
+        .bk-btn.outline{background:transparent;color:var(--text-primary);border-color:var(--border-strong)}
+        .bk-btn.outline:hover:not(:disabled){background:var(--primary-muted)}
         .bk-btn.danger{background:var(--danger);color:var(--danger-text);border-color:var(--danger)}
 
         /* ── mode cards ── */
@@ -900,10 +963,38 @@ export function BookingPage() {
         .bk-flow-desc{font-family:var(--font-body);font-size:.78rem;color:var(--text-muted);line-height:1.6}
 
         /* ── error/feedback ── */
-        .bk-error{padding:.9rem 1rem;border:1px solid var(--danger);color:var(--danger);border-radius:var(--r-lg);margin-bottom:1rem;font-family:var(--font-body);font-size:.8rem}
-        .bk-success-card{text-align:center;padding:3rem 2rem}
-        .bk-success-icon{font-size:3.5rem;margin-bottom:1rem}
-        .bk-success-title{font-family:var(--font-display);font-size:1.8rem;font-weight:600;color:var(--primary);margin-bottom:.5rem}
+        /* Tinted panel with a 28% edge, per artboard 3d — it was a hairline danger
+           border on the page ground, which read as an outlined input rather than a
+           problem. Title and body take --danger-ink, the text-weight step. */
+        .bk-error{
+          background:var(--danger-muted);
+          border:1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+          border-radius:var(--r-xl);
+          padding:1.25rem 1.375rem;margin-bottom:1rem;
+          display:flex;gap:.75rem;align-items:flex-start;
+          font-family:var(--font-body);font-size:.8125rem;line-height:1.45;color:var(--danger-ink);
+        }
+        .bk-error svg{flex:none;margin-top:2px}
+        .bk-error-title{font-weight:600;font-size:.8125rem;line-height:1.3;margin-bottom:4px}
+        .bk-error-body{font-weight:400;font-size:.75rem;line-height:1.45;opacity:.85}
+
+        .bk-success-card{text-align:center;padding:2rem}
+        /* The mark sits in a 56px tint disc rather than being a 3.5rem glyph on its
+           own, so the success colour is carried by the container and the check can
+           stay currentColor. */
+        .bk-success-icon{
+          width:56px;height:56px;margin:0 auto 18px;
+          border-radius:var(--r-full);
+          background:color-mix(in srgb, var(--status-paid) 12%, transparent);
+          color:var(--status-paid);
+          display:flex;align-items:center;justify-content:center;
+        }
+        .bk-success-title{font-family:var(--font-display);font-size:1.5rem;font-weight:600;letter-spacing:-.025em;line-height:1.15;color:var(--text-primary);margin-bottom:.625rem}
+
+        /* skeleton rows — artboard 3d, "Loading · step 3 catalog" */
+        .bk-skel-kicker{font-family:var(--font-numeric);font-size:9px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);margin-bottom:1rem}
+        .bk-skel-rows{display:flex;flex-direction:column;gap:11px;margin-bottom:20px}
+        .bk-skel{height:14px;border-radius:var(--r-full);background:var(--secondary-muted)}
         .bk-success-sub{font-family:var(--font-body);font-size:.85rem;color:var(--text-muted);max-width:440px;margin:0 auto}
 
         /* ── review sections ── */
@@ -965,13 +1056,25 @@ export function BookingPage() {
 
         {/* ═══════════════════════ MAIN CONTENT (STEPS 1-4 & SUCCESS) ═══════════════════════ */}
         {(step >= 1 || submitted) && (
-          <section style={{ background: 'var(--bg-subtle)', padding: '3.5rem 0 6rem', minHeight: 'calc(100vh - 6rem)' }}>
-            <div className="bk-container" style={{ padding: '0 1.5rem' }}>
+          <section style={{ 
+            background: 'var(--bg-subtle)', 
+            paddingTop: 'calc(4rem + 80px)',
+            paddingBottom: '6rem',
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div className="bk-container" style={{ padding: '0 1.5rem', width: '100%', margin: 'auto' }}>
 
               {/* ═══════ SUBMITTED SUCCESS ═══════ */}
           {submitted && (
             <div className="bk-card bk-success-card">
-              <div className="bk-success-icon">✅</div>
+              {/* Lucide rather than the ✅ emoji: the glyph inherits currentColor,
+                  so it reads as the success green in both themes instead of
+                  rendering as a fixed-colour platform image. */}
+              <div className="bk-success-icon">
+                <Check size={26} strokeWidth={2} aria-hidden="true" />
+              </div>
               <div className="bk-success-title">Booking Submitted!</div>
               <p className="bk-success-sub">
                 Your booking has been submitted for review. Our team will reach out to confirm the details.
@@ -985,27 +1088,87 @@ export function BookingPage() {
             </div>
           )}
 
-          {/* ── STEPPER ── */}
+          {/* ── STEPPER RAIL + STEP CONTENT ──
+              The stepper used to be a centred horizontal strip above the card, which
+              meant the running total only appeared at step 4. It is a sticky rail
+              now, so "what have I picked and what does it cost" is answerable from
+              step 2 onward. Below 1020 the rail collapses to a progress bar. */}
           {step >= 1 && !submitted && (
-            <div className="bk-stepper">
-              {stepLabels.map((label, i) => {
-                const num = i + 1;
-                const cls = step === num ? 'active' : step > num ? 'done' : '';
-                return (
-                  <div key={label} style={{ display: 'flex', alignItems: 'center' }}>
-                    {i > 0 && <div className={`bk-step-line${step >= num ? ' done' : ''}`} />}
-                    <div className={`bk-step-item ${cls}`}>
-                      <span className="bk-step-num">{step > num ? '✓' : num}</span>
-                      <span>{label}</span>
+            <div className="bk-layout">
+              <aside className="bk-rail">
+                <div className="bk-rail-inner">
+                  {draftSavedAt && (
+                    <p className="bk-draft" role="status">
+                      <Check size={13} strokeWidth={2.25} aria-hidden="true" />
+                      Draft saved · {draftSavedAt.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
+                    </p>
+                  )}
+
+                  <ol className="bk-stepper">
+                    {stepLabels.map((label, i) => {
+                      const num = i + 1;
+                      const state = step === num ? 'active' : step > num ? 'done' : '';
+                      return (
+                        <li key={label} className={`bk-step-item ${state}`}>
+                          <span className="bk-step-num">
+                            {step > num
+                              ? <Check size={14} strokeWidth={2.25} aria-hidden="true" />
+                              : num}
+                          </span>
+                          <span className="bk-step-label">{label}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+
+                  {/* Progress bar counterpart, shown only where the rail is hidden. */}
+                  <div className="bk-progress" aria-hidden="true">
+                    <div className="bk-progress-head">
+                      <span>Step {step} of {stepLabels.length}</span>
+                      <span>{stepLabels[step - 1]}</span>
+                    </div>
+                    <div className="bk-progress-track">
+                      <div className="bk-progress-fill" style={{ width: `${(step / stepLabels.length) * 100}%` }} />
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
 
-          {apiError && step >= 1 && !submitted && (
-            <div className="bk-error">{apiError}</div>
+                  {/* Running total. Reads the same figures step 4 sums — no new
+                      endpoint, the calculation was already at component scope. */}
+                  <div className="bk-summary">
+                    <div className="bk-summary-kicker">Running total</div>
+                    <div className="bk-summary-total">{fmtPHP(grandTotal)}</div>
+                    <dl className="bk-summary-list">
+                      <div>
+                        <dt>Event type</dt>
+                        <dd>{EVENT_TYPES.find(t => t.value === eventType)?.label ?? (eventType || 'not set')}</dd>
+                      </div>
+                      <div>
+                        <dt>Guests</dt>
+                        <dd>{guests || 'not set'}</dd>
+                      </div>
+                      <div>
+                        <dt>{serviceFlow === 'rentals' ? 'Rentals' : 'Package'}</dt>
+                        <dd>
+                          {serviceFlow === 'rentals'
+                            ? (rentalTotal > 0 ? 'selected' : 'none yet')
+                            : (selectedPkg?.packageName ?? 'not chosen')}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                </div>
+              </aside>
+
+              <div className="bk-main">
+
+          {apiError && (
+            <div className="bk-error" role="alert">
+              <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+              <div>
+                <div className="bk-error-title">{apiError}</div>
+                <div className="bk-error-body">Your draft is kept. Try again, or come back from the dashboard — nothing is lost.</div>
+              </div>
+            </div>
           )}
 
           {/* ═══════ STEP 1 — CONTACT ═══════ */}
@@ -1081,11 +1244,11 @@ export function BookingPage() {
               {detailGroup === 'couple' && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
-                    <label className="bk-label">Groom's Name</label>
+                    <label className="bk-label">Groom's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <input className="bk-input" value={groomName} onChange={e => setGroomName(e.target.value)} placeholder="Full name" />
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Bride's Name</label>
+                    <label className="bk-label">Bride's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <input className="bk-input" value={brideName} onChange={e => setBrideName(e.target.value)} placeholder="Full name" />
                   </div>
                 </div>
@@ -1096,11 +1259,11 @@ export function BookingPage() {
               {detailGroup === 'celebrant' && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
-                    <label className="bk-label">Celebrant's Name</label>
+                    <label className="bk-label">Celebrant's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <input className="bk-input" value={celebrantName} onChange={e => setCelebrantName(e.target.value)} placeholder="Full name" />
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Celebrant's Sex</label>
+                    <label className="bk-label">Celebrant's Sex{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <select className="bk-input" value={celebrantSex} onChange={e => setCelebrantSex(e.target.value)}>
                       <option value="">Select…</option>
                       <option value="Female">Female</option>
@@ -1109,7 +1272,7 @@ export function BookingPage() {
                     </select>
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Celebrant's Age</label>
+                    <label className="bk-label">Celebrant's Age{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <input
                       className="bk-input"
                       type="number"
@@ -1125,7 +1288,7 @@ export function BookingPage() {
 
               {detailGroup === 'named' && (
                 <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
-                  <label className="bk-label">Event Name</label>
+                  <label className="bk-label">Event Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                   <input className="bk-input" value={eventName} onChange={e => setEventName(e.target.value)} placeholder="e.g. Annual Awards Night" />
                 </div>
               )}
@@ -1258,9 +1421,23 @@ export function BookingPage() {
               </p>
 
               {catalogLoading ? (
-                <div className="bk-loading"><span className="bk-spinner" /> Loading catalog…</div>
+                <div aria-live="polite" aria-busy="true">
+                  <div className="bk-skel-kicker">Loading · step 3 catalog</div>
+                  <div className="bk-skel-rows">
+                    <div className="bk-skel" style={{ width: '62%' }} />
+                    <div className="bk-skel" style={{ width: '88%' }} />
+                    <div className="bk-skel" style={{ width: '74%' }} />
+                  </div>
+                  <span className="sr-only">Loading catalog…</span>
+                </div>
               ) : catalogError ? (
-                <div className="bk-error">{catalogError}</div>
+                <div className="bk-error" role="alert">
+                  <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+                  <div>
+                    <div className="bk-error-title">{catalogError}</div>
+                    <div className="bk-error-body">Your draft is kept. Try again, or come back from the dashboard — nothing is lost.</div>
+                  </div>
+                </div>
               ) : (
                 <>
 
@@ -1622,11 +1799,15 @@ export function BookingPage() {
             </div>
           )}
 
+              </div>
+            </div>
+          )}
+
             </div>
           </section>
         )}
       </main>
-
+                            <SiteFooter />
       {/* ── TERMS MODAL ── */}
       {showTerms && (
         <div className="bk-terms-overlay" onClick={() => setShowTerms(false)}>

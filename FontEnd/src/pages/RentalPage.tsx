@@ -3,6 +3,7 @@ import { Navbar } from '../components/landing/Navbar';
 import { readSession } from '../lib/tokenStorage';
 import { fetchRentalItems } from '../api/rentalAdminApi';
 import { RentalHero } from '../components/rentals/RentalHero';
+import { AmbientCanvas } from '../components/landing/AmbientCanvas';
 import {
   CatalogTopBar,
   type SortKey,
@@ -27,6 +28,7 @@ import {
   type RentalCategory,
   type RentalItem,
 } from '../components/rentals/rentalData';
+import { SiteFooter } from '../components/landing/SiteFooter';
 
 const SKELETON_COUNT = 6;
 
@@ -243,6 +245,10 @@ export function RentalPage() {
         />
       </RentalHero>
 
+      <div className="amb-host">
+        {/* Scoped below <RentalHero>, which stays outside this wrapper. */}
+        <AmbientCanvas />
+
       <CatalogTopBar
         sort={sort}
         onSortChange={setSort}
@@ -255,7 +261,7 @@ export function RentalPage() {
       {/* Extra bottom padding while the cart bar is up — it is fixed, so without
           this it sits on top of the last row of cards. */}
       <section
-        className={`mx-auto w-full max-w-[1200px] px-6 pt-10 sm:px-10 ${
+        className={`amb-over mx-auto w-full max-w-[1200px] px-6 pt-10 sm:px-10 ${
           cartLines.length > 0 ? 'pb-36 sm:pb-28' : 'pb-10'
         }`}
       >
@@ -335,6 +341,7 @@ export function RentalPage() {
           </div>
         </div>
       </section>
+      </div>
 
       <FilterSheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
         {sidebarFor('rental-sheet')}
@@ -352,6 +359,8 @@ export function RentalPage() {
         lines={cartLines}
         onBooked={() => setCart({})}
       />
+
+                    <SiteFooter />
     </main>
   );
 }

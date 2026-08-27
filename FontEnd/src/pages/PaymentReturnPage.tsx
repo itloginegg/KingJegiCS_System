@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Check, Clock, Info, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { readSession } from '../lib/tokenStorage';
@@ -131,35 +132,39 @@ export function PaymentReturnPage({ outcome }: { outcome: 'success' | 'cancel' }
 
   const content = {
     confirming: {
-      icon: '⏳',
+      Icon: Clock,
       title: 'Confirming your payment…',
       body: "Thanks! We're waiting for the payment provider to confirm. This usually takes a few seconds — please don't close this tab.",
     },
     confirmed: {
-      icon: '✓',
+      Icon: Check,
       title: 'Payment confirmed',
       body: 'Your payment has been verified. Taking you to your payments…',
     },
     pending: {
-      icon: '⏳',
+      Icon: Clock,
       title: 'Payment still processing',
       body: "Your payment hasn't been confirmed yet. This can take a little longer at busy times — it will appear under Payments as soon as it clears, and you don't need to pay again.",
     },
     cancelled: {
-      icon: '✕',
+      Icon: X,
       title: 'Checkout cancelled',
       body: 'No payment was taken. You can pick up where you left off whenever you like.',
     },
     unknown: {
-      icon: 'ℹ',
+      Icon: Info,
       title: 'Back from checkout',
       body: "We couldn't match this visit to a payment in progress. Check the Payments tab for the current status of your invoices.",
     },
   }[phase];
 
+  /* One accent per phase, from the status ramp — artboard 9b tints the disc by
+     the phase colour. --primary was standing in for success and reads as plain
+     dark text on the card. */
   const accent =
-    phase === 'confirmed' ? 'var(--primary)'
+    phase === 'confirmed' ? 'var(--status-paid)'
     : phase === 'cancelled' ? 'var(--danger)'
+    : phase === 'pending' ? 'var(--warning)'
     : 'var(--accent)';
 
   return (
@@ -187,8 +192,17 @@ export function PaymentReturnPage({ outcome }: { outcome: 'success' | 'cancel' }
           boxShadow: 'var(--shadow-lg)', padding: '2.4rem 2rem', textAlign: 'center',
         }}
       >
-        <div style={{ fontSize: '1.8rem', color: accent, marginBottom: '0.8rem' }} aria-hidden="true">
-          {content.icon}
+        <div
+          aria-hidden="true"
+          style={{
+            width: 52, height: 52, margin: '0 auto 1rem',
+            borderRadius: 'var(--r-full)',
+            background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+            color: accent,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <content.Icon size={24} strokeWidth={2} />
         </div>
 
         <h1

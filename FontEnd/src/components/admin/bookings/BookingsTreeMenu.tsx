@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, CalendarDays } from 'lucide-react';
 import type { ResStatus } from '../../../pages/AdminDashboardPage';
 import { BOOKING_GROUPS, type BookingGroupKey } from './types';
 
@@ -91,7 +91,7 @@ export function BookingsTreeMenu({
           }
         }}
       >
-        <span className="adm-nav-icon" aria-hidden="true">🗓</span>
+        <span className="adm-nav-icon" aria-hidden="true"><CalendarDays size={18} strokeWidth={1.75} /></span>
         <span className="adm-nav-label">Bookings</span>
         {badge > 0 && <span className="adm-badge">{badge}</span>}
         <Caret size={14} strokeWidth={2} className="adm-nav-caret" aria-hidden="true" />

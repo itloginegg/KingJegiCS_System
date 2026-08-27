@@ -100,23 +100,25 @@ export function QuantityStepper({
       stepper it is landing on rather than a page full of bare "Decrease". */
   itemName: string;
 }) {
-  const btn =
-    'flex h-7 w-7 cursor-pointer items-center justify-center rounded-full text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-dim focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none';
+  const btnBase =
+    'flex h-[26px] w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-45 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none';
+  const btnMinus = `${btnBase} bg-surface text-text-primary hover:bg-bg-card`;
+  const btnPlus = `${btnBase} bg-accent text-accent-fg hover:bg-accent-hover`;
 
   return (
-    <div className="flex items-center gap-1 rounded-full bg-bg-subtle p-1">
+    <div className="flex items-center gap-3 rounded-full bg-primary-muted px-1.5 py-1">
       <button
         type="button"
         onClick={() => onStep(-1)}
         disabled={value <= 1}
         aria-label={`Decrease ${itemName} quantity`}
-        className={btn}
+        className={btnMinus}
       >
         <Minus size={14} aria-hidden="true" />
       </button>
       <span
-        className="min-w-6 text-center text-[0.8rem] font-medium text-text-primary tabular-nums"
-        style={{ fontFamily: 'var(--font-body)' }}
+        className="min-w-5 text-center text-[0.8125rem] font-medium text-text-primary tabular-nums"
+        style={{ fontFamily: 'var(--font-numeric)' }}
       >
         {value}
       </span>
@@ -125,7 +127,7 @@ export function QuantityStepper({
         onClick={() => onStep(1)}
         disabled={value >= stock}
         aria-label={`Increase ${itemName} quantity`}
-        className={btn}
+        className={btnPlus}
       >
         <Plus size={14} aria-hidden="true" />
       </button>

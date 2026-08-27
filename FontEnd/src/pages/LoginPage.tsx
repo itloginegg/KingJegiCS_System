@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import type { AuthCredentials, UserRole } from '../types/auth';
 import { useAuth } from '../hooks/useAuth';
+import { AuthLayout, AuthStats } from '../components/auth/AuthLayout';
 import { RoleTabs } from '../components/auth/RoleTabs';
 import { LoginForm } from '../components/auth/LoginForm';
+import { OtpCodeInput } from '../components/auth/OtpCodeInput';
 import { dashboardPathFor } from '../routes/paths';
 
 interface RedirectState {
@@ -12,6 +15,11 @@ interface RedirectState {
   /** Set by RegisterPage after a successful sign-up. */
   registeredEmail?: string;
 }
+
+const PROOF = [
+  { value: '500+', label: 'Events Served' },
+  { value: '4.9 ★', label: 'Client Rating' },
+];
 
 export function LoginPage() {
   const { login, status, error, isAuthenticated, user, verifyLoginOtp } = useAuth();
@@ -88,112 +96,94 @@ export function LoginPage() {
     }
   };
 
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--bg-subtle)] px-4 py-12">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-lg)] sm:p-8">
-          <header className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-              Welcome back
-            </h1>
-            <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-              Sign in to your KingJegi account
-            </p>
-          </header>
+  const verifying = otpSubmitting || status === 'authenticating';
+  const registeredEmail = (location.state as RedirectState | null)?.registeredEmail;
 
-          {/* Fresh from registration — confirm it worked and prompt sign-in. */}
-          {(location.state as RedirectState | null)?.registeredEmail && (
-            <div
-              role="status"
-              className="mt-5 rounded-lg border border-[var(--border-accent)] bg-[var(--primary-muted)] px-4 py-3 text-sm text-[var(--primary)]"
-            >
-              Account created for{' '}
-              <strong>{(location.state as RedirectState).registeredEmail}</strong>.
-              Sign in below to get started.
+  return (
+    <AuthLayout
+      brandTitle="Every event you've booked, in one place."
+      brandBody="Track quotes, deposits and delivery status without waiting on a reply."
+      brandFoot={<AuthStats stats={PROOF} />}
+      title={otpStep ? 'Verify your sign-in' : 'Welcome back'}
+      subtitle={
+        otpStep && pendingCredentials
+          ? `Enter the 6-digit code sent to ${pendingCredentials.email}.`
+          : 'Sign in to your KingJegi account'
+      }
+      footer={
+        otpStep ? undefined : (
+          <>Don&apos;t have an account? <Link to="/register">Create one</Link></>
+        )
+      }
+    >
+      {/* Fresh from registration — confirm it worked and prompt sign-in. */}
+      {!otpStep && registeredEmail && (
+        <div role="status" className="ui-alert ui-alert--success" style={{ marginBottom: 18 }}>
+          <CheckCircle2 size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span>
+            Account created for <strong>{registeredEmail}</strong>. Sign in below to get started.
+          </span>
+        </div>
+      )}
+
+      {otpStep && pendingCredentials ? (
+        <form onSubmit={handleOtpSubmit} className="au-form">
+          {otpError && (
+            <div role="alert" className="ui-alert ui-alert--danger">
+              <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+              <span>{otpError}</span>
             </div>
           )}
 
-          <div className="mt-6">
-            <RoleTabs value={role} onChange={setRole} />
+          <div className="ui-field">
+            <span className="ui-label" id="otp-label">Verification code</span>
+            {/* The page used to render its own single letter-spaced field here, so the
+                sign-in OTP and the registration OTP behaved differently — no
+                auto-advance, no paste-the-whole-code. Both flows now drive the same
+                component. */}
+            <OtpCodeInput
+              value={otpCode}
+              onChange={(next) => {
+                setOtpCode(next);
+                if (otpError) setOtpError(null);
+              }}
+              disabled={verifying}
+              invalid={Boolean(otpError)}
+              ariaDescribedBy="otp-label"
+            />
           </div>
 
-          {otpStep && pendingCredentials ? (
-            <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-5">
-              <div className="space-y-2">
-                <h2 className="text-lg font-semibold text-[var(--text-primary)]">Verify your sign-in</h2>
-                <p className="text-sm text-[var(--text-secondary)]">
-                  Enter the 6-digit code sent to{' '}
-                  <span className="font-medium text-[var(--text-primary)]">{pendingCredentials.email}</span>.
-                </p>
-              </div>
+          <button type="submit" disabled={verifying} className="ui-btn ui-btn-accent ui-btn-block">
+            {verifying && <span className="ui-spinner" aria-hidden="true" />}
+            {verifying ? 'Verifying…' : 'Verify code'}
+          </button>
 
-              {otpError && (
-                <div role="alert" className="mt-4 rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-muted)] px-4 py-3 text-sm text-[var(--danger)]">
-                  {otpError}
-                </div>
-              )}
-
-              <form onSubmit={handleOtpSubmit} className="mt-4 space-y-4">
-                <div className="space-y-1.5">
-                  <label htmlFor="otp-code" className="block text-sm font-medium text-[var(--text-secondary)]">
-                    Verification code
-                  </label>
-                  <input
-                    id="otp-code"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(event) => {
-                      const nextValue = event.target.value.replace(/\D/g, '').slice(0, 6);
-                      setOtpCode(nextValue);
-                      if (otpError) setOtpError(null);
-                    }}
-                    className="w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3.5 py-2.5 text-center text-lg font-semibold tracking-[0.35em] text-[var(--text-primary)] shadow-sm placeholder:text-[var(--text-dim)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-                    placeholder="123456"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={otpSubmitting || status === 'authenticating'}
-                  className="flex w-full items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2.5 text-sm font-semibold text-[var(--primary-text)] shadow-sm transition-colors hover:bg-[var(--primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {otpSubmitting || status === 'authenticating' ? 'Verifying…' : 'Verify code'}
-                </button>
-              </form>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setOtpStep(false);
-                  setPendingCredentials(null);
-                  setOtpCode('');
-                  setOtpError(null);
-                }}
-                className="mt-4 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-              >
-                Back to sign in
-              </button>
-            </div>
-          ) : (
-            <LoginForm
-              role={role}
-              submitting={status === 'authenticating'}
-              formError={error}
-              onSubmit={handleSubmit}
-            />
-          )}
-        </div>
-
-        <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
-          Don&apos;t have an account?{' '}
-          <Link to="/register" className="font-medium text-[var(--primary)] hover:text-[var(--accent)]">
-            Create one
-          </Link>
-        </p>
-      </div>
-    </main>
+          <button
+            type="button"
+            onClick={() => {
+              setOtpStep(false);
+              setPendingCredentials(null);
+              setOtpCode('');
+              setOtpError(null);
+            }}
+            className="ui-btn ui-btn-outline ui-btn-block ui-btn-sm"
+          >
+            Back to sign in
+          </button>
+        </form>
+      ) : (
+        <>
+          <div style={{ marginBottom: 24 }}>
+            <RoleTabs value={role} onChange={setRole} />
+          </div>
+          <LoginForm
+            role={role}
+            submitting={status === 'authenticating'}
+            formError={error}
+            onSubmit={handleSubmit}
+          />
+        </>
+      )}
+    </AuthLayout>
   );
 }
