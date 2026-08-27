@@ -1,7 +1,9 @@
+using System_ApiTest.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System_ApiTest.DTOs;
-using System_ApiTest.Services;
+using System_ApiTest.Application.DTOs;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 
 namespace System_ApiTest.Controllers
 {
@@ -46,3 +48,6 @@ namespace System_ApiTest.Controllers
         }
     }
 }
+
+
+

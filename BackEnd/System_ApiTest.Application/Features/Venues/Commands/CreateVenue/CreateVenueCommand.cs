@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using MediatR;
 using System_ApiTest.Domain.Entities;
 
@@ -12,3 +13,4 @@ public sealed record CreateVenueCommand(
     string Address,
     int Capacity,
     VenueKind Kind) : IRequest<int>;
+

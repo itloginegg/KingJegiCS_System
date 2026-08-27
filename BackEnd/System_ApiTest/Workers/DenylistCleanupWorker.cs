@@ -1,4 +1,6 @@
-﻿using System_ApiTest.Services;
+using System_ApiTest.Application.Common.Interfaces;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 
 namespace System_ApiTest.Workers
 {
@@ -42,7 +44,7 @@ namespace System_ApiTest.Workers
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
-                        throw;   // shutdown mid-purge — let the outer handler finish quietly
+                        throw;   // shutdown mid-purge � let the outer handler finish quietly
                     }
                     catch (Exception ex)
                     {
@@ -59,3 +61,5 @@ namespace System_ApiTest.Workers
         }
     }
 }
+
+

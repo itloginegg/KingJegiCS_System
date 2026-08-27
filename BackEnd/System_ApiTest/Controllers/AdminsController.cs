@@ -1,14 +1,15 @@
+using System_ApiTest.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
-using System_ApiTest.Data;
-using System_ApiTest.DTOs;
-using System_ApiTest.Models;
-using System_ApiTest.Services;
-using static System_ApiTest.DTOs.Authdtos;
-using static System_ApiTest.Services.Jwttokenservice;
+using System_ApiTest.Infrastructure.Persistence;
+using System_ApiTest.Application.DTOs;
+using System_ApiTest.Domain.Entities;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
+using static System_ApiTest.Application.DTOs.Authdtos;
 
 namespace System_ApiTest.Controllers;
 
@@ -17,11 +18,11 @@ namespace System_ApiTest.Controllers;
 public class AdminsController : ControllerBase
 {
     private readonly AppDbContext _db;
-    private readonly JwtTokenService _tokenService;
+    private readonly IJwtTokenService _tokenService;
     private readonly OtpService _otp;
     private readonly PasswordHasher<Admin> _passwordHasher = new();
 
-    public AdminsController(AppDbContext db, JwtTokenService tokenService, OtpService otp)
+    public AdminsController(AppDbContext db, IJwtTokenService tokenService, OtpService otp)
     {
         _db = db;
         _tokenService = tokenService;
@@ -239,3 +240,7 @@ public class AdminsController : ControllerBase
         a.CreatedAt
     };
 }
+
+
+
+

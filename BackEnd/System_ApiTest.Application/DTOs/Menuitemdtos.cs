@@ -1,0 +1,88 @@
+using System_ApiTest.Application.Common.Interfaces;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Http;
+
+namespace System_ApiTest.Application.DTOs
+{
+    public class Menuitemdtos
+    {
+    }
+    public class MenuItemCreateDto : IValidatableObject
+    {
+        [Required, MaxLength(200)]
+        public string ItemName { get; set; } = string.Empty;
+
+        [Required]
+        [EnumDataType(typeof(System_ApiTest.Domain.Entities.ItemCategory))]
+        public System_ApiTest.Domain.Entities.ItemCategory ItemCategory { get; set; }
+
+        [Required]
+        [EnumDataType(typeof(System_ApiTest.Domain.Entities.CourseCategory))]
+        public System_ApiTest.Domain.Entities.CourseCategory CourseCategory { get; set; }
+
+        [Required, MaxLength(1000)]
+        public string Description { get; set; } = string.Empty;
+
+        public List<string> DietaryTags { get; set; } = new();
+
+        /// <summary>Per-tray price. Required for standalone (package-less) items.</summary>
+        public decimal? PricePerTray { get; set; }
+
+        /// <summary>How many guests one tray serves. Single tray size per item.</summary>
+        [Range(1, int.MaxValue, ErrorMessage = "Serves per tray must be at least 1.")]
+        public int ServesPerTray { get; set; } = 10;
+
+        public Guid? MenuPackageId { get; set; }
+
+        /// <summary>Optional photo upload for the menu item.</summary>
+        public IFormFile? ImageFile { get; set; }
+
+        public IEnumerable<ValidationResult> Validate(ValidationContext _)
+        {
+            // Standalone (no package) items must carry a price.
+            if (MenuPackageId is null && PricePerTray is null)
+                yield return new ValidationResult(
+                    "A standalone item (no package) must have a per-tray price.",
+                    new[] { nameof(PricePerTray) });
+        }
+    }
+
+    public record MenuItemResponseDto(
+        Guid Id,
+        string ItemName,
+        string ItemCategory,
+        string CourseCategory,
+        string Description,
+        List<string> DietaryTags,
+        decimal? PricePerTray,
+        int ServesPerTray,
+        Guid? MenuPackageId,
+        bool IsActive,
+        string? ImageUrl);
+
+    /// <summary>
+    /// The fortnight's best-selling dish, for the landing page's feature section.
+    ///
+    /// <para><see cref="UnitsSold"/> is 0 exactly when <see cref="IsFallback"/> is true —
+    /// no dish sold in the window, so the item is a deterministic rotation pick rather
+    /// than a ranking. The UI should not print "0 sold"; use the flag to decide whether
+    /// to show sales figures at all.</para>
+    ///
+    /// <para>The window dates are inclusive and describe when the orders were PLACED.</para>
+    /// </summary>
+    public record BestSellerDto(
+        MenuItemResponseDto Item,
+        int UnitsSold,
+        DateOnly WindowStart,
+        DateOnly WindowEnd,
+        bool IsFallback);
+
+    /// <summary>Compact item projection used inside packages, trays, and templates.</summary>
+    public record MenuItemBriefDto(
+        Guid Id,
+        string ItemName,
+        string ItemCategory,
+        string CourseCategory);
+}
+
+

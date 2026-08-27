@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using FluentValidation;
 using MediatR;
 using ValidationException = System_ApiTest.Application.Common.Exceptions.ValidationException;
@@ -41,3 +42,4 @@ public class ValidationBehaviour<TRequest, TResponse> : IPipelineBehavior<TReque
         return await next(cancellationToken);
     }
 }
+

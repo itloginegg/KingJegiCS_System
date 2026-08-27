@@ -1,3 +1,6 @@
+using System_ApiTest.Application;
+using System_ApiTest.Infrastructure;
+using System_ApiTest.Application.Common;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -8,16 +11,16 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System_ApiTest;
-using System_ApiTest.Data;
+using System_ApiTest.Infrastructure.Persistence;
 using System_ApiTest.Seeding;
-using System_ApiTest.Services;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 using System_ApiTest.Workers;
 using System_ApiTest.Hubs;
-using System_ApiTest.Application;
+
 using System_ApiTest.Application.Common.Interfaces;
-using System_ApiTest.Infrastructure;
+
 using System_ApiTest.Endpoints;
-using static System_ApiTest.Services.Jwttokenservice;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -77,58 +80,15 @@ builder.Services.Configure<PayMongoOptions>(
        builder.Configuration.GetSection(PayMongoOptions.SectionName));
 
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
-builder.Services.AddSingleton<JwtTokenService>();
-builder.Services.AddScoped<Tokendenylistservice>();
-builder.Services.AddScoped<Menutrayservice>();
-builder.Services.AddScoped<Rentalservice>();
-builder.Services.AddScoped<Bookingservice>();
-builder.Services.AddScoped<Bookingresourceservice>();
-builder.Services.AddScoped<Packageservice>();
-builder.Services.AddScoped<Invoiceservice>();
-builder.Services.AddScoped<Paymentservice>();
-builder.Services.AddScoped<Invoiceservice>();
-builder.Services.AddScoped<Systemsettingsservice>();
-builder.Services.AddScoped<Auditlogservice>();
-builder.Services.AddScoped<Suggestionservice>();
-builder.Services.AddScoped<Testimonialservice>();
-builder.Services.AddScoped<Notificationfeedservice>();
-builder.Services.AddScoped<Notificationwriteservice>();
-builder.Services.AddScoped<Announcementservice>();
-builder.Services.AddScoped<Reportservice>();
-builder.Services.AddScoped<Bestsellerservice>();
-builder.Services.AddMemoryCache();   // backs Reportservice's AI sales-summary cache
-builder.Services.AddHostedService<DenylistCleanupWorker>();
-builder.Services.Configure<DraftCleanupOptions>(builder.Configuration.GetSection(DraftCleanupOptions.SectionName));
-builder.Services.AddHostedService<DraftCleanupWorker>();
-builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
-builder.Services.AddHostedService<NotificationWorker>();
-builder.Services.Configure<AiOptions>(builder.Configuration.GetSection(AiOptions.SectionName));
-builder.Services.AddSingleton<Airatelimiter>();
-// A SECOND counter instance, for VoiceHub.Speak (the read-aloud toggle). Airatelimiter
-// keys its windows by user id alone, so sharing the instance above would make reading a
-// reply aloud consume the same hourly budget as asking a question — a customer who turned
-// the speaker on would run out of questions twice as fast.
-builder.Services.AddKeyedSingleton<Airatelimiter>(VoiceHub.ReadAloudLimiterKey);
-builder.Services.AddHttpClient<Assistantservice>();
-// Text-to-speech for the voice pipeline. Singleton because SpeechConfig is immutable and
-// thread-safe; each utterance still gets its own synthesizer. Like the assistant itself
-// this is a soft dependency — with no Speech:ApiKey the voice turn still streams text and
-// the browser speaks it locally, so nothing breaks before the key is provisioned.
-builder.Services.Configure<SpeechOptions>(builder.Configuration.GetSection(SpeechOptions.SectionName));
-builder.Services.AddSingleton<Speechservice>();
-builder.Services.AddHttpClient<PayMongoservice>();
-builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
-builder.Services.Configure<OtpOptions>(builder.Configuration.GetSection(OtpOptions.SectionName));
-builder.Services.AddScoped<EmailService>();
-builder.Services.AddScoped<OtpService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddScoped<IHubNotificationService, System_ApiTest.Services.HubNotificationService>();
 
 // --- Clean Architecture layers (new features only) ---------------------------------
 // Everything above stays exactly as it was: existing Controllers and services are
 // untouched. New features live in System_ApiTest.Application / .Domain / .Infrastructure
 // and are reached through MediatR + Minimal API endpoints registered further down.
-builder.Services.AddApplication();
-builder.Services.AddInfrastructure();
 
 // The AddJsonOptions calls above configure MVC's serializer (Mvc.JsonOptions), which
 // Minimal APIs do not read — they use Http.JsonOptions. Without this, the new endpoints
@@ -332,5 +292,13 @@ using (var startupScope = app.Services.CreateScope())
 await DbSeeder.SeedAsync(app.Services);
 
 app.Run();
+
+
+
+
+
+
+
+
 
 

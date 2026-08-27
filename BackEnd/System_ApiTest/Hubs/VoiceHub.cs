@@ -1,11 +1,13 @@
+using System_ApiTest.Application.Common.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Runtime.CompilerServices;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
-using System_ApiTest.DTOs;
-using System_ApiTest.Services;
+using System_ApiTest.Application.DTOs;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 
 namespace System_ApiTest.Hubs
 {
@@ -418,3 +420,6 @@ namespace System_ApiTest.Hubs
                           ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     }
 }
+
+
+

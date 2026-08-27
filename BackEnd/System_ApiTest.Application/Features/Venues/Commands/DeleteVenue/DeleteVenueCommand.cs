@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using MediatR;
 
 namespace System_ApiTest.Application.Features.Venues.Commands.DeleteVenue;
@@ -10,3 +11,4 @@ namespace System_ApiTest.Application.Features.Venues.Commands.DeleteVenue;
 /// do the same thing under a name that promises something stronger.
 /// </summary>
 public sealed record DeleteVenueCommand(int Id) : IRequest;
+

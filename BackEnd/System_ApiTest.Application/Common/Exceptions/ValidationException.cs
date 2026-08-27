@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using FluentValidation.Results;
 
 namespace System_ApiTest.Application.Common.Exceptions;
@@ -25,3 +26,4 @@ public class ValidationException : Exception
 
     public IDictionary<string, string[]> Errors { get; }
 }
+

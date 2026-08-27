@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 namespace System_ApiTest
 {
     public class WeatherForecast
@@ -11,3 +12,5 @@ namespace System_ApiTest
         public string? Summary { get; set; }
     }
 }
+
+

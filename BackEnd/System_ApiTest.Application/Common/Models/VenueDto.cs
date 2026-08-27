@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using System_ApiTest.Domain.Entities;
 
 namespace System_ApiTest.Application.Common.Models;
@@ -25,3 +26,4 @@ public sealed record VenueDto(
         venue.IsActive,
         venue.CreatedAt);
 }
+

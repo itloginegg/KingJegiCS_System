@@ -1,14 +1,15 @@
-ï»¿using Microsoft.AspNetCore.Authorization;
+using System_ApiTest.Application.Common.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
-using System_ApiTest.Data;
-using System_ApiTest.DTOs;
-using System_ApiTest.Models;
-using System_ApiTest.Services;
-using static System_ApiTest.DTOs.Authdtos;
-using static System_ApiTest.Services.Jwttokenservice;
+using System_ApiTest.Infrastructure.Persistence;
+using System_ApiTest.Application.DTOs;
+using System_ApiTest.Domain.Entities;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
+using static System_ApiTest.Application.DTOs.Authdtos;
 
 namespace System_ApiTest.Controllers
 {
@@ -17,14 +18,14 @@ namespace System_ApiTest.Controllers
     public class CustomersController : Controller
     {
         private readonly AppDbContext _db;
-        private readonly JwtTokenService _tokenService;
+        private readonly IJwtTokenService _tokenService;
         private readonly OtpService _otp;
 
         // PasswordHasher<T> ships with ASP.NET Core Identity (Microsoft.Extensions.Identity.Core).
         // It uses PBKDF2 with a per-password salt. If you prefer BCrypt, swap in BCrypt.Net-Next.
         private readonly PasswordHasher<Customer> _passwordHasher = new();
 
-        public CustomersController(AppDbContext db, JwtTokenService tokenService, OtpService otp)
+        public CustomersController(AppDbContext db, IJwtTokenService tokenService, OtpService otp)
         {
             _db = db;
             _tokenService = tokenService;
@@ -57,7 +58,7 @@ namespace System_ApiTest.Controllers
                 PhoneNumber = dto.PhoneNumber.Trim(),
             };
 
-            // 4. Hash the password â€” the plain text is never stored.
+            // 4. Hash the password — the plain text is never stored.
             customer.PasswordHash = _passwordHasher.HashPassword(customer, dto.Password);
 
             _db.Customers.Add(customer);
@@ -108,7 +109,7 @@ namespace System_ApiTest.Controllers
             if (customer is null)
                 return BadRequest(new { message = "Invalid email or code." });
             if (customer.IsEmailVerified)
-                return Ok(new { message = "This email is already verified â€” you can log in." });
+                return Ok(new { message = "This email is already verified — you can log in." });
 
             if (!await _otp.VerifyAsync("Customer", customer.Id, OtpPurpose.EmailVerify, dto.Code))
                 return BadRequest(new { message = "Invalid or expired code." });
@@ -275,7 +276,7 @@ namespace System_ApiTest.Controllers
 
             var email = dto.Email.Trim().ToLowerInvariant();
             if (await _db.Customers.AnyAsync(c => c.Email == email))
-                return Conflict(new { message = "A customer with this email already exists â€” search for them instead." });
+                return Conflict(new { message = "A customer with this email already exists — search for them instead." });
 
             var customer = new Customer
             {
@@ -286,7 +287,7 @@ namespace System_ApiTest.Controllers
                 IsActive = true,
             };
 
-            // A temp password if the admin didn't set one â€” the Customer.PasswordHash column
+            // A temp password if the admin didn't set one — the Customer.PasswordHash column
             // is required; the walk-in simply can't log in until it's reset.
             var password = string.IsNullOrWhiteSpace(dto.Password) ? Guid.NewGuid().ToString("N") : dto.Password;
             customer.PasswordHash = _passwordHasher.HashPassword(customer, password);
@@ -298,7 +299,7 @@ namespace System_ApiTest.Controllers
             }
             catch (DbUpdateException)
             {
-                return Conflict(new { message = "A customer with this email already exists â€” search for them instead." });
+                return Conflict(new { message = "A customer with this email already exists — search for them instead." });
             }
 
             var body = new CustomerResponseDto(
@@ -308,7 +309,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>
         /// Soft-deactivate a customer. This is the ONLY supported way to "remove"
-        /// a customer â€” there is deliberately no hard-delete endpoint, so bookings
+        /// a customer — there is deliberately no hard-delete endpoint, so bookings
         /// and their history are always preserved.
         /// </summary>
         [Authorize(Roles = "Owner,Assistant")]
@@ -343,3 +344,6 @@ namespace System_ApiTest.Controllers
         }
     }
 }
+
+
+

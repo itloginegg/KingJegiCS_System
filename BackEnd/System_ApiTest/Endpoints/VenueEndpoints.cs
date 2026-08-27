@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using MediatR;
 using System_ApiTest.Application.Common.Models;
 using System_ApiTest.Application.Features.Venues.Commands.CreateVenue;
@@ -55,3 +56,5 @@ public static class VenueEndpoints
         return app;
     }
 }
+
+

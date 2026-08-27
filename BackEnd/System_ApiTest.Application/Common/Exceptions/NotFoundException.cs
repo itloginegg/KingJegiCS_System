@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 namespace System_ApiTest.Application.Common.Exceptions;
 
 /// <summary>
@@ -16,3 +17,4 @@ public class NotFoundException : Exception
     public string EntityName { get; }
     public object Key { get; }
 }
+

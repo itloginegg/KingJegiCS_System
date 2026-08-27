@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using System_ApiTest.Application.Common.Exceptions;
 using System_ApiTest.Domain.Exceptions;
 
@@ -43,3 +44,5 @@ public sealed class CleanArchitectureExceptionFilter : IEndpointFilter
         }
     }
 }
+
+

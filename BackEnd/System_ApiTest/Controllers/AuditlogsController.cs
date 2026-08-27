@@ -1,8 +1,9 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using System_ApiTest.Application.Common.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
-using System_ApiTest.Data;
-using System_ApiTest.DTOs;
+using System_ApiTest.Infrastructure.Persistence;
+using System_ApiTest.Application.DTOs;
 
 namespace System_ApiTest.Controllers
 {
@@ -39,3 +40,6 @@ namespace System_ApiTest.Controllers
         }
     }
 }
+
+
+

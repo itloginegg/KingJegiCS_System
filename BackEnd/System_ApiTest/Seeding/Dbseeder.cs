@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Identity;
+using System_ApiTest.Application.Common.Interfaces;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using System_ApiTest.Data;
-using System_ApiTest.Models;
+using System_ApiTest.Infrastructure.Persistence;
+using System_ApiTest.Domain.Entities;
 
 namespace System_ApiTest.Seeding
 {
@@ -19,7 +20,7 @@ namespace System_ApiTest.Seeding
     ///   dotnet user-secrets set "Seed:OwnerFullName" "Your Name"        (optional)
     ///   dotnet user-secrets set "Seed:OwnerPhone" "09xxxxxxxxx"         (optional)
     ///
-    /// The email MUST be a mailbox you control — with login OTP enabled it is the
+    /// The email MUST be a mailbox you control � with login OTP enabled it is the
     /// Owner's second factor; a placeholder email means the Owner cannot log in.
     /// </summary>
     public static class DbSeeder
@@ -36,7 +37,7 @@ namespace System_ApiTest.Seeding
             if (!await db.SystemSettings.AnyAsync())
             {
                 // Entity property initializers supply the business defaults
-                // (no tax — VAT removed, 50% deposit, capacity 3, ₱5,000 fee, 3h buffer,
+                // (no tax � VAT removed, 50% deposit, capacity 3, ?5,000 fee, 3h buffer,
                 // 7/1 lead days, and the resource-suggestion ratios).
                 db.SystemSettings.Add(new Systemsettings());
                 await db.SaveChangesAsync();
@@ -77,3 +78,6 @@ namespace System_ApiTest.Seeding
     }
 
 }
+
+
+

@@ -1,13 +1,14 @@
-ï»¿using Microsoft.AspNetCore.Authorization;
+using System_ApiTest.Application.Common.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System_ApiTest.Data;
-using System_ApiTest.DTOs;
-using System_ApiTest.Models;
-using System_ApiTest.Services;
-using static System_ApiTest.Services.PayMongoservice;
+using System_ApiTest.Infrastructure.Persistence;
+using System_ApiTest.Application.DTOs;
+using System_ApiTest.Domain.Entities;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 
 namespace System_ApiTest.Controllers
 {
@@ -28,16 +29,16 @@ namespace System_ApiTest.Controllers
         }
         /// <summary>
         /// PayMongo webhook receiver. AllowAnonymous (PayMongo isn't logged in) but
-        /// gated by HMAC signature verification â€” an invalid or missing signature is
+        /// gated by HMAC signature verification — an invalid or missing signature is
         /// a 401 and nothing is processed. Handles checkout paid + payment failed
         /// events; everything else is acknowledged and ignored. Always returns 200
-        /// for verified events (even unprocessable ones) so PayMongo stops retrying â€”
+        /// for verified events (even unprocessable ones) so PayMongo stops retrying —
         /// unresolvable cases are flagged on the payment for the owner instead.
         /// </summary>
         [AllowAnonymous]
         [HttpPost("webhook/paymongo")]
         public async Task<IActionResult> PayMongoWebhook(
-            [FromServices] PayMongoservice gateway,
+            [FromServices] IPayMongoService gateway,
             [FromServices] ILogger<PaymentsController> logger)
         {
             string rawBody;
@@ -143,7 +144,7 @@ namespace System_ApiTest.Controllers
         /// Records a payment against an invoice as Pending. A customer may record on
         /// their own booking's invoice; an owner/assistant may record on any. The
         /// payment time is server-stamped; only an owner/assistant may supply one
-        /// (to back-record an offline payment) â€” a customer-sent time is ignored.
+        /// (to back-record an offline payment) — a customer-sent time is ignored.
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> Record([FromBody] RecordPaymentDto dto)
@@ -168,7 +169,7 @@ namespace System_ApiTest.Controllers
         ///
         /// Staff-only by nature: a customer can't hand cash to a web form. Unlike
         /// POST /api/Payments, which leaves the payment Pending for someone to verify
-        /// later, this one runs the deposit sync immediately â€” so the booking's
+        /// later, this one runs the deposit sync immediately — so the booking's
         /// DepositStatus moves off Unpaid and the Confirm button becomes usable without
         /// a second "confirm the payment" click.
         /// </summary>
@@ -178,7 +179,7 @@ namespace System_ApiTest.Controllers
             [FromBody] RecordCashPaymentDto dto,
             [FromQuery] DateOnly? today,
             // Resolved per-call rather than added to the constructor, matching how this
-            // controller already pulls PayMongoservice into the webhook action.
+            // controller already pulls IPayMongoService into the webhook action.
             [FromServices] Invoiceservice invoices)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -203,7 +204,7 @@ namespace System_ApiTest.Controllers
 
                 var paidTotal = await invoices.GetPaidTotalAsync(dto.InvoiceId);
 
-                // Cash has no gateway record behind it â€” the audit row is the only
+                // Cash has no gateway record behind it — the audit row is the only
                 // independent trace that this money was taken and by whom.
                 await _audit.LogAsync(User, AuditAction.CREATE, "PAYMENT_CASH", payment.Id.ToString(),
                     null, new
@@ -247,7 +248,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>
         /// Owner refunds an amount from a payment (body optional; omitted = full
-        /// remaining). Supports partial refunds â€” e.g. everything above the
+        /// remaining). Supports partial refunds — e.g. everything above the
         /// non-refundable reservation fee. Re-syncs invoice + deposit ladders.
         /// </summary>
         [Authorize(Roles = "Owner,Assistant")]
@@ -260,7 +261,7 @@ namespace System_ApiTest.Controllers
                 var before = await PaymentSnapshotAsync(id);
                 await _payments.RefundAsync(id, dto?.Amount, today ?? DateOnly.FromDateTime(DateTime.Now));
                 var p = await _db.Payments.FindAsync(id);
-                // Money leaving the business â€” the single most audit-worthy action here.
+                // Money leaving the business — the single most audit-worthy action here.
                 await _audit.LogAsync(User, AuditAction.UPDATE, "PAYMENT_REFUND", id.ToString(),
                     before, await PaymentSnapshotAsync(id));
                 return Ok(ToDto(p!));
@@ -270,7 +271,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>
         /// Customer requests a refund on their payment (amount omitted = full remaining).
-        /// The owner reviews it â€” approving refunds the amount; denying records why.
+        /// The owner reviews it — approving refunds the amount; denying records why.
         /// </summary>
         [HttpPost("{id:guid}/request-refund")]
         public async Task<IActionResult> RequestRefund(Guid id, [FromBody] RequestRefundDto? dto)
@@ -353,7 +354,7 @@ namespace System_ApiTest.Controllers
         /// <param name="date">
         /// Optional single-day filter on PaymentDateTime. Applied BEFORE Take, so asking
         /// for a day returns that day's payments rather than whichever of them happen to
-        /// fall inside the newest `take` rows â€” filtering the page client-side would
+        /// fall inside the newest `take` rows — filtering the page client-side would
         /// report an empty day for any date older than the most recent 50 payments.
         /// </param>
         [Authorize(Roles = "Owner,Assistant")]
@@ -416,7 +417,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>
         /// The fields a payment action actually moves, for audit before/after. Narrow on
-        /// purpose â€” a status flip shouldn't produce a diff full of unchanged columns.
+        /// purpose — a status flip shouldn't produce a diff full of unchanged columns.
         /// </summary>
         private async Task<object?> PaymentSnapshotAsync(Guid id) =>
             await _db.Payments.AsNoTracking()
@@ -446,3 +447,6 @@ namespace System_ApiTest.Controllers
         }
     }
 }
+
+
+

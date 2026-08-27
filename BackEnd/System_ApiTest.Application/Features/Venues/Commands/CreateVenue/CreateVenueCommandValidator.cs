@@ -1,3 +1,4 @@
+using System_ApiTest.Application.Common.Interfaces;
 using FluentValidation;
 using System_ApiTest.Domain.Entities;
 
@@ -30,3 +31,4 @@ public sealed class CreateVenueCommandValidator : AbstractValidator<CreateVenueC
             .IsInEnum().WithMessage("Kind must be Indoor, Outdoor or Hybrid.");
     }
 }
+

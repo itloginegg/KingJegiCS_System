@@ -1,8 +1,10 @@
+using System_ApiTest.Application.Common.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System_ApiTest.Services;
+using System_ApiTest.Application.Services;
+using System_ApiTest.Infrastructure.Services;
 
 namespace System_ApiTest.Controllers
 {
@@ -81,3 +83,6 @@ namespace System_ApiTest.Controllers
                           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     }
 }
+
+
+
