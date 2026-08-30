@@ -9,6 +9,15 @@ namespace System_ApiTest.Infrastructure.Services
         private const long MaxFileSizeInBytes = 5 * 1024 * 1024; // 5 MB limit
 
         /// <summary>
+        /// Overrides the wwwroot base used for uploads. Set once at startup from
+        /// Uploads:RootPath so production writes to App Service's persistent share instead
+        /// of the deployment folder, which is replaced on every publish. Null locally, where
+        /// env.WebRootPath is correct. This is a static class with no constructor to inject
+        /// into, hence a property rather than an option.
+        /// </summary>
+        public static string? RootPathOverride { get; set; }
+
+        /// <summary>
         /// Validates the uploaded image file extension and size (max 5 MB).
         /// </summary>
         public static (bool IsValid, string? ErrorMessage) ValidateImage(IFormFile? file)
@@ -38,7 +47,9 @@ namespace System_ApiTest.Infrastructure.Services
         /// </summary>
         public static async Task<string> SaveImageAsync(IFormFile file, IWebHostEnvironment env, string subFolder)
         {
-            var webRoot = env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+            var webRoot = RootPathOverride
+                          ?? env.WebRootPath
+                          ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
             var uploadsFolder = Path.Combine(webRoot, "images", subFolder);
 
             if (!Directory.Exists(uploadsFolder))
@@ -67,7 +78,9 @@ namespace System_ApiTest.Infrastructure.Services
 
             try
             {
-                var webRoot = env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+                var webRoot = RootPathOverride
+                              ?? env.WebRootPath
+                              ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
                 var trimmedUrl = relativeUrl.TrimStart('/', '\\');
                 var fullPath = Path.Combine(webRoot, trimmedUrl);
 

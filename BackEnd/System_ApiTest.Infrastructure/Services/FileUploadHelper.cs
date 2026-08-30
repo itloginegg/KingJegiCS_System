@@ -30,6 +30,15 @@ namespace System_ApiTest.Infrastructure.Services
 
         private const long MaxFileSizeInBytes = 10 * 1024 * 1024; // 10 MB
 
+        /// <summary>
+        /// Overrides the wwwroot base used for uploads. Set once at startup from
+        /// Uploads:RootPath so production writes to App Service's persistent share instead
+        /// of the deployment folder, which is replaced on every publish. Null locally, where
+        /// env.WebRootPath is correct. This is a static class with no constructor to inject
+        /// into, hence a property rather than an option.
+        /// </summary>
+        public static string? RootPathOverride { get; set; }
+
         /// <summary>Extensions that render inline as an image rather than as a download link.</summary>
         private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
 
@@ -67,7 +76,9 @@ namespace System_ApiTest.Infrastructure.Services
         public static async Task<string> SaveAttachmentAsync(
             IFormFile file, IWebHostEnvironment env, string subFolder)
         {
-            var webRoot = env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+            var webRoot = RootPathOverride
+                          ?? env.WebRootPath
+                          ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
             var uploadsFolder = Path.Combine(webRoot, "uploads", subFolder);
 
             if (!Directory.Exists(uploadsFolder))
