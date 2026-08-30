@@ -52,7 +52,18 @@ namespace System_ApiTest.Controllers
                 .Select(g => new { g.Key, Qty = g.Sum(r => r.Quantity) })
                 .ToDictionaryAsync(x => x.Key, x => x.Qty);
 
-            return Ok(items.Select(i => ToDto(i, outgoing.GetValueOrDefault(i.Id))));
+            // Resource-plan allocations hold stock too. Confirmed only, matching
+            // Rentalservice.CommittedAllocation — see there for why Completed is
+            // excluded here but not above.
+            var allocated = await _db.BookingResourceAllocationLines
+                .Where(l => l.RentalItemId != null
+                            && l.Allocation.Booking.Status == BookingStatus.Confirmed)
+                .GroupBy(l => l.RentalItemId!.Value)
+                .Select(g => new { g.Key, Qty = g.Sum(l => l.Quantity) })
+                .ToDictionaryAsync(x => x.Key, x => x.Qty);
+
+            return Ok(items.Select(i => ToDto(
+                i, outgoing.GetValueOrDefault(i.Id) + allocated.GetValueOrDefault(i.Id))));
         }
 
         [AllowAnonymous]
@@ -165,9 +176,12 @@ namespace System_ApiTest.Controllers
         /// future reservations are not "out".
         /// </summary>
         private async Task<int> OutgoingAsync(Guid rentalItemId) =>
-            await _db.Rentals
+            (await _db.Rentals
                 .Where(Rentalservice.CommittedStock(rentalItemId))
-                .SumAsync(r => (int?)r.Quantity) ?? 0;
+                .SumAsync(r => (int?)r.Quantity) ?? 0)
+            + (await _db.BookingResourceAllocationLines
+                .Where(Rentalservice.CommittedAllocation(rentalItemId))
+                .SumAsync(l => (int?)l.Quantity) ?? 0);
 
         private static RentalItemResponseDto ToDto(Rentalitem i, int quantityOut) =>
             new(i.Id, i.ItemName, i.Category.ToString(), i.TotalQuantity,

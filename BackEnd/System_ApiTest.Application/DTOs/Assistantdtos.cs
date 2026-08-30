@@ -1,5 +1,6 @@
 using System_ApiTest.Application.Common.Interfaces;
 using System.ComponentModel.DataAnnotations;
+using System_ApiTest.Domain.Entities;
 
 namespace System_ApiTest.Application.DTOs
 {
@@ -36,6 +37,19 @@ namespace System_ApiTest.Application.DTOs
         int Ordinal,
         string Role,
         string Text);
+
+    /// <summary>
+    /// An assistant-written support reply, before any human has seen it. Returned by
+    /// Assistantservice and written to a Supportdraft row by the caller — nothing here is
+    /// persisted by the assistant itself, and nothing here has been sent to anyone.
+    /// ToolsUsed names the read-only tools the draft is grounded in, for the citation
+    /// chips above the admin composer.
+    /// </summary>
+    public record SupportDraftResult(
+        string Text,
+        SupportTopic Topic,
+        SupportUrgency Urgency,
+        IReadOnlyList<string> ToolsUsed);
 
     /// <summary>A conversation with its visible dialogue, for the read endpoint.</summary>
     public record ConversationDetailDto(

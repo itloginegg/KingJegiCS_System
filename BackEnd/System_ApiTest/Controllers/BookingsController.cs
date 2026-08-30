@@ -346,8 +346,10 @@ namespace System_ApiTest.Controllers
             try
             {
                 var result = await _resources.SaveAsync(id, dto, CurrentUserId());
+                // The lines ARE the plan now that the nine counts are gone, so they are
+                // what the audit trail has to record.
                 await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING_RESOURCES", id.ToString(),
-                    null, result.Allocation);
+                    null, result.Lines);
                 return Ok(result);
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }

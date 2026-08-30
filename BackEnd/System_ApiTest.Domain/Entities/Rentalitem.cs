@@ -9,7 +9,17 @@ namespace System_ApiTest.Domain.Entities
         Chairs,
         Tables,
         Lights,
-        Others
+        Others,
+
+        /// <summary>
+        /// Plates, spoons, forks and other service-ware, so the utensil half of a
+        /// resource plan can point at real stock-tracked items instead of bare counts.
+        ///
+        /// Appended last, and the column is nvarchar (HasConversion&lt;string&gt;(), max
+        /// 20), so no migration and no risk to existing stored values — the same
+        /// property that made BookingType.RentalService safe to append.
+        /// </summary>
+        Utensils
     }
 
     /// <summary>

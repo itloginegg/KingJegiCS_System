@@ -201,19 +201,70 @@ namespace System_ApiTest.Application.Services
             var newTurns = new List<Conversationmessage> { Turn(ConversationRole.User, text: message) };
             var proposals = new List<ProposalDto>();
 
+            var loop = await RunToolLoopAsync(
+                SystemPrompt, customerId, contents, seedContext, proposals, today,
+                "Sorry, I couldn't produce a response. Please try the budget form.", ct);
+
+            newTurns.AddRange(loop.Turns);
+            await PersistAsync(conversation, newTurns, ct);
+            return new AssistantChatResponse(conversation.Id, loop.Text, proposals.Count > 0 ? proposals : null);
+        }
+
+        /// <summary>
+        /// What one run of the model↔tool loop produced. Turns come back in the order
+        /// they'd be replayed — Model(calls) → Tool(results) → … → Model(text) — with the
+        /// caller's leading User turn deliberately absent: the loop doesn't know how, or
+        /// whether, its caller intends to write any of this down.
+        /// </summary>
+        private sealed record ToolLoopResult(
+            string Text,
+            IReadOnlyList<string> ToolsUsed,
+            IReadOnlyList<Conversationmessage> Turns);
+
+        /// <summary>
+        /// The model↔tool loop, lifted out of <see cref="ChatAsync"/> so callers that
+        /// aren't a customer conversation can drive it too: call Gemini, execute any tool
+        /// calls server-side, feed the results back, repeat until the model answers in
+        /// prose. Persists NOTHING — no Conversation, no Conversationmessage. What the
+        /// caller does with the returned turns is the caller's business.
+        ///
+        /// <para>
+        /// <paramref name="contents"/> is appended to in place, as the wire format
+        /// requires: every tool round trip adds the model's call turn and the results turn
+        /// to the same array that gets re-sent. Each functionCall part's opaque
+        /// thoughtSignature is re-emitted verbatim, or Gemini 3.x rejects the next request.
+        /// </para>
+        ///
+        /// <para>
+        /// ChatStreamAsync keeps its own copy of this loop and is deliberately left alone:
+        /// it's a yielding iterator that emits deltas and a status line between the model
+        /// turn and the tool call, so it can't be expressed as a call to this method.
+        /// </para>
+        /// </summary>
+        /// <param name="emptyReplyFallback">
+        /// Stands in when the model returns no prose at all. Caller-supplied because this
+        /// text is read by a human, and the right wording depends on which human.
+        /// </param>
+        private async Task<ToolLoopResult> RunToolLoopAsync(
+            string systemPrompt, Guid customerId, JsonArray contents, string? seedContext,
+            List<ProposalDto> proposals, DateOnly today, string emptyReplyFallback,
+            CancellationToken ct)
+        {
+            var turns = new List<Conversationmessage>();
+            var toolsUsed = new List<string>();
+
             for (var iteration = 0; iteration < MaxToolIterations; iteration++)
             {
-                var responseBody = await CallGeminiAsync(contents, seedContext, ct);
+                var responseBody = await CallGeminiAsync(systemPrompt, contents, seedContext, ct);
                 var (text, calls) = ParseResponse(responseBody);
 
                 if (calls.Count == 0)
                 {
                     var reply = string.IsNullOrWhiteSpace(text)
-                        ? "Sorry, I couldn't produce a response. Please try the budget form."
+                        ? emptyReplyFallback
                         : text.Trim();
-                    newTurns.Add(Turn(ConversationRole.Model, text: reply));
-                    await PersistAsync(conversation, newTurns, ct);
-                    return new AssistantChatResponse(conversation.Id, reply, proposals.Count > 0 ? proposals : null);
+                    turns.Add(Turn(ConversationRole.Model, text: reply));
+                    return new ToolLoopResult(reply, toolsUsed, turns);
                 }
 
                 // Echo the model's tool-call turn back into the thread, and record it.
@@ -232,17 +283,21 @@ namespace System_ApiTest.Application.Services
                     callsArray.Add(callObj);
                 }
                 contents.Add(ModelFunctionCallContent(callsArray));
-                newTurns.Add(Turn(ConversationRole.Model, toolPayloadJson: callsArray.ToJsonString()));
+                turns.Add(Turn(ConversationRole.Model, toolPayloadJson: callsArray.ToJsonString()));
 
                 // Execute each tool server-side, then reply with the results turn.
                 var resultsArray = new JsonArray();
                 foreach (var call in calls)
                 {
+                    // First-call order, de-duplicated: this is what the support panel
+                    // shows as citation chips, so a tool called twice reads once.
+                    if (!toolsUsed.Contains(call.Name))
+                        toolsUsed.Add(call.Name);
                     var response = await ExecuteToolAsync(customerId, call.Name, call.Args, proposals, today, ct);
                     resultsArray.Add(new JsonObject { ["name"] = call.Name, ["response"] = response });
                 }
                 contents.Add(ToolResponseContent(resultsArray));
-                newTurns.Add(Turn(ConversationRole.Tool, toolPayloadJson: resultsArray.ToJsonString()));
+                turns.Add(Turn(ConversationRole.Tool, toolPayloadJson: resultsArray.ToJsonString()));
             }
 
             throw new AssistantUnavailableException(
@@ -443,6 +498,174 @@ namespace System_ApiTest.Application.Services
         }
 
         // ---------------------------------------------------------------------------
+        //  Support drafting (staff-facing; nothing here is ever sent automatically)
+        // ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Drafts a reply to a customer's support thread for a staff member to read, edit
+        /// and send. Two Gemini calls, because one request cannot both pin its output to a
+        /// JSON schema and carry tools:
+        /// <list type="number">
+        ///   <item>a no-tools classification, schema-pinned to the SupportTopic /
+        ///   SupportUrgency enums, for the inbox chips; and</item>
+        ///   <item>the full tool loop, for the reply itself.</item>
+        /// </list>
+        /// A failed or unreadable classification costs the chips, not the draft.
+        ///
+        /// <para>
+        /// Persists NOTHING. No Conversation, no Conversationmessage — a support thread is
+        /// not the customer's assistant chat, and a draft is not a message. The caller
+        /// writes the Supportdraft row.
+        /// </para>
+        ///
+        /// <para>
+        /// <paramref name="customerId"/> is the thread owner's, and is handed to the tool
+        /// layer unchanged: get_my_bookings and get_payment_schedule scope every query to
+        /// that id, so a draft cannot reach another customer's rows no matter what the
+        /// transcript asks for.
+        /// </para>
+        /// </summary>
+        /// <param name="transcript">
+        /// The thread's recent turns, oldest first. FromCustomer distinguishes the customer
+        /// from staff; the trigger message is expected to be the last entry.
+        /// </param>
+        /// <exception cref="AssistantUnavailableException">
+        /// Disabled, unconfigured, unreachable, or throttled — same contract as the other
+        /// generators. The triage worker catches this and records a Failed draft.
+        /// </exception>
+        public async Task<SupportDraftResult> DraftSupportReplyAsync(
+            Guid customerId, IReadOnlyList<(bool FromCustomer, string Text)> transcript,
+            CancellationToken ct)
+        {
+            if (!_options.IsConfigured)
+                throw new AssistantUnavailableException("The assistant is not configured.");
+
+            var contents = BuildSupportContents(transcript);
+            if (contents.Count == 0)
+                throw new ArgumentException(
+                    "A support transcript needs at least one customer message to reply to.", nameof(transcript));
+
+            var (topic, urgency) = await ClassifySupportThreadAsync(transcript, ct);
+
+            // ExecuteToolAsync needs a proposal sink and suggest_within_budget can still
+            // fire here, but a draft has nowhere to render proposals — collected, dropped.
+            var discardedProposals = new List<ProposalDto>();
+
+            var loop = await RunToolLoopAsync(
+                SupportDraftSystemPrompt, customerId, contents, seedContext: null,
+                discardedProposals, DateOnly.FromDateTime(DateTime.Now),
+                "I don't have enough information to answer this one — a staff member will follow up.",
+                ct);
+
+            return new SupportDraftResult(loop.Text, topic, urgency, loop.ToolsUsed);
+        }
+
+        /// <summary>
+        /// Classifies the thread for the inbox chips. Deliberately total: any failure —
+        /// a throttle, an outage, output that isn't the JSON we asked for — degrades to
+        /// Other/Routine rather than throwing, because losing the chips is a cosmetic
+        /// problem and losing the draft is not.
+        /// </summary>
+        private async Task<(SupportTopic Topic, SupportUrgency Urgency)> ClassifySupportThreadAsync(
+            IReadOnlyList<(bool FromCustomer, string Text)> transcript, CancellationToken ct)
+        {
+            var rendered = new StringBuilder();
+            foreach (var (fromCustomer, text) in transcript)
+            {
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+                rendered.AppendLine((fromCustomer ? "Customer: " : "Staff: ") + Truncate(text.Trim(), 1000));
+            }
+
+            var request = new JsonObject
+            {
+                ["systemInstruction"] = new JsonObject
+                {
+                    ["parts"] = new JsonArray(new JsonObject { ["text"] = SupportTriageSystemPrompt })
+                },
+                ["contents"] = new JsonArray(TextContent("user", rendered.ToString())),
+                ["generationConfig"] = new JsonObject
+                {
+                    ["maxOutputTokens"] = 64,
+                    // Structured output: Gemini validates against this schema itself, so
+                    // the "parse structure out of prose" fragility never arises.
+                    ["responseMimeType"] = "application/json",
+                    ["responseSchema"] = TriageResponseSchema()
+                }
+            };
+
+            try
+            {
+                var body = await PostGenerateContentAsync(request, ct);
+                var (text, _) = ParseResponse(body);
+                var node = TryParseJson(text);
+
+                if (node is not null
+                    && Enum.TryParse<SupportTopic>(Str(node["topic"]), ignoreCase: true, out var topic)
+                    && Enum.TryParse<SupportUrgency>(Str(node["urgency"]), ignoreCase: true, out var urgency)
+                    && Enum.IsDefined(topic) && Enum.IsDefined(urgency))
+                {
+                    return (topic, urgency);
+                }
+
+                _logger.LogInformation(
+                    "Support triage returned no usable classification; defaulting to Other/Routine.");
+            }
+            catch (AssistantUnavailableException ex)
+            {
+                _logger.LogInformation(ex,
+                    "Support triage call failed; defaulting to Other/Routine and drafting anyway.");
+            }
+
+            return (SupportTopic.Other, SupportUrgency.Routine);
+        }
+
+        /// <summary>
+        /// The triage response schema, built from the enums themselves so the two cannot
+        /// drift: add a SupportTopic value and the model may immediately return it.
+        /// </summary>
+        private static JsonObject TriageResponseSchema() => new()
+        {
+            ["type"] = "OBJECT",
+            ["properties"] = new JsonObject
+            {
+                ["topic"] = EnumSchema<SupportTopic>(),
+                ["urgency"] = EnumSchema<SupportUrgency>()
+            },
+            ["required"] = new JsonArray("topic", "urgency")
+        };
+
+        private static JsonObject EnumSchema<TEnum>() where TEnum : struct, Enum
+        {
+            var values = new JsonArray();
+            foreach (var name in Enum.GetNames<TEnum>())
+                values.Add(name);
+            return new JsonObject { ["type"] = "STRING", ["enum"] = values };
+        }
+
+        /// <summary>
+        /// Maps a support transcript onto Gemini contents. The customer speaks as "user"
+        /// and staff as "model", because the draft continues the staff side of the
+        /// conversation. Leading staff turns are dropped — contents must open on a user
+        /// turn, the same wire constraint BuildContents works around for a seeded thread —
+        /// as are attachment-only messages, which carry no text to reason about.
+        /// </summary>
+        private static JsonArray BuildSupportContents(
+            IReadOnlyList<(bool FromCustomer, string Text)> transcript)
+        {
+            var contents = new JsonArray();
+            foreach (var (fromCustomer, text) in transcript)
+            {
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+                if (contents.Count == 0 && !fromCustomer)
+                    continue;
+                contents.Add(TextContent(fromCustomer ? "user" : "model", Truncate(text.Trim(), 4000)));
+            }
+            return contents;
+        }
+
+        // ---------------------------------------------------------------------------
         //  Conversation reads (scoped to the customer)
         // ---------------------------------------------------------------------------
 
@@ -483,13 +706,16 @@ namespace System_ApiTest.Application.Services
         // ---------------------------------------------------------------------------
 
         /// <summary>
-        /// Builds and sends the full tool-enabled chat request. seedContext (a prior
-        /// proactive nudge) is folded into the system instruction so the model keeps that
+        /// Builds and sends the full tool-enabled request. The system instruction is the
+        /// caller's, because the same five tools serve two different jobs now: answering
+        /// a customer in chat, and drafting a staff reply in the support inbox.
+        /// seedContext (a prior proactive nudge) is folded in so the model keeps that
         /// context even though the leading model-seed turn is omitted from contents.
         /// </summary>
-        private async Task<string> CallGeminiAsync(JsonArray contents, string? seedContext, CancellationToken ct)
+        private async Task<string> CallGeminiAsync(
+            string systemPrompt, JsonArray contents, string? seedContext, CancellationToken ct)
         {
-            var system = SystemPrompt;
+            var system = systemPrompt;
             if (!string.IsNullOrWhiteSpace(seedContext))
                 system += "\n\nEarlier you proactively messaged this customer: \"" + seedContext.Trim() +
                           "\" Continue that conversation and help them.";
@@ -1015,6 +1241,33 @@ namespace System_ApiTest.Application.Services
             "Amounts are in Philippine pesos (₱). Use ONLY the numbers provided — never invent, extrapolate, " +
             "or forecast a figure that isn't listed. Call out the trend, the strongest and weakest months, and " +
             "anything notable about refunds. No headings, no bullet points, no preamble — output only the summary text.";
+
+        private const string SupportTriageSystemPrompt =
+            "You classify customer support messages for KingJegi Catering in Laguna, Philippines. " +
+            "Read the transcript below and return ONLY the JSON object described by the schema — no prose.\n" +
+            "topic: what the LATEST customer message is about. Booking (dates, scheduling, event details), " +
+            "Payment (invoices, balances, refunds, receipts), Menu (dishes, packages, dietary requests), " +
+            "Rental (equipment, tables, chairs, returns), Complaint (dissatisfaction with something already " +
+            "delivered), Other (anything else).\n" +
+            "urgency: Urgent when an event is imminent or money or an event is at risk; Attention when the " +
+            "customer is blocked waiting on an answer; Routine otherwise. Judge only from the transcript — " +
+            "do not assume urgency the customer has not expressed.";
+
+        private const string SupportDraftSystemPrompt =
+            "You are drafting a reply that a KingJegi Catering staff member will read, edit and send to a " +
+            "customer in the support inbox. Write as staff, in the first person plural. All amounts are in " +
+            "Philippine pesos (PHP, ₱).\n" +
+            "Rules:\n" +
+            "- Use ONLY data returned by your tools. Never invent prices, menu items, packages, availability, " +
+            "dates, or totals. If you lack the data, call a tool or say you don't know.\n" +
+            "- NEVER promise an action. You cannot confirm, book, reschedule, cancel, refund, discount, or " +
+            "waive anything, and you must not say that any of those has been done or will be done. If the " +
+            "customer asks for one, say a staff member will confirm it.\n" +
+            "- If your tools cannot answer the question, say so plainly and stop. Do not guess, and do not " +
+            "pad the reply with generalities.\n" +
+            "- 2-5 sentences. No greeting, no sign-off, no subject line — a staff member is pasting this " +
+            "straight into an open thread.\n" +
+            "- Output only the reply text.";
 
         private const string ToolDeclarationsJson = """
         [

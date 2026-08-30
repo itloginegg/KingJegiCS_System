@@ -36,6 +36,7 @@ public interface IApplicationDbContext
     DbSet<Invoice> Invoices { get; }
     DbSet<Payment> Payments { get; }
     DbSet<BookingResourceAllocation> BookingResourceAllocations { get; }
+    DbSet<BookingResourceAllocationLine> BookingResourceAllocationLines { get; }
     DbSet<Sentnotification> SentNotifications { get; }
     DbSet<Announcement> Announcements { get; }
     DbSet<Galleryimage> GalleryImages { get; }
@@ -43,6 +44,7 @@ public interface IApplicationDbContext
     DbSet<Conversationmessage> ConversationMessages { get; }
     DbSet<Supportthread> SupportThreads { get; }
     DbSet<Supportmessage> SupportMessages { get; }
+    DbSet<Supportdraft> SupportDrafts { get; }
     DbSet<Testimonial> Testimonials { get; }
     DbSet<Venue> Venues { get; }
 

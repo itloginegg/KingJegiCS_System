@@ -25,7 +25,7 @@ namespace System_ApiTest.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -75,7 +75,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("Admins");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Customer", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -114,9 +114,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("Customers");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Admin", "CreatedBy")
+                    b.HasOne("System_ApiTest.Domain.Entities.Admin", "CreatedBy")
                         .WithMany("CreatedAssistants")
                         .HasForeignKey("CreatedById")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -124,7 +124,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("CreatedBy");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
                     b.Navigation("CreatedAssistants");
                 });

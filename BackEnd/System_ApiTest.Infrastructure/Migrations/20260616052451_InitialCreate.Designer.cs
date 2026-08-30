@@ -25,7 +25,7 @@ namespace System_ApiTest.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Customer", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()

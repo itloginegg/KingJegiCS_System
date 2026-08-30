@@ -14,16 +14,24 @@ namespace System_ApiTest.Domain.Entities
     ///      CONFIRMED events — that is the entire point — so that path is closed.
     ///   2. Booking.TotalAmount is frozen at confirmation. A priced line added later
     ///      would silently re-price a signed contract.
-    ///   3. Rentals consume real stock through RentalService's availability check. An
-    ///      internal headcount must not eat sellable inventory.
     ///
-    /// So: no prices, no stock, no invoice impact. Purely a planning record. The priced,
-    /// Draft-only path still exists and is unchanged — that's DraftItemsEditor.
+    /// So: no prices and no invoice impact, ever. The priced, Draft-only path still
+    /// exists and is unchanged — that's DraftItemsEditor.
     ///
-    /// The nine counts don't map onto the rental/service catalog and aren't meant to.
-    /// RentalCategory has Chairs and Tables but no "long vs round" (that's a per-item
-    /// name) and no Utensils category at all; ServiceName has Waiter but no Server or
-    /// Others. Fixed integer columns sidestep all of it.
+    /// STOCK, HOWEVER, IS CONSUMED, by the Lines below. A bundled package declares its
+    /// rentals only as display text (Menupackage.Inclusions is List&lt;string&gt;), so
+    /// before Lines existed a Confirmed package booking reserved NO chairs at all and
+    /// double-booking was unprevented. Lines close that hole: they name real catalog
+    /// rows and hold real stock, while staying unpriced because the package price
+    /// already covers them.
+    ///
+    /// This table once also carried nine fixed integer counts (long/round tables,
+    /// chairs, plates, spoons, forks, waiters, servers, others) as a REQUIREMENT
+    /// alongside the Lines' commitment. They were dropped once Lines could express the
+    /// same plan against real inventory: keeping both meant two records of one decision
+    /// that could disagree, and only one of them reserved anything. The guest-count
+    /// ratios that used to fill them still exist in SystemSettings and now drive
+    /// per-item suggested quantities instead (see Bookingresourceservice.SuggestFor).
     /// </summary>
     public class BookingResourceAllocation
     {
@@ -34,26 +42,6 @@ namespace System_ApiTest.Domain.Entities
         [Required]
         public Guid BookingId { get; set; }
         public Booking Booking { get; set; } = null!;
-
-        // ---- Furniture ----
-
-        public int LongTables { get; set; }
-        public int RoundTables { get; set; }
-        public int Chairs { get; set; }
-
-        // ---- Utensils & service-ware ----
-
-        public int Plates { get; set; }
-        public int Spoons { get; set; }
-        public int Forks { get; set; }
-
-        // ---- Personnel ----
-
-        public int Waiters { get; set; }
-        public int Servers { get; set; }
-
-        /// <summary>Any other staff not covered by the named roles.</summary>
-        public int Others { get; set; }
 
         // ---- Sign-off ----
 
@@ -70,6 +58,13 @@ namespace System_ApiTest.Domain.Entities
         public Guid? ApprovedByUserId { get; set; }
 
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        /// The plan itself: which specific rental items and services are held for this
+        /// event, and how many. These consume stock.
+        /// </summary>
+        public ICollection<BookingResourceAllocationLine> Lines { get; set; }
+            = new List<BookingResourceAllocationLine>();
     }
 }
 

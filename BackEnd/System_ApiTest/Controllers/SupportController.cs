@@ -29,14 +29,17 @@ namespace System_ApiTest.Controllers
         private readonly IHubContext<PaymentHub> _hub;
         private readonly Notificationwriteservice _notifications;
         private readonly IWebHostEnvironment _env;
+        private readonly Auditlogservice _audit;
 
         public SupportController(AppDbContext db, IHubContext<PaymentHub> hub,
-                                 Notificationwriteservice notifications, IWebHostEnvironment env)
+                                 Notificationwriteservice notifications, IWebHostEnvironment env,
+                                 Auditlogservice audit)
         {
             _db = db;
             _hub = hub;
             _notifications = notifications;
             _env = env;
+            _audit = audit;
         }
 
         /// <summary>
@@ -136,19 +139,29 @@ namespace System_ApiTest.Controllers
             if (Enum.TryParse<SupportThreadStatus>(status, true, out var st))
                 query = query.Where(t => t.Status == st);
 
-            var threads = await query.OrderByDescending(t => t.LastMessageAt).ToListAsync();
+            // One round trip for the whole list: the last message, the unread count and
+            // the newest pending draft all come back as correlated subqueries rather than
+            // two extra queries per thread.
+            var rows = await query
+                .OrderByDescending(t => t.LastMessageAt)
+                .Select(t => new
+                {
+                    Thread = t,
+                    Last = t.Messages.OrderByDescending(m => m.CreatedAt).FirstOrDefault(),
+                    Unread = t.Messages.Count(m => m.Sender == SupportSender.Customer && m.ReadByAdminAt == null),
+                    Draft = _db.SupportDrafts
+                        .Where(d => d.ThreadId == t.Id && d.Status == SupportDraftStatus.Pending)
+                        .OrderByDescending(d => d.CreatedAt)
+                        .FirstOrDefault()
+                })
+                .ToListAsync();
 
-            var result = new List<SupportThreadSummaryDto>();
-            foreach (var t in threads)
-            {
-                var last = await _db.SupportMessages.Where(m => m.ThreadId == t.Id)
-                    .OrderByDescending(m => m.CreatedAt).FirstOrDefaultAsync();
-                var unread = await _db.SupportMessages.CountAsync(m =>
-                    m.ThreadId == t.Id && m.Sender == SupportSender.Customer && m.ReadByAdminAt == null);
-                result.Add(new SupportThreadSummaryDto(
-                    t.Id, t.CustomerId, t.Customer.FullName, t.Customer.Email, t.Status.ToString(),
-                    t.LastMessageAt, last is null ? null : PreviewOf(last), unread));
-            }
+            var result = rows.Select(r => new SupportThreadSummaryDto(
+                r.Thread.Id, r.Thread.CustomerId, r.Thread.Customer.FullName, r.Thread.Customer.Email,
+                r.Thread.Status.ToString(), r.Thread.LastMessageAt,
+                r.Last is null ? null : PreviewOf(r.Last), r.Unread,
+                r.Draft?.Topic.ToString(), r.Draft?.Urgency.ToString(), r.Draft is not null))
+                .ToList();
             return Ok(result);
         }
 
@@ -166,7 +179,14 @@ namespace System_ApiTest.Controllers
                 m.ReadByAdminAt = now;
             await _db.SaveChangesAsync();
 
-            return Ok(ToThreadDto(thread, thread.Customer.FullName, msgs));
+            // Staff-only: MyThread deliberately does not do this, and SupportThreadDto
+            // omits the key entirely when it is null.
+            var draft = await _db.SupportDrafts
+                .Where(d => d.ThreadId == id && d.Status == SupportDraftStatus.Pending)
+                .OrderByDescending(d => d.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            return Ok(ToThreadDto(thread, thread.Customer.FullName, msgs, ToDraftDto(draft)));
         }
 
         /// <summary>Posts a staff reply to a thread.</summary>
@@ -181,6 +201,16 @@ namespace System_ApiTest.Controllers
 
             if (IsEmptyMessage(dto.Text, dto.Attachment))
                 return BadRequest(new { message = "Send a message, an attachment, or both." });
+
+            // A draft id is only ever accepted for a draft on THIS thread, so a stray or
+            // stale id cannot mark someone else's draft as sent.
+            Supportdraft? draft = null;
+            if (dto.DraftId is Guid draftId)
+            {
+                draft = await _db.SupportDrafts.FirstOrDefaultAsync(d => d.Id == draftId && d.ThreadId == id);
+                if (draft is null)
+                    return BadRequest(new { message = "That draft does not belong to this thread." });
+            }
 
             var (ok, error, url, fileName, contentType) = await TryStoreAttachmentAsync(dto.Attachment);
             if (!ok) return BadRequest(new { message = error });
@@ -197,7 +227,23 @@ namespace System_ApiTest.Controllers
             };
             _db.SupportMessages.Add(msg);
             thread.LastMessageAt = msg.CreatedAt;
-            await _db.SaveChangesAsync();
+
+            // Sent when the staff member let the draft stand, Edited when they changed a
+            // character of it. Either way a human pressed Send — that is the whole point.
+            SupportDraftStatus? previousStatus = null;
+            if (draft is not null)
+            {
+                previousStatus = draft.Status;
+                draft.Status = string.Equals(draft.Text.Trim(), msg.Text.Trim(), StringComparison.Ordinal)
+                    ? SupportDraftStatus.Sent
+                    : SupportDraftStatus.Edited;
+            }
+
+            await _db.SaveChangesAsync();   // message and draft transition, one save
+
+            if (draft is not null)
+                await _audit.LogAsync(User, AuditAction.UPDATE, "Supportdraft", draft.Id.ToString(),
+                    new { status = previousStatus.ToString() }, new { status = draft.Status.ToString() });
 
             await _notifications.WriteAsync(
                 NotificationKind.SupportMessageFromStaff,
@@ -206,6 +252,28 @@ namespace System_ApiTest.Controllers
 
             await BroadcastAsync(thread, msg);
             return Ok(ToMsgDto(msg));
+        }
+
+        /// <summary>
+        /// Throws away an assistant draft the staff member does not want. The row stays
+        /// (the table is the record of what was proposed and what a human did about it);
+        /// only its status changes, which takes it out of the pending-draft queries above.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("threads/{id:guid}/drafts/{draftId:guid}/discard")]
+        public async Task<IActionResult> DiscardDraft(Guid id, Guid draftId)
+        {
+            var draft = await _db.SupportDrafts.FirstOrDefaultAsync(d => d.Id == draftId && d.ThreadId == id);
+            if (draft is null) return NotFound();
+
+            var previousStatus = draft.Status;
+            draft.Status = SupportDraftStatus.Discarded;
+            await _db.SaveChangesAsync();
+
+            await _audit.LogAsync(User, AuditAction.UPDATE, "Supportdraft", draft.Id.ToString(),
+                new { status = previousStatus.ToString() }, new { status = draft.Status.ToString() });
+
+            return NoContent();
         }
 
         /// <summary>Marks a thread Open or Closed (?status=Open|Closed).</summary>
@@ -259,9 +327,17 @@ namespace System_ApiTest.Controllers
             catch { /* live delivery is best-effort — the message is already persisted */ }
         }
 
-        private static SupportThreadDto ToThreadDto(Supportthread thread, string customerName, List<Supportmessage> msgs) =>
+        // draft defaults to null so the customer path (MyThread) cannot pass one even
+        // by accident; only ThreadById supplies it.
+        private static SupportThreadDto ToThreadDto(Supportthread thread, string customerName,
+                                                    List<Supportmessage> msgs, SupportDraftDto? draft = null) =>
             new(thread.Id, thread.CustomerId, customerName, thread.Status.ToString(), thread.LastMessageAt,
-                msgs.Select(ToMsgDto).ToList());
+                msgs.Select(ToMsgDto).ToList(), draft);
+
+        private static SupportDraftDto? ToDraftDto(Supportdraft? d) =>
+            d is null ? null : new SupportDraftDto(
+                d.Id, d.Text, d.Topic.ToString(), d.Urgency.ToString(),
+                d.ToolsUsed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
         private static SupportMessageDto ToMsgDto(Supportmessage m) =>
             new(m.Id, m.Sender.ToString(), m.Text, m.CreatedAt,

@@ -113,7 +113,7 @@ namespace System_ApiTest.Workers
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var invoices = scope.ServiceProvider.GetRequiredService<Invoiceservice>();
             var rentals = scope.ServiceProvider.GetRequiredService<Rentalservice>();
-            var email = scope.ServiceProvider.GetRequiredService<EmailService>();
+            var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
             var assistant = scope.ServiceProvider.GetRequiredService<Assistantservice>();
 
             var today = DateOnly.FromDateTime(DateTime.Now);
@@ -131,7 +131,7 @@ namespace System_ApiTest.Workers
         /// bookings, plus a single owner digest of everything overdue this run.
         /// </summary>
         private async Task ProcessBookingsAsync(
-            AppDbContext db, Invoiceservice invoices, EmailService email, Assistantservice assistant,
+            AppDbContext db, Invoiceservice invoices, IEmailService email, Assistantservice assistant,
             DateOnly today, string? ownerEmail, CancellationToken ct)
         {
             // Upcoming, non-draft bookings only (Draft has no invoice; past events are
@@ -260,7 +260,7 @@ namespace System_ApiTest.Workers
 
         /// <summary>Alerts the owner about each active rental item at/below the low-stock threshold.</summary>
         private async Task ProcessLowStockAsync(
-            AppDbContext db, Rentalservice rentals, EmailService email,
+            AppDbContext db, Rentalservice rentals, IEmailService email,
             DateOnly today, string? ownerEmail, CancellationToken ct)
         {
             var items = await db.RentalItems.Where(r => r.IsActive).ToListAsync(ct);
@@ -286,7 +286,7 @@ namespace System_ApiTest.Workers
         /// run. Records the send only after the mail actually goes out.
         /// </summary>
         private async Task<bool> TrySendAsync(
-            AppDbContext db, EmailService email,
+            AppDbContext db, IEmailService email,
             Guid? bookingId, NotificationKind kind, string period,
             string? to, string subject, string body, CancellationToken ct)
         {
@@ -419,6 +419,7 @@ namespace System_ApiTest.Workers
         private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
     }
 }
+
 
 
 

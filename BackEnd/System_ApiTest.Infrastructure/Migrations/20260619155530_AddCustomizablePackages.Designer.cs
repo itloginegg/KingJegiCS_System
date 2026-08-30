@@ -25,7 +25,7 @@ namespace System_ApiTest.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -75,7 +75,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("Admins");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Auditlog", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Auditlog", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -115,7 +115,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("AuditLogs");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Booking", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Booking", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -192,7 +192,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.BookingMenuItem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.BookingMenuItem", b =>
                 {
                     b.Property<Guid>("BookingId")
                         .HasColumnType("uniqueidentifier");
@@ -217,7 +217,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.BookingMenuTray", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.BookingMenuTray", b =>
                 {
                     b.Property<Guid>("BookingId")
                         .HasColumnType("uniqueidentifier");
@@ -242,7 +242,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Bookinghistory", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Bookinghistory", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -274,7 +274,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("BookingHistories");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Bookingpackageselection", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Bookingpackageselection", b =>
                 {
                     b.Property<Guid>("BookingId")
                         .HasColumnType("uniqueidentifier");
@@ -294,7 +294,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("BookingPackageSelections");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Calendarday", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Calendarday", b =>
                 {
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date");
@@ -329,7 +329,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Customer", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -370,7 +370,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("Customers");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Invoice", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Invoice", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -421,7 +421,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.MenuTrayDish", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.MenuTrayDish", b =>
                 {
                     b.Property<Guid>("MenuTrayId")
                         .HasColumnType("uniqueidentifier");
@@ -436,7 +436,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("MenuTrayDishes");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menuitem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menuitem", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -491,7 +491,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackage", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackage", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -539,7 +539,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackagefixeditem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackagefixeditem", b =>
                 {
                     b.Property<Guid>("MenuPackageId")
                         .HasColumnType("uniqueidentifier");
@@ -554,7 +554,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("MenuPackageFixedItems");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackageslot", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackageslot", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -586,7 +586,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menutray", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menutray", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -624,7 +624,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Payment", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Payment", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -668,7 +668,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Rental", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Rental", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -700,7 +700,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Rentalitem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Rentalitem", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -738,7 +738,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Revokedtoken", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Revokedtoken", b =>
                 {
                     b.Property<string>("Jti")
                         .HasMaxLength(64)
@@ -757,7 +757,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.ToTable("RevokedTokens");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Service", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Service", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -790,7 +790,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.SlotCategory", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.SlotCategory", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -817,7 +817,7 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Systemsettings", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Systemsettings", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -852,9 +852,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Admin", "CreatedBy")
+                    b.HasOne("System_ApiTest.Domain.Entities.Admin", "CreatedBy")
                         .WithMany("CreatedAssistants")
                         .HasForeignKey("CreatedById")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -862,9 +862,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("CreatedBy");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Auditlog", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Auditlog", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Admin", "Admin")
+                    b.HasOne("System_ApiTest.Domain.Entities.Admin", "Admin")
                         .WithMany()
                         .HasForeignKey("AdminId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -873,21 +873,21 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Admin");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Booking", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Booking", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Customer", "Customer")
+                    b.HasOne("System_ApiTest.Domain.Entities.Customer", "Customer")
                         .WithMany("Bookings")
                         .HasForeignKey("CustomerId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Calendarday", "CalendarDay")
+                    b.HasOne("System_ApiTest.Domain.Entities.Calendarday", "CalendarDay")
                         .WithMany("Bookings")
                         .HasForeignKey("EventDate")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackage", "MenuPackage")
                         .WithMany()
                         .HasForeignKey("MenuPackageId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -899,15 +899,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("MenuPackage");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.BookingMenuItem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.BookingMenuItem", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("MenuItems")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menuitem", "Item")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menuitem", "Item")
                         .WithMany("BookingMenuItems")
                         .HasForeignKey("ItemId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -918,15 +918,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Item");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.BookingMenuTray", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.BookingMenuTray", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("MenuTrays")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menutray", "Tray")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menutray", "Tray")
                         .WithMany("BookingMenuTrays")
                         .HasForeignKey("TrayId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -937,15 +937,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Tray");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Bookinghistory", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Bookinghistory", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("History")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Admin", "ChangedBy")
+                    b.HasOne("System_ApiTest.Domain.Entities.Admin", "ChangedBy")
                         .WithMany()
                         .HasForeignKey("ChangedById")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -956,21 +956,21 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("ChangedBy");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Bookingpackageselection", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Bookingpackageselection", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("PackageSelections")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menuitem", "MenuItem")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menuitem", "MenuItem")
                         .WithMany()
                         .HasForeignKey("MenuItemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menupackageslot", "Slot")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackageslot", "Slot")
                         .WithMany("Selections")
                         .HasForeignKey("MenuPackageSlotId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -983,26 +983,26 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Slot");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Invoice", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Invoice", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithOne("Invoice")
-                        .HasForeignKey("System_ApiTest.Models.Invoice", "BookingId")
+                        .HasForeignKey("System_ApiTest.Domain.Entities.Invoice", "BookingId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Booking");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.MenuTrayDish", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.MenuTrayDish", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Menuitem", "MenuItem")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menuitem", "MenuItem")
                         .WithMany("TrayDishes")
                         .HasForeignKey("MenuItemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menutray", "MenuTray")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menutray", "MenuTray")
                         .WithMany("Dishes")
                         .HasForeignKey("MenuTrayId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1013,9 +1013,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("MenuTray");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menuitem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menuitem", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackage", "MenuPackage")
                         .WithMany("Items")
                         .HasForeignKey("MenuPackageId")
                         .OnDelete(DeleteBehavior.SetNull);
@@ -1023,15 +1023,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("MenuPackage");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackagefixeditem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackagefixeditem", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Menuitem", "MenuItem")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menuitem", "MenuItem")
                         .WithMany()
                         .HasForeignKey("MenuItemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackage", "MenuPackage")
                         .WithMany("FixedItems")
                         .HasForeignKey("MenuPackageId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1042,9 +1042,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("MenuPackage");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackageslot", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackageslot", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Menupackage", "MenuPackage")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackage", "MenuPackage")
                         .WithMany("Slots")
                         .HasForeignKey("MenuPackageId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1053,9 +1053,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("MenuPackage");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Payment", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Payment", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Invoice", "Invoice")
+                    b.HasOne("System_ApiTest.Domain.Entities.Invoice", "Invoice")
                         .WithMany("Payments")
                         .HasForeignKey("InvoiceId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1064,15 +1064,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Invoice");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Rental", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Rental", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("Rentals")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("System_ApiTest.Models.Rentalitem", "RentalItem")
+                    b.HasOne("System_ApiTest.Domain.Entities.Rentalitem", "RentalItem")
                         .WithMany("Rentals")
                         .HasForeignKey("RentalItemId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -1083,9 +1083,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("RentalItem");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Service", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Service", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Booking", "Booking")
+                    b.HasOne("System_ApiTest.Domain.Entities.Booking", "Booking")
                         .WithMany("Services")
                         .HasForeignKey("BookingId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1094,9 +1094,9 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Booking");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.SlotCategory", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.SlotCategory", b =>
                 {
-                    b.HasOne("System_ApiTest.Models.Menupackageslot", "Slot")
+                    b.HasOne("System_ApiTest.Domain.Entities.Menupackageslot", "Slot")
                         .WithMany("AllowedCategories")
                         .HasForeignKey("MenuPackageSlotId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1105,12 +1105,12 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Slot");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Admin", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Admin", b =>
                 {
                     b.Navigation("CreatedAssistants");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Booking", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Booking", b =>
                 {
                     b.Navigation("History");
 
@@ -1127,29 +1127,29 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Services");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Calendarday", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Calendarday", b =>
                 {
                     b.Navigation("Bookings");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Customer", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Customer", b =>
                 {
                     b.Navigation("Bookings");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Invoice", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Invoice", b =>
                 {
                     b.Navigation("Payments");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menuitem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menuitem", b =>
                 {
                     b.Navigation("BookingMenuItems");
 
                     b.Navigation("TrayDishes");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackage", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackage", b =>
                 {
                     b.Navigation("FixedItems");
 
@@ -1158,21 +1158,21 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Navigation("Slots");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menupackageslot", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menupackageslot", b =>
                 {
                     b.Navigation("AllowedCategories");
 
                     b.Navigation("Selections");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Menutray", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Menutray", b =>
                 {
                     b.Navigation("BookingMenuTrays");
 
                     b.Navigation("Dishes");
                 });
 
-            modelBuilder.Entity("System_ApiTest.Models.Rentalitem", b =>
+            modelBuilder.Entity("System_ApiTest.Domain.Entities.Rentalitem", b =>
                 {
                     b.Navigation("Rentals");
                 });

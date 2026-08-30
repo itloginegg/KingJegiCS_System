@@ -33,17 +33,27 @@ namespace System_ApiTest.Application.Services
         /// flat fee could exceed a small chair order outright, so RentalService reserves
         /// on 5% of its own total instead.
         ///
+        /// FoodDelivery reserves on deliveryRate (SystemSettings.DepositPercentage) of
+        /// its own total, for the same reason as rentals — a flat fee is the wrong shape
+        /// for an order that might be smaller than the fee — and because a delivery now
+        /// settles in two phases (down payment at issue, balance on the delivery day)
+        /// rather than one payment on arrival.
+        ///
         /// Capped at the grand total in every case — the fee can never exceed the thing
         /// being paid for, which also means paying a small order in full always secures
         /// it. Every consumer of the fee goes through here so the deposit ladder, the
         /// milestone plan, and the auto-confirm threshold can never disagree about what
         /// "reserved" means.
         /// </summary>
-        public static decimal ReservationFeeFor(BookingType bookingType, decimal grandTotal, decimal defaultFee)
+        public static decimal ReservationFeeFor(
+            BookingType bookingType, decimal grandTotal, decimal defaultFee, decimal deliveryRate)
         {
-            var fee = bookingType == BookingType.RentalService
-                ? Math.Round(grandTotal * RentalReservationRate, 2)
-                : defaultFee;
+            var fee = bookingType switch
+            {
+                BookingType.RentalService => Math.Round(grandTotal * RentalReservationRate, 2),
+                BookingType.FoodDelivery => Math.Round(grandTotal * deliveryRate, 2),
+                _ => defaultFee,
+            };
 
             return Math.Max(0m, Math.Min(fee, grandTotal));
         }

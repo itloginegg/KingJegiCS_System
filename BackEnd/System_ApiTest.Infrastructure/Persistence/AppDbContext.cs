@@ -50,8 +50,9 @@ namespace System_ApiTest.Infrastructure.Persistence
         public DbSet<Invoice> Invoices => Set<Invoice>();
         public DbSet<Payment> Payments => Set<Payment>();
 
-        // Operational planning (no money, no stock — see BookingResourceAllocation)
+        // Operational planning (no money; Lines consume stock — see BookingResourceAllocation)
         public DbSet<BookingResourceAllocation> BookingResourceAllocations => Set<BookingResourceAllocation>();
+        public DbSet<BookingResourceAllocationLine> BookingResourceAllocationLines => Set<BookingResourceAllocationLine>();
 
         // Notifications (background worker idempotency ledger)
         public DbSet<Sentnotification> SentNotifications => Set<Sentnotification>();
@@ -69,6 +70,9 @@ namespace System_ApiTest.Infrastructure.Persistence
         // Support chat (customer ↔ staff)
         public DbSet<Supportthread> SupportThreads => Set<Supportthread>();
         public DbSet<Supportmessage> SupportMessages => Set<Supportmessage>();
+        // Unsent assistant-written replies. Never joined into the message queries above —
+        // that separation is what keeps unapproved model output away from the customer.
+        public DbSet<Supportdraft> SupportDrafts => Set<Supportdraft>();
 
         // Customer reviews (moderated before they go public)
         public DbSet<Testimonial> Testimonials => Set<Testimonial>();
@@ -430,15 +434,62 @@ namespace System_ApiTest.Infrastructure.Persistence
                  .HasForeignKey<BookingResourceAllocation>(a => a.BookingId)
                  .OnDelete(DeleteBehavior.Cascade);
 
-                // Counts are physical objects and people: never negative, and an upper
-                // bound so a slipped keypress can't store a six-figure chair order.
-                e.ToTable(t => t.HasCheckConstraint(
-                    "CK_BookingResourceAllocation_CountsInRange",
-                    "[LongTables] BETWEEN 0 AND 100000 AND [RoundTables] BETWEEN 0 AND 100000 AND " +
-                    "[Chairs] BETWEEN 0 AND 100000 AND [Plates] BETWEEN 0 AND 100000 AND " +
-                    "[Spoons] BETWEEN 0 AND 100000 AND [Forks] BETWEEN 0 AND 100000 AND " +
-                    "[Waiters] BETWEEN 0 AND 100000 AND [Servers] BETWEEN 0 AND 100000 AND " +
-                    "[Others] BETWEEN 0 AND 100000"));
+                // The nine count columns (and their range check) were dropped when the
+                // plan moved to catalog-backed Lines; the equivalent bound now lives on
+                // BookingResourceAllocationLine.Quantity.
+            });
+
+            // ---------------- BookingResourceAllocationLine ----------------
+            b.Entity<BookingResourceAllocationLine>(e =>
+            {
+                // Cascade with the plan, which itself cascades with the booking: a line
+                // is meaningless without the plan it belongs to, and it holds no
+                // financial or audit record worth preserving.
+                e.HasOne(l => l.Allocation).WithMany(a => a.Lines)
+                 .HasForeignKey(l => l.AllocationId)
+                 .OnDelete(DeleteBehavior.Cascade);
+
+                // Restrict, unlike the plan: deleting a catalog item that a live event
+                // is holding stock for would silently un-reserve it. Items are
+                // deactivated (IsActive = false), not deleted, so this should never fire.
+                e.HasOne(l => l.RentalItem).WithMany()
+                 .HasForeignKey(l => l.RentalItemId)
+                 .OnDelete(DeleteBehavior.Restrict);
+
+                e.HasOne(l => l.ServiceItem).WithMany()
+                 .HasForeignKey(l => l.ServiceItemId)
+                 .OnDelete(DeleteBehavior.Restrict);
+
+                // Lookups are always "what does this item owe across all events", so the
+                // index leads with the item rather than the allocation.
+                e.HasIndex(l => l.RentalItemId);
+                e.HasIndex(l => l.ServiceItemId);
+
+                // One line per item per plan, so quantities are edited rather than
+                // accumulated into duplicates that each reserve stock separately.
+                e.HasIndex(l => new { l.AllocationId, l.RentalItemId })
+                 .IsUnique()
+                 .HasFilter("[RentalItemId] IS NOT NULL");
+                e.HasIndex(l => new { l.AllocationId, l.ServiceItemId })
+                 .IsUnique()
+                 .HasFilter("[ServiceItemId] IS NOT NULL");
+
+                e.ToTable(t =>
+                {
+                    // Exactly one target. A line pointing at both a rental and a service
+                    // would have no single meaning for stock; one pointing at neither is
+                    // an orphan quantity.
+                    t.HasCheckConstraint(
+                        "CK_BookingResourceAllocationLine_OneTarget",
+                        "([RentalItemId] IS NOT NULL AND [ServiceItemId] IS NULL) OR " +
+                        "([RentalItemId] IS NULL AND [ServiceItemId] IS NOT NULL)");
+
+                    // Positive, not just non-negative: a zero-quantity line is a line
+                    // that should have been removed, and it would read as a commitment.
+                    t.HasCheckConstraint(
+                        "CK_BookingResourceAllocationLine_QuantityInRange",
+                        "[Quantity] BETWEEN 1 AND 100000");
+                });
             });
 
             // ---------------- Payment ----------------
@@ -556,6 +607,32 @@ namespace System_ApiTest.Infrastructure.Persistence
                 e.HasIndex(m => new { m.ThreadId, m.CreatedAt });
                 e.HasOne(m => m.Thread).WithMany(t => t.Messages)
                  .HasForeignKey(m => m.ThreadId).OnDelete(DeleteBehavior.Cascade);
+            });
+
+            b.Entity<Supportdraft>(e =>
+            {
+                // 20, not the 10 used above: "Attention" and "Discarded" don't fit in 10.
+                e.Property(d => d.Topic).HasConversion<string>().HasMaxLength(20);
+                e.Property(d => d.Urgency).HasConversion<string>().HasMaxLength(20);
+                e.Property(d => d.Status).HasConversion<string>().HasMaxLength(20);
+
+                // Mirrors the Supportmessage index above: the admin panel reads a
+                // thread's drafts newest-first.
+                e.HasIndex(d => new { d.ThreadId, d.CreatedAt });
+
+                // One live draft per customer message, enforced in the DB so a re-run
+                // of the triage worker can't stack duplicates on the same trigger.
+                e.HasIndex(d => d.TriggerMessageId).IsUnique();
+
+                // Two cascade routes into this table (thread->draft directly, and
+                // thread->message->draft) trip SQL Server's multiple-cascade-paths
+                // rule (error 1785), so the redundant direct edge is the one cut.
+                // Drafts still disappear with their thread: deleting a thread
+                // cascades to its messages, which cascade to their drafts.
+                e.HasOne(d => d.Thread).WithMany()
+                 .HasForeignKey(d => d.ThreadId).OnDelete(DeleteBehavior.NoAction);
+                e.HasOne(d => d.TriggerMessage).WithMany()
+                 .HasForeignKey(d => d.TriggerMessageId).OnDelete(DeleteBehavior.Cascade);
             });
 
             // ---------------- Testimonial ----------------

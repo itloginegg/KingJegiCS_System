@@ -151,13 +151,17 @@ namespace System_ApiTest.Application.DTOs
 
             // FullService: the event fields are required.
             if (EndDate is null)
-                yield return new ValidationResult("End date is required for a full-service booking.", new[] { nameof(EndDate) });
+                yield return new ValidationResult("End date is required.", new[] { nameof(EndDate) });
             if (EndTime is null)
-                yield return new ValidationResult("End time is required for a full-service booking.", new[] { nameof(EndTime) });
-            if (EventType is null)
-                yield return new ValidationResult("Event type is required for a full-service booking.", new[] { nameof(EventType) });
-            if (GuestCount is null or <= 0)
-                yield return new ValidationResult("Guest count must be greater than zero.", new[] { nameof(GuestCount) });
+                yield return new ValidationResult("End time is required.", new[] { nameof(EndTime) });
+
+            if (BookingType == BookingType.FullService)
+            {
+                if (EventType is null)
+                    yield return new ValidationResult("Event type is required for a full-service booking.", new[] { nameof(EventType) });
+                if (GuestCount is null or <= 0)
+                    yield return new ValidationResult("Guest count must be greater than zero.", new[] { nameof(GuestCount) });
+            }
 
             if (EndDate is not null && EndTime is not null)
             {

@@ -60,7 +60,7 @@ namespace System_ApiTest.Hubs
         /// alone, so passing the same customer through one instance would make reading a
         /// reply aloud consume the same budget as asking a question. Registered in Program.cs.
         /// </summary>
-        public const string ReadAloudLimiterKey = "read-aloud";
+        public const string ReadAloudLimiterKey = System_ApiTest.Infrastructure.Services.Airatelimiter.ReadAloudKey;
 
         /// <summary>Mirrors AssistantChatRequest's cap so voice and text reject the same input.</summary>
         private const int MaxMessageLength = 4000;
@@ -420,6 +420,7 @@ namespace System_ApiTest.Hubs
                           ?? Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
     }
 }
+
 
 
 

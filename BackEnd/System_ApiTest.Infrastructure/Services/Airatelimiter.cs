@@ -11,6 +11,17 @@ namespace System_ApiTest.Infrastructure.Services
     /// </summary>
     public class Airatelimiter
     {
+    /// <summary>DI key for the read-aloud counter. See VoiceHub.</summary>
+    public const string ReadAloudKey = "read-aloud";
+
+    /// <summary>
+    /// DI key for the support-drafting counter. Keyed by the CUSTOMER whose message
+    /// triggered the draft, even though the draft is generated for staff — that is the
+    /// only id that bounds the cost, so one customer spamming a thread cannot drain the
+    /// shared free tier. See SupportTriageWorker.
+    /// </summary>
+    public const string SupportDraftKey = "support-draft";
+
         private sealed class Window
         {
             public DateTime Start;
@@ -50,4 +61,5 @@ namespace System_ApiTest.Infrastructure.Services
         }
     }
 }
+
 
