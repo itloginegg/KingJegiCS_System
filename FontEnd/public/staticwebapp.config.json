@@ -1,0 +1,14 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/avatar/*", "/audio/*", "/gallery/*"]
+  },
+  "mimeTypes": {
+    ".vrm": "application/octet-stream",
+    ".vrma": "application/octet-stream",
+    ".glb": "model/gltf-binary"
+  },
+  "globalHeaders": {
+    "Cache-Control": "no-cache"
+  }
+}

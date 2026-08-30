@@ -758,46 +758,74 @@ export function updateRentalDeliveryStatus(
 
 // ── Event resource allocation (admin) ──────────────────────────────────
 //
-// Operational planning only: furniture, service-ware and staff counts. Carries no
-// price, consumes no rental stock, and never touches the booking total or invoice —
-// which is exactly why, unlike the rentals/services lines, it can be edited on a
-// Confirmed booking. See Models/Bookingresourceallocation.cs for the full rationale.
-
-/** The nine counts. Same shape for a saved plan and for the server's suggestion. */
-export interface ResourceCounts {
-  longTables: number;
-  roundTables: number;
-  chairs: number;
-  plates: number;
-  spoons: number;
-  forks: number;
-  waiters: number;
-  servers: number;
-  others: number;
-}
+// Operational planning: which rental items and services are held for one event.
+// Carries no price and never touches the booking total or invoice — which is exactly
+// why, unlike the priced rentals/services lines, it can be edited on a Confirmed
+// booking. It DOES consume rental stock. See Bookingresourceallocation.cs for the
+// full rationale.
 
 /** Matches BookingResourcesDto. */
 export interface BookingResources {
   bookingId: string;
   eventType: string | null;
   guestCount: number | null;
-  /** null when no plan has been saved yet — distinct from a plan that is all zeros. */
-  allocation: ResourceCounts | null;
   isApproved: boolean;
   approvedAt: string | null;
   updatedAt: string | null;
   /**
-   * Server-computed from guest count and the SystemSettings ratios, so the formulas
-   * live in one place and can be retuned without a redeploy. null when the booking has
-   * no guest count to scale from (a food delivery).
+   * The plan: which specific rental items and services are held for this event. An
+   * empty list is a real state ("nothing assigned yet").
    */
-  suggested: ResourceCounts | null;
+  lines: AllocationLine[];
+  /** Active rental items available to assign, with remaining stock for this booking's dates. */
+  rentalCatalog: AllocationCatalogItem[];
+  /** Active services available to assign. Services carry no stock. */
+  serviceCatalog: AllocationCatalogItem[];
 }
 
-/** The nine counts plus the plan-level sign-off. Matches SaveResourceAllocationDto. */
-export interface SaveResourcesPayload extends ResourceCounts {
+/** One saved assignment. Matches AllocationLineDto. */
+export interface AllocationLine {
+  id: string;
+  kind: 'Rental' | 'Service';
+  itemId: string;
+  name: string;
+  quantity: number;
+  /** Remaining stock EXCLUDING this booking's own hold. null for services. */
+  available: number | null;
+}
+
+/** A pickable catalog row. Matches AllocationCatalogItemDto. */
+export interface AllocationCatalogItem {
+  id: string;
+  name: string;
+  category: string | null;
+  available: number | null;
+  /**
+   * What the SystemSettings guest-count ratios imply for this item — the replacement
+   * for the old per-section SUGGEST buttons. null when no ratio applies to the item
+   * (linens, lights, an ambiguously named table, an unrecognised service) or the
+   * booking has no guest count; the SUGGEST control is hidden in that case rather than
+   * offering a meaningless 0.
+   */
+  suggestedQuantity: number | null;
+}
+
+/** One requested assignment. Exactly one id is set. Matches SaveAllocationLineDto. */
+export interface SaveAllocationLine {
+  rentalItemId?: string | null;
+  serviceItemId?: string | null;
+  quantity: number;
+}
+
+/** The plan-level sign-off plus the assignments. Matches SaveResourceAllocationDto. */
+export interface SaveResourcesPayload {
   /** Approves the RESOURCE PLAN. Does not change the booking's status. */
   isApproved: boolean;
+  /**
+   * The COMPLETE desired set of assignments — the server replaces the plan's lines
+   * with exactly these. Omit to leave existing lines untouched; send [] to clear them.
+   */
+  lines?: SaveAllocationLine[];
 }
 
 /** Read a booking's resource plan and the suggestion for it. Owner/Assistant only. */

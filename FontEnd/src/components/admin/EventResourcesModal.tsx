@@ -5,91 +5,34 @@ import {
   eventTypeLabel,
   getBookingResources,
   saveBookingResources,
+  type AllocationCatalogItem,
   type BookingResources,
-  type ResourceCounts,
+  type SaveAllocationLine,
 } from '../../api/bookingApi';
 
-/** The nine allocation fields, in render order. */
-type FieldKey = keyof ResourceCounts;
-
-interface FieldSpec {
-  key: FieldKey;
-  label: string;
-}
-
-interface SectionSpec {
-  icon: string;
-  title: string;
-  fields: FieldSpec[];
-}
-
 /**
- * The three sections, declared as data so the markup below is one loop rather than
- * three near-identical copies.
- *
- * These nine labels deliberately do NOT map onto the rental/service catalog, and
- * nothing here should try to resolve them to catalog rows: RentalCategory has Chairs
- * and Tables but no long/round distinction (that is a per-item name) and no utensils
- * category at all, and the ServiceName enum has Waiter but neither Server nor Others.
- * The allocation is a flat set of integer columns precisely so none of that matters.
- */
-const SECTIONS: SectionSpec[] = [
-  {
-    icon: '🚚',
-    title: 'Furniture Allocation',
-    fields: [
-      { key: 'longTables', label: 'Long Tables' },
-      { key: 'roundTables', label: 'Round Tables' },
-      { key: 'chairs', label: 'Chairs' },
-    ],
-  },
-  {
-    icon: '🍴',
-    title: 'Utensils & Service-ware',
-    fields: [
-      { key: 'plates', label: 'Plates' },
-      { key: 'spoons', label: 'Spoons' },
-      { key: 'forks', label: 'Forks' },
-    ],
-  },
-  {
-    icon: '👥',
-    title: 'Personnel Allocation',
-    fields: [
-      { key: 'waiters', label: 'Waiters' },
-      { key: 'servers', label: 'Servers' },
-      { key: 'others', label: 'Others' },
-    ],
-  },
-];
-
-const ALL_KEYS = SECTIONS.flatMap((s) => s.fields.map((f) => f.key));
-
-/**
- * Form state keeps every count as a STRING, not a number.
+ * Quantities are held as STRINGS in the inputs, not numbers.
  *
  * A number-typed state can't represent an empty box, so clearing a field to retype it
- * would snap back to 0 mid-keystroke. It also lets `Others` render blank rather than a
- * meaningless 0, which is how the design shows it. Blanks are coerced to 0 on save.
+ * would snap back to 0 mid-keystroke. Blanks are coerced on read.
  */
-type FormState = Record<FieldKey, string>;
-
-const EMPTY_FORM: FormState = ALL_KEYS.reduce(
-  (acc, k) => ({ ...acc, [k]: '' }),
-  {} as FormState,
-);
-
-function toForm(counts: ResourceCounts): FormState {
-  return ALL_KEYS.reduce(
-    (acc, k) => ({ ...acc, [k]: String(counts[k]) }),
-    {} as FormState,
-  );
-}
-
 /** Blank or unparseable becomes 0; negatives are clamped away. */
 function toCount(raw: string): number {
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * A catalog assignment being edited. Mirrors AllocationLine, minus the server id —
+ * lines are replaced wholesale on save, so a client-side id would be meaningless.
+ */
+interface DraftLine {
+  kind: 'Rental' | 'Service';
+  itemId: string;
+  name: string;
+  quantity: number;
+  /** Stock left for this booking's dates, excluding its own hold. null for services. */
+  available: number | null;
 }
 
 export interface EventResourcesModalProps {
@@ -113,14 +56,16 @@ export interface EventResourcesModalProps {
 }
 
 /**
- * Plan the furniture, service-ware and staff for one booking.
+ * Assign the rental inventory and services one booking will use.
  *
- * This writes to a dedicated allocation record, NOT to the booking's rentals or
- * services. That is the whole point: rental and service lines are priced, they consume
- * real stock, and they are editable only while a booking is a Draft — so routing an
- * operational headcount through them would have been rejected server-side on every
- * Confirmed booking, re-priced signed contracts, and eaten sellable inventory. The
- * priced Draft-only path still exists separately as DraftItemsEditor.
+ * This writes to a dedicated allocation record, NOT to the booking's priced rentals or
+ * services. That is the whole point: priced lines are editable only while a booking is
+ * a Draft, so routing an operational assignment through them would have been rejected
+ * server-side on every Confirmed booking and re-priced signed contracts. The priced
+ * Draft-only path still exists separately as DraftItemsEditor.
+ *
+ * These assignments DO hold real rental stock, which is what stops the same chairs
+ * being promised to two events.
  */
 export default function EventResourcesModal({
   bookingId,
@@ -132,12 +77,16 @@ export default function EventResourcesModal({
   notify,
   readOnly = false,
 }: EventResourcesModalProps) {
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [resources, setResources] = useState<BookingResources | null>(null);
   const [approved, setApproved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lines, setLines] = useState<DraftLine[]>([]);
+  const [rentalPick, setRentalPick] = useState('');
+  const [rentalQty, setRentalQty] = useState('1');
+  const [servicePick, setServicePick] = useState('');
+  const [serviceQty, setServiceQty] = useState('1');
 
   const token = readSession()?.token ?? '';
 
@@ -152,10 +101,19 @@ export default function EventResourcesModal({
         if (cancelled) return;
         setResources(res);
         setApproved(res.isApproved);
-        // A booking with no plan yet opens empty rather than pre-filled with the
-        // suggestion: SUGGEST is an action the admin takes, and silently seeding the
-        // fields would make a machine guess look like a saved decision.
-        if (res.allocation) setForm(toForm(res.allocation));
+        // Seeded from what's saved: these already hold stock, so showing them empty
+        // would invite an admin to save over the plan and silently release inventory.
+        // Nothing is ever pre-filled from SUGGEST — a machine guess must not look like
+        // a saved decision.
+        setLines(
+          (res.lines ?? []).map((l) => ({
+            kind: l.kind,
+            itemId: l.itemId,
+            name: l.name,
+            quantity: l.quantity,
+            available: l.available,
+          })),
+        );
       })
       .catch((e) => {
         if (cancelled) return;
@@ -187,30 +145,42 @@ export default function EventResourcesModal({
     return guestCount != null ? `${typeLabel} • ${guestCount} Pax` : typeLabel;
   }, [eventType, guestCount, bookingName]);
 
-  const applySuggestion = useCallback(
-    (section: SectionSpec) => {
-      const suggested = resources?.suggested;
-      if (!suggested) return;
-      setForm((prev) => {
-        const next = { ...prev };
-        // Only this section's fields — each SUGGEST fills its own group and leaves the
-        // admin's work in the other two alone.
-        for (const f of section.fields) next[f.key] = String(suggested[f.key]);
+  /**
+   * Adds a pick to the draft list, or folds it into the existing line for that item.
+   * Two lines for one item would be rejected by the unique index, and "40 then 10"
+   * plainly means 50.
+   */
+  const addLine = useCallback(
+    (kind: 'Rental' | 'Service', item: AllocationCatalogItem | undefined, rawQty: string) => {
+      if (!item) return;
+      const qty = toCount(rawQty);
+      if (qty <= 0) return;
+
+      setLines((prev) => {
+        const at = prev.findIndex((l) => l.kind === kind && l.itemId === item.id);
+        if (at === -1) {
+          return [...prev, { kind, itemId: item.id, name: item.name, quantity: qty, available: item.available }];
+        }
+        const next = [...prev];
+        next[at] = { ...next[at], quantity: next[at].quantity + qty };
         return next;
       });
     },
-    [resources],
+    [],
   );
 
   const save = useCallback(async () => {
     setSaving(true);
     setError(null);
     try {
-      const counts = ALL_KEYS.reduce(
-        (acc, k) => ({ ...acc, [k]: toCount(form[k]) }),
-        {} as ResourceCounts,
+      // Sent as the complete desired set: the server replaces the plan's lines with
+      // exactly these, so an omitted line is a released reservation.
+      const payloadLines: SaveAllocationLine[] = lines.map((l) =>
+        l.kind === 'Rental'
+          ? { rentalItemId: l.itemId, quantity: l.quantity }
+          : { serviceItemId: l.itemId, quantity: l.quantity },
       );
-      await saveBookingResources(token, bookingId, { ...counts, isApproved: approved });
+      await saveBookingResources(token, bookingId, { isApproved: approved, lines: payloadLines });
       notify?.('success', approved ? 'Resource allocation approved.' : 'Resource allocation saved.');
       onSaved?.();
       onClose();
@@ -221,11 +191,21 @@ export default function EventResourcesModal({
     } finally {
       setSaving(false);
     }
-  }, [form, approved, token, bookingId, notify, onSaved, onClose]);
-
-  const canSuggest = resources?.suggested != null;
+  }, [approved, lines, token, bookingId, notify, onSaved, onClose]);
   /** Anything that edits the form is off while saving, and off entirely when read-only. */
   const locked = saving || readOnly;
+
+  /**
+   * The rows currently chosen in the two pickers, so SUGGEST can read the quantity the
+   * server worked out for that specific item.
+   *
+   * SUGGEST is per item rather than per section now. The old buttons filled a fixed box
+   * ("Chairs"), which only worked because there was exactly one of each; a catalog may
+   * hold three chair products or none, so the ratio comes from the item's category and
+   * the admin still says which product it applies to.
+   */
+  const pickedRental = resources?.rentalCatalog.find((i) => i.id === rentalPick);
+  const pickedService = resources?.serviceCatalog.find((s) => s.id === servicePick);
 
   return (
     <div className="adm-modal-overlay" onClick={() => !saving && onClose()}>
@@ -311,87 +291,259 @@ export default function EventResourcesModal({
             </p>
           ) : (
             <>
-              {SECTIONS.map((section) => (
-                <div key={section.title} style={{ marginBottom: '1.4rem' }}>
-                  <div
+
+              {/* ── Catalog assignments ──
+                  The whole plan. Rendered even when there is nothing to pick, so an
+                  empty catalog reads as "no items set up" rather than a missing
+                  feature. */}
+              <div style={{ marginBottom: '1.4rem' }}>
+                <div style={{ margin: '0 0 0.3rem' }}>
+                  <span
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '1rem',
-                      marginBottom: '0.7rem',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: '0.66rem',
+                      letterSpacing: '0.16em',
+                      textTransform: 'uppercase',
+                      fontWeight: 500,
+                      color: 'var(--text-dim)',
                     }}
                   >
-                    <span
-                      style={{
-                        fontFamily: 'var(--font-body)',
-                        fontSize: '0.66rem',
-                        letterSpacing: '0.16em',
-                        textTransform: 'uppercase',
-                        fontWeight: 500,
-                        color: 'var(--text-dim)',
-                      }}
-                    >
-                      <span aria-hidden="true" style={{ marginRight: '0.45rem' }}>
-                        {section.icon}
-                      </span>
-                      {section.title}
-                    </span>
-                    {/* Dropped entirely when read-only — a suggestion is an editing
-                        aid, and nothing here can be changed. */}
-                    {!readOnly && (
+                    <span aria-hidden="true" style={{ marginRight: '0.45rem' }}>📦</span>
+                    Assigned Inventory &amp; Services
+                  </span>
+                </div>
+                <p
+                  style={{
+                    margin: '0 0 0.8rem',
+                    fontFamily: 'var(--font-body)',
+                    fontSize: '0.7rem',
+                    fontWeight: 300,
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Holds real stock for this event so the same items can&apos;t be booked twice.
+                  Adds no charge — a package price already covers what it includes.
+                </p>
+
+                {lines.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '0.8rem' }}>
+                    {lines.map((l) => {
+                      // available excludes this booking's own hold, so the comparison is
+                      // "can it grow to this?" rather than "is it already reserved?".
+                      const over = l.available != null && l.quantity > l.available;
+                      return (
+                        <div
+                          key={`${l.kind}-${l.itemId}`}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '0.75rem',
+                            padding: '0.55rem 0.7rem',
+                            borderRadius: 'var(--r-sm, 6px)',
+                            border: `1px solid ${over ? 'var(--danger)' : 'var(--border)'}`,
+                            background: 'var(--bg-subtle)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontFamily: 'var(--font-body)',
+                              fontSize: '0.78rem',
+                              color: 'var(--text-primary)',
+                              minWidth: 0,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {l.name}
+                            <span style={{ color: 'var(--text-dim)', fontWeight: 300 }}>
+                              {' '}
+                              · {l.kind === 'Rental' ? 'Rental' : 'Service'}
+                            </span>
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                            {over && (
+                              <span style={{ fontSize: '0.68rem', color: 'var(--danger)' }}>
+                                only {l.available} left
+                              </span>
+                            )}
+                            <input
+                              className="adm-input square"
+                              type="number"
+                              min={1}
+                              aria-label={`Quantity for ${l.name}`}
+                              value={String(l.quantity)}
+                              disabled={locked}
+                              readOnly={readOnly}
+                              style={{ width: 78 }}
+                              onChange={(e) =>
+                                setLines((prev) =>
+                                  prev.map((x) =>
+                                    x.kind === l.kind && x.itemId === l.itemId
+                                      ? { ...x, quantity: toCount(e.target.value) }
+                                      : x,
+                                  ),
+                                )
+                              }
+                            />
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                className="adm-btn outline"
+                                disabled={saving}
+                                aria-label={`Remove ${l.name}`}
+                                style={{ fontSize: '0.65rem', padding: '0.3rem 0.6rem' }}
+                                onClick={() =>
+                                  setLines((prev) =>
+                                    prev.filter((x) => !(x.kind === l.kind && x.itemId === l.itemId)),
+                                  )
+                                }
+                              >
+                                REMOVE
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {lines.length === 0 && (
+                  <p
+                    style={{
+                      margin: '0 0 0.8rem',
+                      fontFamily: 'var(--font-body)',
+                      fontSize: '0.72rem',
+                      fontWeight: 300,
+                      color: 'var(--text-dim)',
+                    }}
+                  >
+                    Nothing assigned yet — this event is holding no inventory.
+                  </p>
+                )}
+
+                {!readOnly && (
+                  <>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <select
+                        className="adm-input"
+                        aria-label="Rental item to assign"
+                        style={{ flex: 1, minWidth: 0 }}
+                        value={rentalPick}
+                        disabled={locked || resources?.rentalCatalog.length === 0}
+                        onChange={(e) => setRentalPick(e.target.value)}
+                      >
+                        <option value="">
+                          {resources?.rentalCatalog.length ? 'Select a rental item…' : 'No rental items in the catalog'}
+                        </option>
+                        {(resources?.rentalCatalog ?? []).map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.name} ({i.available} available)
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="adm-input square"
+                        type="number"
+                        min={1}
+                        aria-label="Rental quantity"
+                        style={{ width: 78 }}
+                        value={rentalQty}
+                        disabled={locked}
+                        onChange={(e) => setRentalQty(e.target.value)}
+                      />
+                      {/* Only shown once an item is picked AND a ratio applies to it —
+                          linens, lights and ambiguously named tables have none, and a
+                          button that filled in 0 would read as "bring none". */}
+                      {pickedRental?.suggestedQuantity != null && (
+                        <button
+                          type="button"
+                          className="adm-btn success"
+                          disabled={locked}
+                          title={`Suggest ${pickedRental.suggestedQuantity} for ${guestCount} pax`}
+                          style={{ fontSize: '0.6rem', padding: '0.3rem 0.7rem', letterSpacing: '0.1em' }}
+                          onClick={() => setRentalQty(String(pickedRental.suggestedQuantity))}
+                        >
+                          SUGGEST {pickedRental.suggestedQuantity}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="adm-btn success"
-                        onClick={() => applySuggestion(section)}
-                        // Disabled rather than hidden when there's no guest count to scale
-                        // from, so the control's absence isn't mistaken for a missing feature.
-                        disabled={!canSuggest || saving}
-                        title={
-                          canSuggest
-                            ? 'Fill this section from the guest count'
-                            : 'No guest count on this booking to base a suggestion on'
-                        }
-                        style={{ fontSize: '0.6rem', padding: '0.3rem 0.75rem', letterSpacing: '0.12em' }}
+                        disabled={locked || !rentalPick}
+                        style={{ fontSize: '0.62rem', padding: '0.3rem 0.8rem', letterSpacing: '0.1em' }}
+                        onClick={() => {
+                          addLine('Rental', pickedRental, rentalQty);
+                          setRentalPick('');
+                          setRentalQty('1');
+                        }}
                       >
-                        SUGGEST
+                        ADD
                       </button>
-                    )}
-                  </div>
+                    </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.8rem' }}>
-                    {section.fields.map((f) => (
-                      <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                        <label
-                          htmlFor={`res-${f.key}`}
-                          style={{
-                            fontFamily: 'var(--font-body)',
-                            fontSize: '0.65rem',
-                            letterSpacing: '0.14em',
-                            textTransform: 'uppercase',
-                            fontWeight: 500,
-                            color: 'var(--text-dim)',
-                          }}
-                        >
-                          {f.label}
-                        </label>
-                        <input
-                          id={`res-${f.key}`}
-                          className="adm-input square"
-                          type="number"
-                          min={0}
-                          value={form[f.key]}
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <select
+                        className="adm-input"
+                        aria-label="Service to assign"
+                        style={{ flex: 1, minWidth: 0 }}
+                        value={servicePick}
+                        disabled={locked || resources?.serviceCatalog.length === 0}
+                        onChange={(e) => setServicePick(e.target.value)}
+                      >
+                        <option value="">
+                          {resources?.serviceCatalog.length ? 'Select a service…' : 'No services in the catalog'}
+                        </option>
+                        {(resources?.serviceCatalog ?? []).map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="adm-input square"
+                        type="number"
+                        min={1}
+                        aria-label="Service quantity"
+                        style={{ width: 78 }}
+                        value={serviceQty}
+                        disabled={locked}
+                        onChange={(e) => setServiceQty(e.target.value)}
+                      />
+                      {/* Staffing ratios only recognise waiters and servers; anything
+                          else has no suggestion, exactly as the old "Others" box was
+                          always 0. */}
+                      {pickedService?.suggestedQuantity != null && (
+                        <button
+                          type="button"
+                          className="adm-btn success"
                           disabled={locked}
-                          readOnly={readOnly}
-                          onChange={(e) =>
-                            setForm((prev) => ({ ...prev, [f.key]: e.target.value }))
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                          title={`Suggest ${pickedService.suggestedQuantity} for ${guestCount} pax`}
+                          style={{ fontSize: '0.6rem', padding: '0.3rem 0.7rem', letterSpacing: '0.1em' }}
+                          onClick={() => setServiceQty(String(pickedService.suggestedQuantity))}
+                        >
+                          SUGGEST {pickedService.suggestedQuantity}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="adm-btn success"
+                        disabled={locked || !servicePick}
+                        style={{ fontSize: '0.62rem', padding: '0.3rem 0.8rem', letterSpacing: '0.1em' }}
+                        onClick={() => {
+                          addLine('Service', pickedService, serviceQty);
+                          setServicePick('');
+                          setServiceQty('1');
+                        }}
+                      >
+                        ADD
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
 
               {/* Makes IsApproved settable in BOTH directions. Without it the flag could
                   only ever be turned on, and a plan approved by mistake would be stuck.

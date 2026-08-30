@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+﻿import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Check } from 'lucide-react';
 import { Navbar } from '../components/landing/Navbar';
@@ -479,8 +479,8 @@ export function BookingPage() {
           : true;
 
   const eventComplete =
-    eventType && guests >= 1 && eventDate && startTime && endDate && endTime
-    && !dateTooSoon && detailsComplete;
+    (serviceFlow === 'rentals' ? true : (eventType && guests >= 1)) &&
+    eventDate && startTime && endDate && endTime && !dateTooSoon && detailsComplete;
 
   const stepLabels = useMemo(() => {
     if (serviceFlow === 'event') return ['Contact', 'Event Details', 'Package & Add‑ons', 'Review'];
@@ -1226,7 +1226,7 @@ export function BookingPage() {
               </p>
 
               <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
-                <label className="bk-label">Event Type</label>
+                <label className="bk-label">Event Type{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                 <div className="bk-type-grid">
                   {EVENT_TYPES.map(t => (
                     <div key={t.value} className={`bk-type-card${eventType === t.value ? ' active' : ''}`} onClick={() => chooseEventType(t.value)}>
@@ -1344,7 +1344,7 @@ export function BookingPage() {
 
               <div className="bk-grid">
                 <div className="bk-field">
-                  <label className="bk-label">Expected Guests</label>
+                  <label className="bk-label">Expected Guests{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                   <input className="bk-input" type="number" min={1} value={guests} onChange={e => setGuests(Number(e.target.value) || 1)} />
                 </div>
                 <div className="bk-field">
@@ -1853,3 +1853,5 @@ export function BookingPage() {
     </>
   );
 }
+
+

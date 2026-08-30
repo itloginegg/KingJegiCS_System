@@ -83,6 +83,7 @@ import {
   listSupportThreads,
   getSupportThread,
   replySupport,
+  discardDraft,
   setSupportStatus,
   attachmentUrl,
   SupportApiError,
@@ -860,6 +861,28 @@ function NewBookingModal({ onClose, onCreated, notify }: {
    Chat Support (item 3) — customer ↔ staff. Lists every thread, opens one to
    reply, live-refreshes via the "SupportMessage" event on the payment hub.
 ───────────────────────────────────────────────────────────────────────── */
+/* Inbox ordering: urgency band first, most-recent-activity within each band. Threads
+   with no draft yet (every thread while drafting is off) share one rank, so the list
+   falls back to exactly the LastMessageAt ordering it has always had. */
+const URGENCY_RANK: Record<string, number> = { Urgent: 0, Attention: 1, Routine: 2 };
+const urgencyRank = (u?: string | null) => (u ? URGENCY_RANK[u] ?? 3 : 3);
+
+/** Small caps label used for the topic and urgency chips in the thread list. */
+function InboxChip({ label, tone }: { label: string; tone: 'urgent' | 'attention' | 'neutral' }) {
+  const palette = {
+    urgent: { bg: 'var(--accent)', fg: 'var(--accent-text)' },
+    attention: { bg: 'var(--primary-muted)', fg: 'var(--text-primary)' },
+    neutral: { bg: 'var(--bg-subtle)', fg: 'var(--text-muted)' },
+  }[tone];
+  return (
+    <span style={{
+      background: palette.bg, color: palette.fg, fontSize: '0.5rem', fontWeight: 600,
+      letterSpacing: '0.08em', textTransform: 'uppercase', borderRadius: 'var(--r-full)',
+      padding: '0.1rem 0.4rem', whiteSpace: 'nowrap',
+    }}>{label}</span>
+  );
+}
+
 function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info', m: string) => void }) {
   const [threads, setThreads] = useState<SupportThreadSummary[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | 'Open' | 'Closed'>('all');
@@ -871,6 +894,9 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
   const [loadingThreads, setLoadingThreads] = useState(true);
   const endRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  /* The draft already poured into the composer. Tracked so a thread refresh (the hub
+     fires on every message) cannot re-fill the box underneath someone who is typing. */
+  const prefilledDraftRef = useRef<string | null>(null);
 
   const statusRef = useRef(statusFilter);
   useEffect(() => { statusRef.current = statusFilter; }, [statusFilter]);
@@ -902,6 +928,8 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
     const session = readSession();
     if (!session) return;
     setSelectedId(id);
+    prefilledDraftRef.current = null;
+    setInput('');
     try {
       setThread(await getSupportThread(session.token, id));
       await loadThreads();   // unread counts change after marking read
@@ -912,6 +940,16 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
 
   useEffect(() => { setLoadingThreads(true); void loadThreads(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread]);
+
+  /* Pre-fill the composer from a new draft — once, and never over anything already
+     typed. Pre-filling is the ONLY thing a draft does: the box stays fully editable and
+     Send always posts whatever is actually in it. */
+  useEffect(() => {
+    const draft = thread?.draft;
+    if (!draft || prefilledDraftRef.current === draft.id) return;
+    prefilledDraftRef.current = draft.id;
+    setInput((current) => (current.trim() ? current : draft.text));
+  }, [thread]);
 
   // Live: the backend broadcasts "SupportMessage" on the payment hub on every message.
   useEffect(() => {
@@ -946,13 +984,31 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
     clearAttachment();
     setSending(true);
     try {
-      await replySupport(session.token, selectedId, text, file);
+      // Provenance only — the server records Sent or Edited by comparing what was
+      // actually posted against the draft text.
+      await replySupport(session.token, selectedId, text, file, thread?.draft?.id ?? null);
       await refreshOpen();
       await loadThreads();
     } catch (err) {
       notify('error', err instanceof SupportApiError ? err.message : 'Could not send the reply.');
     } finally {
       setSending(false);
+    }
+  };
+
+  const discard = async () => {
+    const draft = thread?.draft;
+    if (!draft || !selectedId) return;
+    const session = readSession();
+    if (!session) return;
+    try {
+      await discardDraft(session.token, selectedId, draft.id);
+      setInput('');
+      prefilledDraftRef.current = null;
+      await refreshOpen();
+      await loadThreads();
+    } catch (err) {
+      notify('error', err instanceof SupportApiError ? err.message : 'Could not discard the draft.');
     }
   };
 
@@ -994,7 +1050,10 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
             <div style={{ padding: '1.2rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>Loading…</div>
           ) : threads.length === 0 ? (
             <div style={{ padding: '1.2rem', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No support threads yet.</div>
-          ) : threads.map((t) => (
+          ) : [...threads]
+              .sort((a, b) => urgencyRank(a.urgency) - urgencyRank(b.urgency)
+                || new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime())
+              .map((t) => (
             <button key={t.id} type="button" onClick={() => void openThread(t.id)} style={{
               display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
               padding: '0.7rem 0.8rem', borderRadius: 'var(--r-lg)', marginBottom: '0.2rem',
@@ -1005,6 +1064,12 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
                 {t.unreadFromCustomer > 0 && <span style={{ background: 'var(--accent)', color: 'var(--accent-text)', fontSize: '0.55rem', fontWeight: 600, borderRadius: 'var(--r-full)', padding: '0.1rem 0.4rem' }}>{t.unreadFromCustomer}</span>}
                 {t.status === 'Closed' && <span style={{ color: 'var(--text-dim)', fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Closed</span>}
               </div>
+              {(t.topic || t.urgency) && (
+                <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                  {t.urgency && <InboxChip label={t.urgency} tone={t.urgency === 'Urgent' ? 'urgent' : t.urgency === 'Attention' ? 'attention' : 'neutral'} />}
+                  {t.topic && <InboxChip label={t.topic} tone="neutral" />}
+                </div>
+              )}
               <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '0.15rem' }}>{t.lastMessagePreview ?? 'No messages yet'}</div>
               <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>{when(t.lastMessageAt)}</div>
             </button>
@@ -1065,6 +1130,18 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
                 })}
                 <div ref={endRef} />
               </div>
+              {thread.draft && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 1rem', borderTop: '1px solid var(--border)', background: 'var(--bg-subtle)', fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {thread.draft.toolsUsed.length > 0
+                      ? `Drafted from: ${thread.draft.toolsUsed.join(', ')}`
+                      : 'Drafted reply — review before sending'}
+                  </span>
+                  <button type="button" onClick={() => void discard()} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: '0.65rem', padding: 0, textDecoration: 'underline' }}>
+                    Discard
+                  </button>
+                </div>
+              )}
               {attachment && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 1rem', borderTop: '1px solid var(--border)', background: 'var(--bg-subtle)', fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={attachment.name}>
@@ -6660,49 +6737,44 @@ export function AdminDashboardPage() {
 
                     {/* ── Event gallery ── */}
                     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '22px' }}>
-                      <FieldLabel text="Event Gallery" />
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.3rem 0 0.9rem' }}>
-                        Photos for the public “Events by King Jegi” gallery. Separate from
-                        announcements — uploading here notifies nobody and posts nothing.
-                      </p>
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '16px' }}>Event Gallery</div>
 
-                      <div className="form-grid full">
-                        <div className="form-row">
-                          <label htmlFor="gal-caption">Caption <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— optional, used as alt text</span></label>
-                          <input
-                            id="gal-caption"
-                            className="adm-input"
-                            maxLength={200}
-                            placeholder="Golden anniversary at Villa Estrella"
-                            value={galCaption}
-                            disabled={galUploading}
-                            onChange={(e) => setGalCaption(e.target.value)}
-                          />
-                        </div>
-                        <div className="form-row">
-                          <label htmlFor="gal-images">
-                            Photos <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— JPG/PNG/WebP, 5 MB each</span>
-                          </label>
-                          <input
-                            id="gal-images"
-                            type="file"
-                            multiple
-                            accept="image/jpeg,image/png,image/webp"
-                            className="adm-input square"
-                            disabled={galUploading || galleryImages.length >= GALLERY_MAX_IMAGES}
-                            onChange={uploadGalleryImages}
-                            style={{ padding: '0.45rem' }}
-                          />
-                        </div>
-                      </div>
+                      <label htmlFor="gal-caption" style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>Caption</label>
+                      <input
+                        id="gal-caption"
+                        maxLength={200}
+                        placeholder="Golden anniversary at Villa Estrella"
+                        value={galCaption}
+                        disabled={galUploading}
+                        onChange={(e) => setGalCaption(e.target.value)}
+                        style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '13px', marginBottom: '4px' }}
+                      />
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '16px' }}>Optional, used as alt text.</div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginRight: 'auto' }}>
+                      <label htmlFor="gal-images" style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>Photos</label>
+                      <input
+                        id="gal-images"
+                        type="file"
+                        multiple
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={galUploading || galleryImages.length >= GALLERY_MAX_IMAGES}
+                        onChange={uploadGalleryImages}
+                        style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 13px', marginBottom: '4px' }}
+                      />
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', color: 'var(--text-muted)' }}>JPG/PNG/WebP, 5 MB each. Uploading here notifies nobody and posts nothing.</div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', marginTop: '16px' }}>
+                        <span style={{ flex: 1, minWidth: '200px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
                           {galUploading
                             ? 'Uploading…'
                             : `${galleryImages.length} of ${GALLERY_MAX_IMAGES} images in the gallery`}
                         </span>
-                        <button type="button" className="adm-btn outline" disabled={galLoading || galUploading} onClick={() => void loadGallery()}>
+                        <button
+                          type="button"
+                          disabled={galLoading || galUploading}
+                          onClick={() => void loadGallery()}
+                          style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 600, lineHeight: 1, background: 'var(--accent)', color: 'var(--accent-text)', border: 'none', padding: '14px 22px', borderRadius: '999px', opacity: (galLoading || galUploading) ? 0.45 : 1, cursor: (galLoading || galUploading) ? 'not-allowed' : 'pointer' }}
+                        >
                           {galLoading ? 'Refreshing…' : 'Refresh'}
                         </button>
                       </div>

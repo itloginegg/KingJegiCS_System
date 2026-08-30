@@ -3,7 +3,8 @@
  *
  *   Customer: GET /api/support/thread, POST /api/support/messages
  *   Admin:    GET /api/support/threads, GET /api/support/threads/{id},
- *             POST /api/support/threads/{id}/messages, POST /api/support/threads/{id}/status
+ *             POST /api/support/threads/{id}/messages, POST /api/support/threads/{id}/status,
+ *             POST /api/support/threads/{id}/drafts/{draftId}/discard
  */
 
 const API_BASE_URL = (
@@ -44,6 +45,22 @@ export function attachmentUrl(urlPath?: string | null): string | null {
   return `${API_BASE_URL}${urlPath.startsWith('/') ? '' : '/'}${urlPath}`;
 }
 
+/**
+ * Mirrors SupportDraftDto — an assistant-written reply nobody has sent yet.
+ * Only ever present on the ADMIN thread endpoint; the customer's response does not
+ * carry the key at all.
+ */
+export interface SupportDraft {
+  id: string;
+  text: string;
+  /** SupportTopic name: Booking | Payment | Menu | Rental | Complaint | Other. */
+  topic: string;
+  /** SupportUrgency name: Routine | Attention | Urgent. */
+  urgency: string;
+  /** Read-only tools the draft is grounded in, for the citation line above the composer. */
+  toolsUsed: string[];
+}
+
 /** Mirrors SupportThreadDto. */
 export interface SupportThread {
   id: string;
@@ -52,6 +69,8 @@ export interface SupportThread {
   status: string;
   lastMessageAt: string;
   messages: SupportMessage[];
+  /** Absent on the customer endpoint, and on any thread with no pending draft. */
+  draft?: SupportDraft | null;
 }
 
 /** Mirrors SupportThreadSummaryDto. */
@@ -64,6 +83,10 @@ export interface SupportThreadSummary {
   lastMessageAt: string;
   lastMessagePreview: string | null;
   unreadFromCustomer: number;
+  /** Null until a draft exists — which is every thread while support drafting is off. */
+  topic?: string | null;
+  urgency?: string | null;
+  hasDraft?: boolean;
 }
 
 async function readErrorMessage(res: Response): Promise<string | null> {
@@ -122,10 +145,11 @@ export function sendSupportMessage(
   return request<SupportMessage>('/api/support/messages', 'POST', token, buildMessageForm(text, attachment));
 }
 
-function buildMessageForm(text: string, attachment?: File | null): FormData {
+function buildMessageForm(text: string, attachment?: File | null, draftId?: string | null): FormData {
   const form = new FormData();
   form.append('text', text);
   if (attachment) form.append('attachment', attachment);
+  if (draftId) form.append('draftId', draftId);
   return form;
 }
 
@@ -137,15 +161,26 @@ export function listSupportThreads(token: string, status?: 'Open' | 'Closed'): P
 export function getSupportThread(token: string, id: string): Promise<SupportThread> {
   return request<SupportThread>(`/api/support/threads/${id}`, 'GET', token);
 }
+/**
+ * Posts a staff reply. Pass draftId when the text started as an assistant draft, so the
+ * server can record whether it went out as written (Sent) or was changed first (Edited).
+ * The text sent is whatever is in the composer — the draft id is only provenance.
+ */
 export function replySupport(
   token: string,
   id: string,
   text: string,
   attachment?: File | null,
+  draftId?: string | null,
 ): Promise<SupportMessage> {
   return request<SupportMessage>(
-    `/api/support/threads/${id}/messages`, 'POST', token, buildMessageForm(text, attachment),
+    `/api/support/threads/${id}/messages`, 'POST', token, buildMessageForm(text, attachment, draftId),
   );
+}
+
+/** Throws a draft away. The row survives as a record; it just stops being offered. */
+export function discardDraft(token: string, id: string, draftId: string): Promise<void> {
+  return request<void>(`/api/support/threads/${id}/drafts/${draftId}/discard`, 'POST', token);
 }
 export function setSupportStatus(token: string, id: string, status: 'Open' | 'Closed'): Promise<void> {
   return request<void>(`/api/support/threads/${id}/status?status=${status}`, 'POST', token);

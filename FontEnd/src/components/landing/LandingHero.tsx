@@ -121,7 +121,7 @@ export function LandingHero({ media, children }: LandingHeroProps) {
           <span className="ui-pill-text">Catering &amp; events · Calamba, Laguna</span>
         </div>
 
-        <h1 className="ui-h1">Farm-fresh feasts, handled end to end.</h1>
+        <h1 className="ui-h1">The fresh feasts, handled end to end.</h1>
 
         <p className="ui-lead">
           Packages, menus and event rentals from one team. Pick your date and we
