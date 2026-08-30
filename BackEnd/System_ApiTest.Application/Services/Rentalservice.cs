@@ -22,7 +22,7 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
-        /// THE definition of "this stock isn't available to me" — the single expression
+        /// THE definition of "this stock isn't available to me" ï¿½ the single expression
         /// every availability question in the system is answered with.
         ///
         /// It lives here as a shared predicate rather than being written out at each
@@ -33,15 +33,15 @@ namespace System_ApiTest.Application.Services
         /// A line counts when the booking is live (Confirmed/Completed, not returned)
         /// AND either:
         ///
-        ///   (a) its rental window overlaps the window being asked about — reserved for
+        ///   (a) its rental window overlaps the window being asked about ï¿½ reserved for
         ///       an overlapping period, even if nothing has physically moved yet; or
-        ///   (b) the goods are physically gone — Delivered, or Damaged and never coming
-        ///       back — which holds whatever the dates say.
+        ///   (b) the goods are physically gone ï¿½ Delivered, or Damaged and never coming
+        ///       back ï¿½ which holds whatever the dates say.
         ///
         /// Pass no window and only (b) applies: the honest answer to "how many are off
         /// the shelf right now", with future reservations excluded.
         ///
-        /// Returned lines never count — those are back. Damaged deliberately still does,
+        /// Returned lines never count ï¿½ those are back. Damaged deliberately still does,
         /// so a broken chair can't quietly become bookable again.
         /// </summary>
         /// <param name="excludeBookingId">The booking being placed, so it can't conflict with itself.</param>
@@ -71,10 +71,108 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
+        /// The allocation half of "this stock isn't available to me" â€” the companion to
+        /// <see cref="CommittedStock"/>, for catalog lines on a booking's resource plan.
+        ///
+        /// It is a SEPARATE expression, not a change to CommittedStock, because that one
+        /// is typed to the Rental table. Every availability question must sum both or it
+        /// will under-report what is committed.
+        ///
+        /// Deliberately stricter than CommittedStock in two ways:
+        ///
+        ///   1. Confirmed only, never Completed. A rental line tracks DeliveryStatus and
+        ///      so knows when goods came back; an allocation line has no such flag, so
+        ///      counting Completed would hold stock forever. Completing the event
+        ///      releases it, as does cancelling (a Cancelled booking is not Confirmed).
+        ///   2. With no window, every Confirmed allocation still counts. CommittedStock
+        ///      can fall back to "physically gone" (Delivered/Damaged) when it has no
+        ///      dates; an allocation has no equivalent, and silently dropping future
+        ///      commitments is exactly the double-booking this feature exists to stop.
+        /// </summary>
+        /// <param name="excludeBookingId">The booking being planned, so it can't conflict with itself.</param>
+        public static System.Linq.Expressions.Expression<Func<BookingResourceAllocationLine, bool>> CommittedAllocation(
+            Guid rentalItemId,
+            Guid? excludeBookingId = null,
+            DateOnly? windowStart = null,
+            DateOnly? windowEnd = null)
+        {
+            var hasWindow = windowStart.HasValue && windowEnd.HasValue;
+            var start = windowStart ?? default;
+            var end = windowEnd ?? default;
+
+            return l => l.RentalItemId == rentalItemId
+                        && (excludeBookingId == null || l.Allocation.BookingId != excludeBookingId)
+                        && l.Allocation.Booking.Status == BookingStatus.Confirmed
+                        && (
+                             !hasWindow
+                             || (l.Allocation.Booking.EventDate <= end
+                                 && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)
+                           );
+        }
+
+        /// <summary>
+        /// Outgoing quantity for EVERY rental item in one pass, for screens that price
+        /// a whole catalog at once (the resource-plan pickers) and would otherwise fire
+        /// two queries per item.
+        ///
+        /// This is the set-based twin of the two expressions above and MUST be changed
+        /// with them â€” it is deliberately placed here, immediately below them, because
+        /// the last time this rule lived in more than one file the copies drifted and
+        /// the catalog disagreed with confirm about the same item.
+        /// </summary>
+        public async Task<Dictionary<Guid, int>> OutgoingByItemAsync(
+            Guid? excludeBookingId = null,
+            DateOnly? windowStart = null,
+            DateOnly? windowEnd = null)
+        {
+            var hasWindow = windowStart.HasValue && windowEnd.HasValue;
+            var start = windowStart ?? default;
+            var end = windowEnd ?? default;
+
+            // Mirrors CommittedStock: live booking, not returned, and either overlapping
+            // the window or physically gone.
+            var rentals = await _db.Rentals
+                .Where(r => (excludeBookingId == null || r.BookingId != excludeBookingId)
+                            && (r.Booking.Status == BookingStatus.Confirmed ||
+                                r.Booking.Status == BookingStatus.Completed)
+                            && r.DeliveryStatus != DeliveryStatus.Returned
+                            && (
+                                 (hasWindow
+                                  && r.Booking.EventDate <= end
+                                  && (r.Booking.EndDate ?? r.Booking.EventDate) >= start)
+                                 || r.DeliveryStatus == DeliveryStatus.Delivered
+                                 || r.DeliveryStatus == DeliveryStatus.Damaged
+                               ))
+                .GroupBy(r => r.RentalItemId)
+                .Select(g => new { g.Key, Qty = g.Sum(r => r.Quantity) })
+                .ToDictionaryAsync(x => x.Key, x => x.Qty);
+
+            // Mirrors CommittedAllocation: Confirmed only, and no physically-gone escape
+            // hatch, so a windowless call still counts every outstanding commitment.
+            var allocations = await _db.BookingResourceAllocationLines
+                .Where(l => l.RentalItemId != null
+                            && (excludeBookingId == null || l.Allocation.BookingId != excludeBookingId)
+                            && l.Allocation.Booking.Status == BookingStatus.Confirmed
+                            && (
+                                 !hasWindow
+                                 || (l.Allocation.Booking.EventDate <= end
+                                     && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)
+                               ))
+                .GroupBy(l => l.RentalItemId!.Value)
+                .Select(g => new { g.Key, Qty = g.Sum(l => l.Quantity) })
+                .ToDictionaryAsync(x => x.Key, x => x.Qty);
+
+            foreach (var (itemId, qty) in allocations)
+                rentals[itemId] = rentals.GetValueOrDefault(itemId) + qty;
+
+            return rentals;
+        }
+
+        /// <summary>
         /// Computes availability on demand (never stored).
         ///
         /// With a date window, answers "how many could a booking over these dates take?"
-        /// — the same question, and the same rule, the confirm-time check applies, so the
+        /// ï¿½ the same question, and the same rule, the confirm-time check applies, so the
         /// catalog can't advertise a shortage the confirm would allow (or vice versa).
         ///
         /// Without one, answers "how many are physically off the shelf right now?".
@@ -96,9 +194,16 @@ namespace System_ApiTest.Application.Services
                 end = end.Value.AddDays(turnaround);
             }
 
+            // Both halves: priced rental lines AND unpriced resource-plan allocations.
+            // Summing only the first is what let a Confirmed package booking hold zero
+            // chairs while its allocation said forty.
             var outgoing = await _db.Rentals
                 .Where(CommittedStock(rentalItemId, null, start, end))
                 .SumAsync(r => (int?)r.Quantity) ?? 0;
+
+            outgoing += await _db.BookingResourceAllocationLines
+                .Where(CommittedAllocation(rentalItemId, null, start, end))
+                .SumAsync(l => (int?)l.Quantity) ?? 0;
 
             return new RentalAvailability(item.TotalQuantity, outgoing, item.TotalQuantity - outgoing);
         }
@@ -124,42 +229,55 @@ namespace System_ApiTest.Application.Services
             await _bookingService.EnsureEditableAsync(bookingId);
             await _bookingService.EnsureNotDeliveryAsync(bookingId);
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-
-            // Lock the catalog row for the duration of the transaction.
-            var item = (await _db.RentalItems
-                .FromSqlInterpolated($"SELECT * FROM [RentalItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {rentalItemId}")
-                .ToListAsync())
-                .FirstOrDefault()
-                ?? throw new BookingRuleException("Rental item not found.");
-
-            if (!item.IsActive)
-                throw new BookingRuleException("This rental item is inactive and cannot be added.");
-
-            // Recompute outgoing inside the locked transaction.
-            var outgoing = await _db.Rentals
-                .Where(r => r.RentalItemId == rentalItemId
-                            && (r.Booking.Status == BookingStatus.Confirmed ||
-                                r.Booking.Status == BookingStatus.Completed)
-                            && r.DeliveryStatus != DeliveryStatus.Returned)
-                .SumAsync(r => (int?)r.Quantity) ?? 0;
-
-            if (outgoing + quantity > item.TotalQuantity)
-                throw new BookingRuleException(
-                    $"Not enough stock for '{item.ItemName}': {item.TotalQuantity - outgoing} available, {quantity} requested.");
-
-            var rental = new Rental
+            // Retries: the execution strategy re-runs this whole block after a transient
+            // failure, and EF accepts changes into the change tracker on SaveChanges even
+            // when the surrounding transaction later rolls back. Clearing at the top of
+            // each attempt makes the retry start from database truth instead of the last
+            // attempt's leftovers â€” without it the Rental added below is still tracked as
+            // Added and gets inserted a second time, double-deducting stock.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            var rental = await strategy.ExecuteAsync(async () =>
             {
-                BookingId = bookingId,
-                RentalItemId = rentalItemId,
-                Quantity = quantity
-            };
-            _db.Rentals.Add(rental);
+                _db.ChangeTracker.Clear();
 
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            // The booking's total changed — recompute (no-op if already frozen).
+                // Lock the catalog row for the duration of the transaction.
+                var item = (await _db.RentalItems
+                    .FromSqlInterpolated($"SELECT * FROM [RentalItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {rentalItemId}")
+                    .ToListAsync())
+                    .FirstOrDefault()
+                    ?? throw new BookingRuleException("Rental item not found.");
+
+                if (!item.IsActive)
+                    throw new BookingRuleException("This rental item is inactive and cannot be added.");
+
+                // Recompute outgoing inside the locked transaction.
+                var outgoing = await _db.Rentals
+                    .Where(r => r.RentalItemId == rentalItemId
+                                && (r.Booking.Status == BookingStatus.Confirmed ||
+                                    r.Booking.Status == BookingStatus.Completed)
+                                && r.DeliveryStatus != DeliveryStatus.Returned)
+                    .SumAsync(r => (int?)r.Quantity) ?? 0;
+
+                if (outgoing + quantity > item.TotalQuantity)
+                    throw new BookingRuleException(
+                        $"Not enough stock for '{item.ItemName}': {item.TotalQuantity - outgoing} available, {quantity} requested.");
+
+                var line = new Rental
+                {
+                    BookingId = bookingId,
+                    RentalItemId = rentalItemId,
+                    Quantity = quantity
+                };
+                _db.Rentals.Add(line);
+
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return line;
+            });
+
+            // The booking's total changed ï¿½ recompute (no-op if already frozen).
             await _bookingService.RecomputeTotalAsync(bookingId);
 
             // Staff-facing: a rental line was added, which changes what has to be
@@ -212,11 +330,11 @@ namespace System_ApiTest.Application.Services
         /// <summary>
         /// Every rental line still needing an admin action, for the returns/check-in list:
         /// Pending (not yet handed over), Delivered (out), Damaged (out, awaiting repair or
-        /// write-off). Returned is excluded — that line is done.
+        /// write-off). Returned is excluded ï¿½ that line is done.
         ///
         /// Pending is included deliberately. A list of only Delivered lines would start
         /// empty and stay empty, because nothing else in the system moves a line off
-        /// Pending — that transition has to be reachable from here too.
+        /// Pending ï¿½ that transition has to be reachable from here too.
         ///
         /// Only Confirmed/Completed bookings count, matching CommittedStock: a cancelled
         /// booking holds no stock, so its lines are not the returns desk's problem.

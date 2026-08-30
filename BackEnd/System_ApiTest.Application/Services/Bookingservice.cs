@@ -149,60 +149,73 @@ namespace System_ApiTest.Application.Services
             // still re-checks under a row lock — this doesn't replace that guarantee.
             await EnsureSlotOpenForNewWindowAsync(null, bookingType, eventDate, start, endDate, end);
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-
-            // Get-or-create the calendar day. Insert it on its own first so a collision
-            // (another booking created the same new date concurrently) can be recovered
-            // from by reusing the existing row, instead of failing the whole create.
-            if (!await _db.CalendarDays.AnyAsync(d => d.Date == eventDate))
+            // Retries: the execution strategy re-runs this whole block after a transient
+            // failure, and EF accepts changes into the change tracker on SaveChanges even
+            // when the surrounding transaction later rolls back. Clearing at the top of
+            // each attempt makes the retry start from database truth instead of the last
+            // attempt's leftovers — without it the Calendarday and the Booking added below
+            // are still tracked as Added and get inserted a second time.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            var booking = await strategy.ExecuteAsync(async () =>
             {
-                _db.CalendarDays.Add(new Calendarday
+                _db.ChangeTracker.Clear();
+
+                await using var tx = await _db.Database.BeginTransactionAsync();
+
+                // Get-or-create the calendar day. Insert it on its own first so a collision
+                // (another booking created the same new date concurrently) can be recovered
+                // from by reusing the existing row, instead of failing the whole create.
+                if (!await _db.CalendarDays.AnyAsync(d => d.Date == eventDate))
                 {
-                    Date = eventDate,
-                    MaxCapacity = settings?.DefaultMaxCapacity ?? 3
-                });
-                try
-                {
-                    await _db.SaveChangesAsync();
+                    _db.CalendarDays.Add(new Calendarday
+                    {
+                        Date = eventDate,
+                        MaxCapacity = settings?.DefaultMaxCapacity ?? 3
+                    });
+                    try
+                    {
+                        await _db.SaveChangesAsync();
+                    }
+                    catch (DbUpdateException)
+                    {
+                        // The day may have been created concurrently. If it now exists,
+                        // detach our duplicate and reuse it; otherwise the error is real.
+                        if (!await _db.CalendarDays.AnyAsync(d => d.Date == eventDate))
+                            throw;
+
+                        var dup = _db.ChangeTracker.Entries<Calendarday>()
+                            .FirstOrDefault(en => en.Entity.Date == eventDate && en.State == EntityState.Added);
+                        if (dup is not null) dup.State = EntityState.Detached;
+                    }
                 }
-                catch (DbUpdateException)
+
+                var created = new Booking
                 {
-                    // The day may have been created concurrently. If it now exists,
-                    // detach our duplicate and reuse it; otherwise the error is real.
-                    if (!await _db.CalendarDays.AnyAsync(d => d.Date == eventDate))
-                        throw;
+                    CustomerId = customerId,
+                    BookingType = bookingType,
+                    EventDate = eventDate,
+                    StartTime = start,
+                    EndDate = endDate,
+                    EndTime = end,
+                    EventType = type,
+                    VenueAddress = venueAddress.Trim(),
+                    ContactNumber = contactNumber?.Trim(),
+                    GuestCount = guestCount,
+                    MenuPackageId = menuPackageId,
+                    BookingName = BuildBookingName(customer.FullName, bookingType, type),
+                    Source = source,
+                    // Status = Draft, DepositStatus = Unpaid, TotalAmount = 0 by default.
+                };
 
-                    var dup = _db.ChangeTracker.Entries<Calendarday>()
-                        .FirstOrDefault(en => en.Entity.Date == eventDate && en.State == EntityState.Added);
-                    if (dup is not null) dup.State = EntityState.Detached;
-                }
-            }
+                // After `type` has been forced to null for a delivery above, so the details
+                // are dropped for exactly the bookings that can't carry them.
+                (details ?? BookingEventDetails.None).ApplyTo(created, type);
 
-            var booking = new Booking
-            {
-                CustomerId = customerId,
-                BookingType = bookingType,
-                EventDate = eventDate,
-                StartTime = start,
-                EndDate = endDate,
-                EndTime = end,
-                EventType = type,
-                VenueAddress = venueAddress.Trim(),
-                ContactNumber = contactNumber?.Trim(),
-                GuestCount = guestCount,
-                MenuPackageId = menuPackageId,
-                BookingName = BuildBookingName(customer.FullName, bookingType, type),
-                Source = source,
-                // Status = Draft, DepositStatus = Unpaid, TotalAmount = 0 by default.
-            };
-
-            // After `type` has been forced to null for a delivery above, so the details
-            // are dropped for exactly the bookings that can't carry them.
-            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
-
-            _db.Bookings.Add(booking);
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                _db.Bookings.Add(created);
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return created;
+            });
 
             // Fold in the package price immediately (full-service only; deliveries have none).
             await RecomputeTotalAsync(booking.Id);
@@ -252,17 +265,16 @@ namespace System_ApiTest.Application.Services
         /// <summary>
         /// deposit_status ladder from verified (SUCCESS) payments:
         ///   Unpaid   — below the reservation fee (date not secured)
-        ///   Reserved — the fee is covered, nothing beyond it (full-service only)
+        ///   Reserved — the fee is covered, nothing beyond it
         ///   Partial  — more than the fee, less than the grand total
         ///   Paid     — fully covered
-        /// Food delivery has no reservation concept: any payment is Partial until full.
+        /// Every booking type has a reservation fee (BookingMath.ReservationFeeFor), so
+        /// the ladder is the same for all of them — deliveries included.
         /// </summary>
         public static DepositStatus DeriveDepositStatus(
-            decimal paid, decimal reservationFee, decimal grandTotal, bool isDelivery)
+            decimal paid, decimal reservationFee, decimal grandTotal)
         {
             if (paid >= grandTotal && grandTotal > 0m) return DepositStatus.Paid;
-            if (isDelivery)
-                return paid > 0m ? DepositStatus.Partial : DepositStatus.Unpaid;
             if (paid > reservationFee) return DepositStatus.Partial;
             if (paid >= reservationFee && reservationFee > 0m) return DepositStatus.Reserved;
             return DepositStatus.Unpaid;
@@ -273,8 +285,7 @@ namespace System_ApiTest.Application.Services
         {
             var booking = await _db.Bookings.FindAsync(bookingId)
                 ?? throw new BookingRuleException("Booking not found.");
-            booking.DepositStatus = DeriveDepositStatus(
-                paid, reservationFee, grandTotal, booking.BookingType == BookingType.FoodDelivery);
+            booking.DepositStatus = DeriveDepositStatus(paid, reservationFee, grandTotal);
             await _db.SaveChangesAsync();
         }
 
@@ -306,11 +317,25 @@ namespace System_ApiTest.Application.Services
                 throw new BookingRuleException(
                     "The reservation fee has not been paid yet — this booking cannot be confirmed.");
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-            await WriteHistorySnapshotAsync(bookingId, adminId, "Confirmed");
-            await ConfirmCoreAsync(booking);
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            // Retries: ConfirmCoreAsync does `CalendarDay.ConfirmedCount += 1`, an
+            // accumulator. The execution strategy re-runs this block on a transient
+            // failure, and EF accepts changes into the tracker on SaveChanges even when
+            // the transaction later rolls back — so a second attempt against the instance
+            // loaded above would increment a day whose count was already bumped, locking
+            // the calendar at a capacity nobody actually booked. Clearing the tracker and
+            // re-loading inside the block makes every attempt start from database truth.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
+                var fresh = await LoadForConfirmAsync(bookingId);
+
+                await using var tx = await _db.Database.BeginTransactionAsync();
+                await WriteHistorySnapshotAsync(bookingId, adminId, "Confirmed");
+                await ConfirmCoreAsync(fresh);
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
         }
 
         /// <summary>
@@ -339,9 +364,10 @@ namespace System_ApiTest.Application.Services
             // button — which refuses while DepositStatus is Unpaid — goes through.
             if (booking.Source == BookingSource.WalkIn) return false;
 
-            // Rentals auto-confirm on their deposit the same way events do; only
-            // deliveries (no reservation fee concept) are excluded.
-            if (booking.BookingType == BookingType.FoodDelivery) return false;
+            // Every booking type auto-confirms on its deposit. Deliveries were excluded
+            // while they had no reservation fee concept; they now reserve on
+            // DepositPercentage of the order like everything else, so a cleared delivery
+            // down payment secures the date on the same terms.
             if (booking.Status != BookingStatus.Pending) return false;
 
             await WriteHistorySnapshotAsync(bookingId, null, "Auto-confirmed on reservation payment");
@@ -468,6 +494,14 @@ namespace System_ApiTest.Application.Services
                     .Where(Rentalservice.CommittedStock(
                         line.RentalItemId, bookingId, windowStart, windowEnd))
                     .SumAsync(r => (int?)r.Quantity) ?? 0;
+
+                // Resource-plan allocations hold the same physical stock, so confirming
+                // must see them too — otherwise a booking confirms against chairs that
+                // another event's allocation is already holding.
+                outgoing += await _db.BookingResourceAllocationLines
+                    .Where(Rentalservice.CommittedAllocation(
+                        line.RentalItemId, bookingId, windowStart, windowEnd))
+                    .SumAsync(l => (int?)l.Quantity) ?? 0;
 
                 if (outgoing + line.Quantity > item.TotalQuantity)
                     throw new BookingRuleException(
@@ -816,29 +850,45 @@ namespace System_ApiTest.Application.Services
                     "note the reservation fee is non-refundable; for payments beyond it you can file a " +
                     "refund request once the cancellation is processed.");
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-
-            await WriteHistorySnapshotAsync(bookingId, adminId, byCustomer ? "Cancelled by customer" : "Cancelled");
-
-            // Only full-service events consume calendar capacity, so only they release
-            // it. (A confirmed delivery never incremented the counter — decrementing
-            // here would steal a slot that belongs to an event.)
-            if (booking.Status == BookingStatus.Confirmed && booking.BookingType == BookingType.FullService)
+            // Retries: the ConfirmedCount decrement below is an accumulator, and the
+            // status guard that gates it is itself overwritten at the bottom of this
+            // block. Re-running against the instance loaded above would release a second
+            // calendar slot — one belonging to another booking. Clearing the tracker and
+            // re-loading inside means each attempt sees the pre-cancel state and the
+            // decrement happens exactly once.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                booking.CalendarDay.ConfirmedCount = Math.Max(0, booking.CalendarDay.ConfirmedCount - 1);
-                booking.CalendarDay.RecalculateLock();      // auto-unlock unless manual
-            }
+                _db.ChangeTracker.Clear();
+                var b = await _db.Bookings
+                    .Include(x => x.CalendarDay)
+                    .FirstOrDefaultAsync(x => x.Id == bookingId)
+                    ?? throw new BookingRuleException("Booking not found.");
 
-            // Cancel the invoice too, so it can't drift to Overdue or accept new
-            // payments. Money already paid is NOT auto-refunded — refunds remain a
-            // deliberate owner action (policy may keep part or all of the deposit).
-            var invoice = await _db.Invoices.FirstOrDefaultAsync(i => i.BookingId == bookingId);
-            if (invoice is not null)
-                invoice.Status = InvoiceStatus.Cancelled;
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            booking.Status = BookingStatus.Cancelled;
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                await WriteHistorySnapshotAsync(bookingId, adminId, byCustomer ? "Cancelled by customer" : "Cancelled");
+
+                // Only full-service events consume calendar capacity, so only they release
+                // it. (A confirmed delivery never incremented the counter — decrementing
+                // here would steal a slot that belongs to an event.)
+                if (b.Status == BookingStatus.Confirmed && b.BookingType == BookingType.FullService)
+                {
+                    b.CalendarDay.ConfirmedCount = Math.Max(0, b.CalendarDay.ConfirmedCount - 1);
+                    b.CalendarDay.RecalculateLock();      // auto-unlock unless manual
+                }
+
+                // Cancel the invoice too, so it can't drift to Overdue or accept new
+                // payments. Money already paid is NOT auto-refunded — refunds remain a
+                // deliberate owner action (policy may keep part or all of the deposit).
+                var invoice = await _db.Invoices.FirstOrDefaultAsync(i => i.BookingId == bookingId);
+                if (invoice is not null)
+                    invoice.Status = InvoiceStatus.Cancelled;
+
+                b.Status = BookingStatus.Cancelled;
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
 
             // Staff copy. The customer's BookingCancelled is written separately by the
             // NotificationWorker when it emails them; this is the one staff can see.
@@ -896,18 +946,30 @@ namespace System_ApiTest.Application.Services
                 throw new BookingRuleException(
                     $"Only a Draft booking can be deleted; this one is {booking.Status}. Cancel it instead.");
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
+            // Retries: EF detaches deleted entities once SaveChanges is accepted, which
+            // happens even when the surrounding transaction later rolls back. Clearing the
+            // tracker and re-loading inside the block keeps a second attempt operating on
+            // rows the rollback restored, rather than on stale detached instances.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
+                var b = await _db.Bookings.FindAsync(bookingId)
+                    ?? throw new BookingRuleException("Booking not found.");
 
-            _db.BookingPackageSelections.RemoveRange(
-                _db.BookingPackageSelections.Where(x => x.BookingId == bookingId));
-            _db.BookingMenuItems.RemoveRange(_db.BookingMenuItems.Where(x => x.BookingId == bookingId));
-            _db.BookingMenuTrays.RemoveRange(_db.BookingMenuTrays.Where(x => x.BookingId == bookingId));
-            _db.Rentals.RemoveRange(_db.Rentals.Where(x => x.BookingId == bookingId));
-            _db.Services.RemoveRange(_db.Services.Where(x => x.BookingId == bookingId));
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            _db.Bookings.Remove(booking);
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                _db.BookingPackageSelections.RemoveRange(
+                    _db.BookingPackageSelections.Where(x => x.BookingId == bookingId));
+                _db.BookingMenuItems.RemoveRange(_db.BookingMenuItems.Where(x => x.BookingId == bookingId));
+                _db.BookingMenuTrays.RemoveRange(_db.BookingMenuTrays.Where(x => x.BookingId == bookingId));
+                _db.Rentals.RemoveRange(_db.Rentals.Where(x => x.BookingId == bookingId));
+                _db.Services.RemoveRange(_db.Services.Where(x => x.BookingId == bookingId));
+
+                _db.Bookings.Remove(b);
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
         }
 
         /// <summary>
@@ -966,21 +1028,34 @@ namespace System_ApiTest.Application.Services
                     $"This booking's scheduled end time hasn't passed yet ({endsAt:MMMM d, yyyy 'at' h:mm tt}) — " +
                     "it can't be marked Completed.");
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-            await WriteHistorySnapshotAsync(bookingId, adminId, "Completed");
-            booking.Status = BookingStatus.Completed;
+            // Retries: once SaveChanges is accepted the tracker marks these writes as
+            // Unchanged, and it stays that way even though the transaction rolled the
+            // database back — so a second attempt would commit nothing and the booking
+            // would silently stay Confirmed. Clearing and re-loading inside the block
+            // makes each attempt re-apply the change against current database state.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
+                var b = await _db.Bookings.FindAsync(bookingId)
+                    ?? throw new BookingRuleException("Booking not found.");
 
-            // The event happened, so anything still Pending was self-evidently
-            // delivered. Returned stays manual — completion says nothing about the
-            // items being picked back up yet.
-            var pendingRentals = await _db.Rentals
-                .Where(r => r.BookingId == bookingId && r.DeliveryStatus == DeliveryStatus.Pending)
-                .ToListAsync();
-            foreach (var r in pendingRentals)
-                r.DeliveryStatus = DeliveryStatus.Delivered;
+                await using var tx = await _db.Database.BeginTransactionAsync();
+                await WriteHistorySnapshotAsync(bookingId, adminId, "Completed");
+                b.Status = BookingStatus.Completed;
 
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                // The event happened, so anything still Pending was self-evidently
+                // delivered. Returned stays manual — completion says nothing about the
+                // items being picked back up yet.
+                var pendingRentals = await _db.Rentals
+                    .Where(r => r.BookingId == bookingId && r.DeliveryStatus == DeliveryStatus.Pending)
+                    .ToListAsync();
+                foreach (var r in pendingRentals)
+                    r.DeliveryStatus = DeliveryStatus.Delivered;
+
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
 
             await _notifications.WriteAsync(NotificationKind.BookingCompleted, bookingId);
         }
@@ -1086,21 +1161,41 @@ namespace System_ApiTest.Application.Services
             // If a package is selected, all its slots must be filled before submitting.
             await _packages.EnsurePackageSelectionsCompleteAsync(bookingId);
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
+            // Retries: GenerateAsync guards on "this booking already has an invoice", but
+            // that guard queries the database — which a rollback has emptied — while the
+            // Invoice from the failed attempt is still tracked as Added. A second attempt
+            // would therefore insert two invoices for one booking. Clearing the tracker
+            // and re-loading the booking (with the same graph ComputeTotal needs) inside
+            // the block keeps each attempt self-contained.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
+                var b = await _db.Bookings
+                    .Include(x => x.MenuPackage)
+                    .Include(x => x.MenuItems)
+                    .Include(x => x.MenuTrays)
+                    .Include(x => x.Rentals).ThenInclude(r => r.RentalItem)
+                    .Include(x => x.Services).ThenInclude(s => s.ServiceItem)
+                    .FirstOrDefaultAsync(x => x.Id == bookingId)
+                    ?? throw new BookingRuleException("Booking not found.");
 
-            await WriteHistorySnapshotAsync(bookingId, null, "Submitted");
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            booking.TotalAmount = ComputeTotal(booking);   // freeze at submit
-            booking.Status = BookingStatus.Pending;
-            await _db.SaveChangesAsync();
+                await WriteHistorySnapshotAsync(bookingId, null, "Submitted");
 
-            // Issue the invoice (issued today, balance due on the event date).
-            await _invoices.GenerateAsync(
-                bookingId,
-                DateOnly.FromDateTime(DateTime.Now),
-                booking.EventDate);
+                b.TotalAmount = ComputeTotal(b);   // freeze at submit
+                b.Status = BookingStatus.Pending;
+                await _db.SaveChangesAsync();
 
-            await tx.CommitAsync();
+                // Issue the invoice (issued today, balance due on the event date).
+                await _invoices.GenerateAsync(
+                    bookingId,
+                    DateOnly.FromDateTime(DateTime.Now),
+                    b.EventDate);
+
+                await tx.CommitAsync();
+            });
         }
 
         /// <summary>
@@ -1150,69 +1245,85 @@ namespace System_ApiTest.Application.Services
 
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
-
-            // If the date is changing, it must still satisfy the minimum lead time.
-            if (booking.EventDate != eventDate)
+            // Retries: every guard below compares the booking's CURRENT field values
+            // against the requested ones — and this same block overwrites those fields at
+            // the bottom. On a second attempt the tracked instance already carries the new
+            // values, so the lead-time check and EnsureSlotOpenForNewWindowAsync would
+            // both be skipped and the edit would commit without ever being validated.
+            // Clearing the tracker and re-loading inside the block makes each attempt
+            // compare against database truth.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            var updated = await strategy.ExecuteAsync(async () =>
             {
-                var leadDays = booking.BookingType == BookingType.FoodDelivery
-                    ? settings?.MinLeadDaysDelivery ?? 1
-                    : settings?.MinLeadDaysFullService ?? 7;
-                var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
-                if (eventDate < earliest)
-                    throw new BookingRuleException(
-                        $"The new date must be at least {leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
-            }
+                _db.ChangeTracker.Clear();
+                var b = await _db.Bookings.FindAsync(bookingId)
+                    ?? throw new BookingRuleException("Booking not found.");
 
-            // The window can change here (date and/or times), so re-run the same early
-            // conflict guard as creation. Excludes this booking so it can't clash with
-            // its own current slot.
-            if (booking.EventDate != eventDate || booking.StartTime != start
-                || booking.EndDate != endDate || booking.EndTime != end)
-            {
-                await EnsureSlotOpenForNewWindowAsync(
-                    bookingId, booking.BookingType, eventDate, start, endDate, end);
-            }
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            // Snapshot the current state before mutating it.
-            await WriteHistorySnapshotAsync(bookingId, changedByAdminId, "Edited");
-
-            // A different package means the old slot choices no longer apply — clear
-            // them so they don't linger as junk (and keep the old package's slots
-            // needlessly edit-locked). The customer re-picks against the new slots.
-            if (booking.MenuPackageId != menuPackageId)
-            {
-                var stale = _db.BookingPackageSelections.Where(x => x.BookingId == bookingId);
-                _db.BookingPackageSelections.RemoveRange(stale);
-            }
-
-            if (booking.EventDate != eventDate && await _db.CalendarDays.FindAsync(eventDate) is null)
-                _db.CalendarDays.Add(new Calendarday
+                // If the date is changing, it must still satisfy the minimum lead time.
+                if (b.EventDate != eventDate)
                 {
-                    Date = eventDate,
-                    MaxCapacity = settings?.DefaultMaxCapacity ?? 3
-                });
+                    var leadDays = b.BookingType == BookingType.FoodDelivery
+                        ? settings?.MinLeadDaysDelivery ?? 1
+                        : settings?.MinLeadDaysFullService ?? 7;
+                    var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
+                    if (eventDate < earliest)
+                        throw new BookingRuleException(
+                            $"The new date must be at least {leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
+                }
 
-            booking.BookingName = bookingName.Trim();
-            booking.EventDate = eventDate;
-            booking.StartTime = start;
-            booking.EndDate = endDate;
-            booking.EndTime = end;
-            booking.EventType = type;
-            booking.VenueAddress = venueAddress.Trim();
-            booking.ContactNumber = contactNumber?.Trim();
-            booking.GuestCount = guestCount;
-            booking.MenuPackageId = menuPackageId;
+                // The window can change here (date and/or times), so re-run the same early
+                // conflict guard as creation. Excludes this booking so it can't clash with
+                // its own current slot.
+                if (b.EventDate != eventDate || b.StartTime != start
+                    || b.EndDate != endDate || b.EndTime != end)
+                {
+                    await EnsureSlotOpenForNewWindowAsync(
+                        bookingId, b.BookingType, eventDate, start, endDate, end);
+                }
 
-            // Keyed on the NEW event type, so an edit that switches type clears the
-            // details belonging to the old one rather than orphaning them.
-            (details ?? BookingEventDetails.None).ApplyTo(booking, type);
+                // Snapshot the current state before mutating it.
+                await WriteHistorySnapshotAsync(bookingId, changedByAdminId, "Edited");
 
-            await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+                // A different package means the old slot choices no longer apply — clear
+                // them so they don't linger as junk (and keep the old package's slots
+                // needlessly edit-locked). The customer re-picks against the new slots.
+                if (b.MenuPackageId != menuPackageId)
+                {
+                    var stale = _db.BookingPackageSelections.Where(x => x.BookingId == bookingId);
+                    _db.BookingPackageSelections.RemoveRange(stale);
+                }
+
+                if (b.EventDate != eventDate && await _db.CalendarDays.FindAsync(eventDate) is null)
+                    _db.CalendarDays.Add(new Calendarday
+                    {
+                        Date = eventDate,
+                        MaxCapacity = settings?.DefaultMaxCapacity ?? 3
+                    });
+
+                b.BookingName = bookingName.Trim();
+                b.EventDate = eventDate;
+                b.StartTime = start;
+                b.EndDate = endDate;
+                b.EndTime = end;
+                b.EventType = type;
+                b.VenueAddress = venueAddress.Trim();
+                b.ContactNumber = contactNumber?.Trim();
+                b.GuestCount = guestCount;
+                b.MenuPackageId = menuPackageId;
+
+                // Keyed on the NEW event type, so an edit that switches type clears the
+                // details belonging to the old one rather than orphaning them.
+                (details ?? BookingEventDetails.None).ApplyTo(b, type);
+
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return b;
+            });
 
             await RecomputeTotalAsync(bookingId);
-            return booking;
+            return updated;
         }
 
         /// <summary>Adds a service line referencing an active catalog ServiceItem, then recomputes the total.</summary>

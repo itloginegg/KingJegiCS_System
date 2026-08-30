@@ -2,7 +2,9 @@ using System_ApiTest.Application;
 using System_ApiTest.Infrastructure;
 using System_ApiTest.Application.Common;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -24,30 +26,52 @@ using System_ApiTest.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Host.UseDefaultServiceProvider((context, options) =>
+{
+    options.ValidateOnBuild = true;
+    options.ValidateScopes  = true;
+});
+
 // Add services to the container.
 
-builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 // Allow the browser-based front end (Vite/React dev server) to call this API.
-// We authenticate with a Bearer token in the Authorization header, not cookies,
-// so we don't need AllowCredentials. In development we accept any localhost
-// origin so the exact dev-server port (5173, 5174, …) doesn't matter.
-// For production, replace this with an explicit WithOrigins(...) allowlist.
+// AllowCredentials() has to stay — SignalR sends credentials on the hub handshake — and a
+// browser rejects AllowCredentials combined with AllowAnyOrigin outright, so outside
+// development the origin list has to be explicit.
+// In development we accept any localhost origin so the exact dev-server port
+// (5173, 5174, …) doesn't matter. Everywhere else the allowlist comes from configuration
+// at Cors:AllowedOrigins (App Service: Cors__AllowedOrigins__0), so adding a front-end
+// origin is a configuration change rather than a redeploy.
 const string FrontendCors = "Frontend";
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(FrontendCors, policy =>
-        policy.SetIsOriginAllowed(origin =>
-              {
-                  if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
-                      return false;
-                  return uri.Host is "localhost" or "127.0.0.1";
-              })
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials());
+    {
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(origin =>
+                  {
+                      if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                          return false;
+                      return uri.Host is "localhost" or "127.0.0.1";
+                  })
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            var allowedOrigins = builder.Configuration
+                .GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+    });
 });
 // camelCase pinned explicitly. SignalR's JSON protocol does NOT inherit the camelCase
 // policy that AddControllers() applies — it has its own serializer options, whose default
@@ -61,12 +85,6 @@ builder.Services.AddSignalR()
     {
         options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.Converters.Add(
-            new System.Text.Json.Serialization.JsonStringEnumConverter());
-    });
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -76,14 +94,40 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new TimeOnlyJsonConverter());
     });
 
-builder.Services.Configure<PayMongoOptions>(
-       builder.Configuration.GetSection(PayMongoOptions.SectionName));
-
-builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+// EnableRetryOnFailure covers the free-tier database auto-pausing: the first connection
+// after an idle period fails with error 40613 while it resumes, and by default EF surfaces
+// that to the caller instead of retrying.
+//
+// This is only safe because every explicit transaction in the Application layer now runs
+// inside Database.CreateExecutionStrategy(). SqlServerRetryingExecutionStrategy refuses
+// user-initiated transactions outright, so switching this on beforehand would have thrown
+// at runtime on every booking, payment, allocation and rental path — compiling cleanly and
+// failing only when the code ran.
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sql => sql.EnableRetryOnFailure(
+            maxRetryCount: 6,
+            maxRetryDelay: TimeSpan.FromSeconds(15),
+            errorNumbersToAdd: null)));
 builder.Services.AddMemoryCache();
-builder.Services.AddApplication();
+builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration);
+
+builder.Services.AddHostedService<DenylistCleanupWorker>();
+
+builder.Services.Configure<DraftCleanupOptions>(
+    builder.Configuration.GetSection(DraftCleanupOptions.SectionName));
+builder.Services.AddHostedService<DraftCleanupWorker>();
+
+builder.Services.Configure<NotificationOptions>(
+    builder.Configuration.GetSection(NotificationOptions.SectionName));
+builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.AddScoped<IHubNotificationService, System_ApiTest.Services.HubNotificationService>();
+
+builder.Services.Configure<SupportTriageOptions>(
+    builder.Configuration.GetSection(SupportTriageOptions.SectionName));
+builder.Services.AddHostedService<SupportTriageWorker>();
 
 // --- Clean Architecture layers (new features only) ---------------------------------
 // Everything above stays exactly as it was: existing Controllers and services are
@@ -150,9 +194,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-
-
 var app = builder.Build();
+
+// Azure App Service terminates TLS at its front end and forwards plain HTTP to the app, so
+// without this every request looks insecure: UseHttpsRedirection() below would redirect
+// requests that already arrived over HTTPS, and every absolute URL we generate would come
+// out as http://. It has to run before anything that reads the scheme or the client IP.
+// KnownNetworks/KnownProxies are cleared deliberately — they default to loopback only, and
+// the App Service front end is not on that list, so leaving them populated makes the
+// middleware ignore the headers silently. The platform is the only route into the app, so
+// it is the only thing that can set these headers on a real request.
+var forwardedHeaders = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+forwardedHeaders.KnownIPNetworks.Clear();
+forwardedHeaders.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeaders);
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -169,6 +227,29 @@ else
 
 app.UseCors(FrontendCors);
 app.UseStaticFiles();
+
+// Uploads — gallery/menu/package/rental images and support attachments — are written under
+// wwwroot by default, and App Service replaces that folder wholesale on every publish, so
+// anything uploaded through the live admin panel would disappear on the next deploy.
+// Setting Uploads:RootPath (App Service: Uploads__RootPath=/home/site/data, which is on the
+// persistent share) points the two static upload helpers at that folder and serves it at the
+// same URLs, so the wwwroot-relative paths already stored in the database still resolve.
+// Locally the setting is absent, none of this runs, and behaviour is unchanged.
+var uploadRoot = builder.Configuration["Uploads:RootPath"];
+if (!string.IsNullOrWhiteSpace(uploadRoot))
+{
+    ImageUploadHelper.RootPathOverride = uploadRoot;
+    FileUploadHelper.RootPathOverride = uploadRoot;
+
+    Directory.CreateDirectory(Path.Combine(uploadRoot, "images"));
+    Directory.CreateDirectory(Path.Combine(uploadRoot, "uploads"));
+
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(uploadRoot),
+        RequestPath = ""   // so stored "/images/packages/x.webp" URLs still resolve
+    });
+}
 
 app.UseAuthentication();
 
@@ -254,6 +335,26 @@ if (app.Environment.IsDevelopment())
 // so old and new coexist with no conflict. One MapXEndpoints() call per feature.
 app.MapVenueEndpoints();
 
+// Outside development CORS is an explicit allowlist (see the AddCors block above). An empty
+// allowlist compiles, starts, and then blocks every browser request with an opaque CORS
+// error in the console — so report it here rather than leaving it to be diagnosed from the
+// front end.
+if (!app.Environment.IsDevelopment())
+{
+    var configuredOrigins = app.Configuration
+        .GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+    if (configuredOrigins.Length == 0)
+        app.Logger.LogWarning(
+            "No Cors:AllowedOrigins configured — the browser will block EVERY request from "
+            + "the front end. Set it in App Service configuration, e.g. "
+            + "Cors__AllowedOrigins__0 = https://<your-app>.azurestaticapps.net "
+            + "(no trailing slash).");
+    else
+        app.Logger.LogInformation(
+            "CORS allowlist ({Count} origin(s)): {Origins}",
+            configuredOrigins.Length, string.Join(", ", configuredOrigins));
+}
+
 // Both AI services are soft dependencies that degrade silently by design, which makes a
 // missing key hard to tell apart from a bug. Report their state once at startup —
 // booleans only, never the keys themselves.
@@ -292,13 +393,3 @@ using (var startupScope = app.Services.CreateScope())
 await DbSeeder.SeedAsync(app.Services);
 
 app.Run();
-
-
-
-
-
-
-
-
-
-

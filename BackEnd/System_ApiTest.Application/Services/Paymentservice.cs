@@ -208,56 +208,82 @@ namespace System_ApiTest.Application.Services
         /// </summary>
         public async Task MarkSuccessAsync(Guid paymentId, DateOnly today)
         {
-            var payment = await _db.Payments
-                .Include(p => p.Invoice)
-                .FirstOrDefaultAsync(p => p.Id == paymentId)
-                ?? throw new BookingRuleException("Payment not found.");
+            // Retries: the execution strategy re-runs this whole block after a transient
+            // failure, and EF accepts changes into the change tracker on SaveChanges even
+            // when the surrounding transaction later rolls back. Clearing at the top of
+            // each attempt makes the retry start from database truth instead of the last
+            // attempt's leftovers.
+            //
+            // This one matters more than most. Without the clear, a retry would find the
+            // payment already flipped to Success in memory (so the tracker treats it as
+            // Unchanged and writes nothing) while the database still says Pending, and
+            // TryAutoConfirmOnReservationAsync would see an already-Confirmed booking and
+            // no-op — leaving money recorded as taken against a booking that never got
+            // confirmed. Everything the block reads is therefore loaded inside it.
+            //
+            // Returns the invoice id so the post-commit notification can be sent, or null
+            // when the payment was already Success and this was a no-op.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            var confirmedInvoiceId = await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
 
-            if (payment.Status == PaymentStatus.Success)
+                var payment = await _db.Payments
+                    .Include(p => p.Invoice)
+                    .FirstOrDefaultAsync(p => p.Id == paymentId)
+                    ?? throw new BookingRuleException("Payment not found.");
+
+                if (payment.Status == PaymentStatus.Success)
+                    return (Guid?)null;
+
+                await using var tx = await _db.Database.BeginTransactionAsync();
+
+                var alreadyPaid = await _invoices.GetPaidTotalAsync(payment.InvoiceId);
+                if (alreadyPaid + payment.AmountPaid > payment.Invoice.GrandTotal)
+                    throw new BookingRuleException(
+                        $"Overpayment: successful payments would total {alreadyPaid + payment.AmountPaid:0.00}, " +
+                        $"exceeding the grand total of {payment.Invoice.GrandTotal:0.00}. " +
+                        $"Remaining balance is {payment.Invoice.GrandTotal - alreadyPaid:0.00} — reject this payment " +
+                        "and have the correct amount recorded.");
+
+                payment.Status = PaymentStatus.Success;
+                await _db.SaveChangesAsync();
+
+                // Reservation auto-confirm: once verified payments reach the reservation fee,
+                // a Pending full-service booking is confirmed (first-come wins the slot). If
+                // the slot is already taken, TryAutoConfirm throws and this whole payment
+                // confirmation rolls back — the deposit isn't accepted for an unavailable slot.
+                var settings = await _settings.GetAsync();
+                var paidNow = alreadyPaid + payment.AmountPaid;
+
+                // The threshold is per booking type — 5% of the total for a rental, the
+                // deposit percentage for a delivery, the flat fee otherwise — and capped at
+                // the grand total, so paying a small order in full always secures it (a flat
+                // fee larger than the order previously meant auto-confirm could never fire
+                // for it).
+                var bookingType = await _db.Bookings
+                    .Where(b => b.Id == payment.Invoice.BookingId)
+                    .Select(b => b.BookingType)
+                    .FirstAsync();
+                var reservationFee = BookingMath.ReservationFeeFor(
+                    bookingType, payment.Invoice.GrandTotal, settings.ReservationFee, settings.DepositPercentage);
+
+                if (paidNow >= reservationFee)
+                    await _bookings.TryAutoConfirmOnReservationAsync(payment.Invoice.BookingId);
+
+                await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
+                await tx.CommitAsync();
+                return payment.InvoiceId;
+            });
+
+            if (confirmedInvoiceId is null)
                 return;
-
-            await using var tx = await _db.Database.BeginTransactionAsync();
-
-            var alreadyPaid = await _invoices.GetPaidTotalAsync(payment.InvoiceId);
-            if (alreadyPaid + payment.AmountPaid > payment.Invoice.GrandTotal)
-                throw new BookingRuleException(
-                    $"Overpayment: successful payments would total {alreadyPaid + payment.AmountPaid:0.00}, " +
-                    $"exceeding the grand total of {payment.Invoice.GrandTotal:0.00}. " +
-                    $"Remaining balance is {payment.Invoice.GrandTotal - alreadyPaid:0.00} — reject this payment " +
-                    "and have the correct amount recorded.");
-
-            payment.Status = PaymentStatus.Success;
-            await _db.SaveChangesAsync();
-
-            // Reservation auto-confirm: once verified payments reach the reservation fee,
-            // a Pending full-service booking is confirmed (first-come wins the slot). If
-            // the slot is already taken, TryAutoConfirm throws and this whole payment
-            // confirmation rolls back — the deposit isn't accepted for an unavailable slot.
-            var settings = await _settings.GetAsync();
-            var paidNow = alreadyPaid + payment.AmountPaid;
-
-            // The threshold is per booking type — 5% of the total for a rental, the flat
-            // fee otherwise — and capped at the grand total, so paying a small order in
-            // full always secures it (a flat fee larger than the order previously meant
-            // auto-confirm could never fire for it).
-            var bookingType = await _db.Bookings
-                .Where(b => b.Id == payment.Invoice.BookingId)
-                .Select(b => b.BookingType)
-                .FirstAsync();
-            var reservationFee = BookingMath.ReservationFeeFor(
-                bookingType, payment.Invoice.GrandTotal, settings.ReservationFee);
-
-            if (paidNow >= reservationFee)
-                await _bookings.TryAutoConfirmOnReservationAsync(payment.Invoice.BookingId);
-
-            await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
-            await tx.CommitAsync();
 
             // Customer-facing, after the commit: their money is verified. This is the
             // moment the polling worker could never observe.
-            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            var (bookingId, customerId) = await ResolveRecipientsAsync(confirmedInvoiceId.Value);
             await _notifications.WriteAsync(
-                NotificationKind.PaymentConfirmed, bookingId, customerId, payment.Id.ToString("N"));
+                NotificationKind.PaymentConfirmed, bookingId, customerId, paymentId.ToString("N"));
         }
 
         /// <summary>
@@ -293,28 +319,46 @@ namespace System_ApiTest.Application.Services
                 throw new BookingRuleException(
                     $"Refund amount ({toRefund:0.00}) exceeds the refundable balance ({remaining:0.00}).");
 
-            await using var tx = await _db.Database.BeginTransactionAsync();
+            // Retries: the execution strategy re-runs this whole block after a transient
+            // failure, and EF accepts changes into the change tracker on SaveChanges even
+            // when the surrounding transaction later rolls back. RefundedAmount is an
+            // ACCUMULATOR — re-running "+= toRefund" against the instance the previous
+            // attempt already incremented would record the refund twice — so the payment
+            // is re-loaded from the database inside the block and the tracker is cleared
+            // first. toRefund itself is computed above, once, against the balance that was
+            // validated, so a retry refunds the same amount rather than re-deriving it.
+            var invoiceId = payment.InvoiceId;
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                _db.ChangeTracker.Clear();
 
-            payment.RefundedAmount += toRefund;
-            payment.Status = payment.RefundedAmount >= payment.AmountPaid
-                ? PaymentStatus.Refunded
-                : PaymentStatus.PartiallyRefunded;
+                var p = await _db.Payments.FindAsync(paymentId)
+                    ?? throw new BookingRuleException("Payment not found.");
 
-            // The refund answers any open request.
-            payment.RefundRequested = false;
-            payment.RefundRequestDecision = null;
+                await using var tx = await _db.Database.BeginTransactionAsync();
 
-            await _db.SaveChangesAsync();
+                p.RefundedAmount += toRefund;
+                p.Status = p.RefundedAmount >= p.AmountPaid
+                    ? PaymentStatus.Refunded
+                    : PaymentStatus.PartiallyRefunded;
 
-            await SyncInvoiceAndDepositAsync(payment.InvoiceId, today);
-            await tx.CommitAsync();
+                // The refund answers any open request.
+                p.RefundRequested = false;
+                p.RefundRequestDecision = null;
+
+                await _db.SaveChangesAsync();
+
+                await SyncInvoiceAndDepositAsync(p.InvoiceId, today);
+                await tx.CommitAsync();
+            });
 
             // A payment can be refunded more than once (partial refunds), so each
             // refund is its own occurrence rather than a once-per-payment event.
-            var (bookingId, customerId) = await ResolveRecipientsAsync(payment.InvoiceId);
+            var (bookingId, customerId) = await ResolveRecipientsAsync(invoiceId);
             await _notifications.WriteAsync(
                 NotificationKind.RefundApproved, bookingId, customerId,
-                Notificationwriteservice.Occurrence(payment.Id));
+                Notificationwriteservice.Occurrence(paymentId));
         }
 
         /// <summary>
@@ -382,10 +426,16 @@ namespace System_ApiTest.Application.Services
             payment.PaymentDateTime = DateTime.Now;   // when the money actually moved
             await _db.SaveChangesAsync();
 
+            // Captured now, because MarkSuccessAsync clears the change tracker on every
+            // retry attempt: the instance mutated above is detached by the time control
+            // comes back here, and reading navigation state off it is no longer safe.
+            var paymentId = payment.Id;
+            var invoiceId = payment.InvoiceId;
+
             try
             {
-                await MarkSuccessAsync(payment.Id, today);
-                await _hubContext.NotifyPaymentUpdatedAsync(payment.InvoiceId);
+                await MarkSuccessAsync(paymentId, today);
+                await _hubContext.NotifyPaymentUpdatedAsync(invoiceId);
                 return "confirmed";
             }
             catch (BookingRuleException ex)
@@ -393,9 +443,17 @@ namespace System_ApiTest.Application.Services
                 // Money was captured by the gateway but our rules block confirmation
                 // (slot lost in the race window, etc.). Keep it Pending and flag it
                 // loudly for the owner instead of silently dropping paid money.
-                payment.GatewayStatusRaw = $"paid — NEEDS ATTENTION: {ex.Message}";
-                await _db.SaveChangesAsync();
-                await _hubContext.NotifyPaymentUpdatedAsync(payment.InvoiceId);
+                //
+                // Re-loaded rather than reusing `payment`: that instance is detached (see
+                // above), so assigning to it and calling SaveChanges would write nothing
+                // and the owner would never see the flag.
+                var stranded = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId);
+                if (stranded is not null)
+                {
+                    stranded.GatewayStatusRaw = $"paid — NEEDS ATTENTION: {ex.Message}";
+                    await _db.SaveChangesAsync();
+                }
+                await _hubContext.NotifyPaymentUpdatedAsync(invoiceId);
                 return $"paid but not confirmable: {ex.Message}";
             }
         }
@@ -471,7 +529,8 @@ namespace System_ApiTest.Application.Services
                 .Where(b => b.Id == invoice.BookingId)
                 .Select(b => b.BookingType)
                 .FirstAsync();
-            var fee = BookingMath.ReservationFeeFor(bookingType, invoice.GrandTotal, settings.ReservationFee);
+            var fee = BookingMath.ReservationFeeFor(
+                bookingType, invoice.GrandTotal, settings.ReservationFee, settings.DepositPercentage);
 
             await _bookings.RecomputeDepositStatusAsync(invoice.BookingId, paid, fee, invoice.GrandTotal);
         }
