@@ -20,13 +20,16 @@ public class AdminsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IJwtTokenService _tokenService;
     private readonly OtpService _otp;
+    private readonly Auditlogservice _audit;
     private readonly PasswordHasher<Admin> _passwordHasher = new();
 
-    public AdminsController(AppDbContext db, IJwtTokenService tokenService, OtpService otp)
+    public AdminsController(AppDbContext db, IJwtTokenService tokenService, OtpService otp,
+        Auditlogservice audit)
     {
         _db = db;
         _tokenService = tokenService;
         _otp = otp;
+        _audit = audit;
     }
 
     /// <summary>
@@ -94,6 +97,15 @@ public class AdminsController : ControllerBase
         if (result == PasswordVerificationResult.Failed)
             return Unauthorized(new { message = "Invalid email or password." });
 
+        // Deactivated accounts are refused here — deliberately AFTER the password check and
+        // with the SAME generic message. Refusing earlier, or with a distinct "account
+        // disabled" message, would turn this endpoint into a user-enumeration oracle.
+        // Returning before the OTP block also means no login code is emailed to a
+        // disabled account. The rehash below is skipped for the same reason: there is no
+        // point writing to a row whose owner is being turned away.
+        if (!admin.IsActive)
+            return Unauthorized(new { message = "Invalid email or password." });
+
         if (result == PasswordVerificationResult.SuccessRehashNeeded)
         {
             admin.PasswordHash = _passwordHasher.HashPassword(admin, dto.Password);
@@ -132,6 +144,12 @@ public class AdminsController : ControllerBase
 
         if (!await _otp.VerifyAsync("Admin", admin.Id, OtpPurpose.Login, dto.Code))
             return Unauthorized(new { message = "Invalid or expired code." });
+
+        // Defence in depth: Login refuses a deactivated admin before a code is ever
+        // issued, so reaching here means the account was deactivated in the window
+        // between the code being sent and confirmed. Same generic-message rule as above.
+        if (!admin.IsActive)
+            return Unauthorized(new { message = "Invalid email or code." });
 
         var role = admin.Role.ToString();
         var (token, expiresAt) = _tokenService.Generate(admin.Id, admin.Email, role);
@@ -196,7 +214,97 @@ public class AdminsController : ControllerBase
             return Conflict(new { message = "An admin with this email already exists." });
         }
 
+        // Shape() is the safe snapshot: no password hash, no navigation properties.
+        await _audit.LogAsync(User, AuditAction.CREATE, "ADMIN", assistant.Id.ToString(),
+            null, Shape(assistant));
+
         return CreatedAtAction(nameof(CreateAssistant), new { id = assistant.Id }, Shape(assistant));
+    }
+
+    /// <summary>
+    /// Soft-deactivate an Assistant. This is the ONLY supported way to "remove" an admin
+    /// — there is deliberately no hard-delete endpoint, because Auditlog.AdminId is a
+    /// required FK to this table and CreatedById self-references it, so deleting a row
+    /// would orphan the audit trail.
+    ///
+    /// The route says "assistants", but the Owner check below is what actually enforces
+    /// that — a URL segment is not a guard.
+    ///
+    /// Takes effect at the next sign-in, NOT instantly: this does not kill a JWT the
+    /// Assistant already holds. The denylist is keyed by jti and we don't store the
+    /// active jti per admin, so an open session keeps working until that token expires
+    /// (JwtSettings.ExpiryMinutes, currently 120). Closing the gap would mean reading
+    /// IsActive in OnTokenValidated on every authenticated request; the residual access
+    /// is bounded and belongs to someone who already had valid credentials, so it was
+    /// not worth the cost. Revisit if the threat model becomes breach containment
+    /// rather than staff offboarding.
+    /// </summary>
+    [Authorize(Roles = "Owner")]
+    [HttpPost("assistants/{id:guid}/deactivate")]
+    public async Task<IActionResult> DeactivateAssistant(Guid id)
+    {
+        var caller = await GetCurrentAdminAsync();
+        if (caller is null)
+            return Unauthorized(); // token valid but the admin no longer exists
+
+        var target = await _db.Admins.FindAsync(id);
+        if (target is null)
+            return NotFound();
+
+        if (target.Role == AdminRole.Owner)
+            return Conflict(new { message = "The Owner account cannot be deactivated." });
+
+        // Belt-and-braces: the Owner check above already covers this while the Owner is a
+        // singleton, but this endpoint shouldn't depend on that invariant holding.
+        if (target.Id == caller.Id)
+            return Conflict(new { message = "You cannot deactivate your own account." });
+
+        // Idempotent: asking for the state it's already in is a no-op, not an error.
+        if (!target.IsActive)
+            return NoContent();
+
+        var before = Shape(target);
+        target.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await _audit.LogAsync(User, AuditAction.UPDATE, "ADMIN", target.Id.ToString(),
+            before, Shape(target));
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Re-activate a previously deactivated Assistant, restoring their ability to sign in.
+    /// </summary>
+    [Authorize(Roles = "Owner")]
+    [HttpPost("assistants/{id:guid}/reactivate")]
+    public async Task<IActionResult> ReactivateAssistant(Guid id)
+    {
+        var caller = await GetCurrentAdminAsync();
+        if (caller is null)
+            return Unauthorized();
+
+        var target = await _db.Admins.FindAsync(id);
+        if (target is null)
+            return NotFound();
+
+        if (target.Role == AdminRole.Owner)
+            return Conflict(new { message = "The Owner account is always active and is not managed here." });
+
+        if (target.Id == caller.Id)
+            return Conflict(new { message = "You cannot reactivate your own account." });
+
+        if (target.IsActive)
+            return NoContent();
+
+        var before = Shape(target);
+        target.IsActive = true;
+        await _db.SaveChangesAsync();
+
+        await _audit.LogAsync(User, AuditAction.UPDATE, "ADMIN", target.Id.ToString(),
+            before, Shape(target));
+
+        return NoContent();
     }
 
     /// <summary>Lists all admins. Owner-only.</summary>
@@ -237,7 +345,8 @@ public class AdminsController : ControllerBase
         a.PhoneNumber,
         Role = a.Role.ToString(),
         a.CreatedById,
-        a.CreatedAt
+        a.CreatedAt,
+        a.IsActive
     };
 }
 

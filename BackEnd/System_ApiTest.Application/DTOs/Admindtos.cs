@@ -45,7 +45,8 @@ namespace System_ApiTest.Application.DTOs
         string PhoneNumber,
         string Role,
         Guid? CreatedById,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+        bool IsActive);
 }
 
 

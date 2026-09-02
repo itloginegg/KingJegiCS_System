@@ -54,6 +54,14 @@ public class Admin
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Soft-deactivation flag. Defaults to true on creation.
+    /// Admins are deactivated, never hard-deleted — Auditlog.AdminId is a required
+    /// FK to this table and CreatedById self-references it, so deleting a row would
+    /// orphan the audit trail. Only Assistants are deactivatable; the Owner is not.
+    /// </summary>
+    public bool IsActive { get; set; } = true;
+
     // ---- Self-referencing created_by relationship ----
 
     /// <summary>

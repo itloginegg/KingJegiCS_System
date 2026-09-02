@@ -1,0 +1,46 @@
+﻿                      <FieldLabel text="Event Gallery" />
+                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0.3rem 0 0.9rem' }}>
+                        Photos for the public “Events by King Jegi” gallery. Separate from
+                        announcements — uploading here notifies nobody and posts nothing.
+                      </p>
+
+                      <div className="form-grid full">
+                        <div className="form-row">
+                          <label htmlFor="gal-caption">Caption <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— optional, used as alt text</span></label>
+                          <input
+                            id="gal-caption"
+                            className="adm-input"
+                            maxLength={200}
+                            placeholder="Golden anniversary at Villa Estrella"
+                            value={galCaption}
+                            disabled={galUploading}
+                            onChange={(e) => setGalCaption(e.target.value)}
+                          />
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="gal-images">
+                            Photos <span style={{ color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 0 }}>— JPG/PNG/WebP, 5 MB each</span>
+                          </label>
+                          <input
+                            id="gal-images"
+                            type="file"
+                            multiple
+                            accept="image/jpeg,image/png,image/webp"
+                            className="adm-input square"
+                            disabled={galUploading || galleryImages.length >= GALLERY_MAX_IMAGES}
+                            onChange={uploadGalleryImages}
+                            style={{ padding: '0.45rem' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, color: 'var(--text-dim)', marginRight: 'auto' }}>
+                          {galUploading
+                            ? 'Uploading…'
+                            : `${galleryImages.length} of ${GALLERY_MAX_IMAGES} images in the gallery`}
+                        </span>
+                        <button type="button" className="adm-btn outline" disabled={galLoading || galUploading} onClick={() => void loadGallery()}>
+                          {galLoading ? 'Refreshing…' : 'Refresh'}
+                        </button>
+                      </div>

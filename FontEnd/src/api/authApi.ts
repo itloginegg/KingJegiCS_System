@@ -1,4 +1,5 @@
 import type {
+  AdminRole,
   AuthCredentials,
   AuthResponse,
   LoginResult,
@@ -44,18 +45,24 @@ function loginEndpoint(role: UserRole): string {
 }
 
 /**
- * Map the backend's role string onto the front end's two-role model.
+ * Map the backend's role string onto the front end's role model.
  * The server issues "Customer", "Owner", or "Assistant" (see AuthResponseDto);
  * anything else is a contract violation we surface instead of guessing, so a
  * misconfigured account can never be routed to the wrong dashboard.
+ *
+ * `role` is what routing keys off, and "Owner" and "Assistant" still collapse
+ * into 'admin' there because they share a dashboard. `adminRole` preserves which
+ * of the two it was, for the Owner-only parts of that dashboard. Both fall out of
+ * this one switch, so the raw string is validated exactly once.
  */
-function toUserRole(backendRole: string): UserRole {
+function toRoles(backendRole: string): { role: UserRole; adminRole?: AdminRole } {
   switch (backendRole.toLowerCase()) {
     case 'customer':
-      return 'customer';
+      return { role: 'customer' };
     case 'owner':
+      return { role: 'admin', adminRole: 'Owner' };
     case 'assistant':
-      return 'admin';
+      return { role: 'admin', adminRole: 'Assistant' };
     default:
       throw new AuthError(
         `Your account has an unrecognized role ("${backendRole}"), so we can't open a dashboard for it. Please contact support.`,
@@ -71,11 +78,15 @@ function nameFromEmail(email: string): string {
 
 /** Maps the backend's AuthResponseDto onto the front end's session shape. */
 function toAuthResponse(data: BackendAuthResponse): AuthResponse {
+  const { role, adminRole } = toRoles(data.role);
+
   const user: User = {
     id: data.id,
     email: data.email,
     name: nameFromEmail(data.email),
-    role: toUserRole(data.role),
+    role,
+    // JSON.stringify drops undefined, so a customer's stored session stays clean.
+    adminRole,
   };
 
   const expiresIn = Math.max(

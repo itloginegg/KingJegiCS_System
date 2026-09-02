@@ -4,6 +4,11 @@
  *  exhaustively checkable in switches and usable as an index/key. */
 export type UserRole = 'customer' | 'admin';
 
+/** The backend's two admin roles, kept separate from UserRole. Both collapse to
+ *  'admin' for routing — they share a dashboard — but the Owner-only parts of that
+ *  dashboard still need to tell them apart. */
+export type AdminRole = 'Owner' | 'Assistant';
+
 /** A user as returned by the backend after a successful login.
  *  Never store secrets (password, raw token) on this shape. */
 export interface User {
@@ -11,6 +16,11 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  /** Which admin role, when `role` is 'admin'; absent for customers.
+   *  Also absent on sessions persisted before this field existed — readSession
+   *  casts stored JSON straight to User, so the compiler cannot catch that.
+   *  Treat undefined as "not the Owner" and fail closed. */
+  adminRole?: AdminRole;
   avatarUrl?: string;
 }
 

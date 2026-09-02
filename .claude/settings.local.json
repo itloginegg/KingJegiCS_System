@@ -36,7 +36,12 @@
       "PowerShell(dotnet build \"C:\\\\Users\\\\USER\\\\Desktop\\\\KingJegiCS_System\\\\BackEnd\\\\System_ApiTest\\\\System_ApiTest.csproj\" --nologo -v q -p:OutDir=\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-USER-Desktop-KingJegiCS-System\\\\acff9d42-e71f-4de4-8c15-e0040b0577bc\\\\scratchpad\\\\apibuild\\\\\")",
       "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" diff --stat)",
       "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" status --short)",
-      "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" log --oneline -5)"
+      "Bash(git -C \"C:/Users/USER/Desktop/KingJegiCS_System\" log --oneline -5)",
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(git ls-remote *)",
+      "Bash(gh auth *)",
+      "Bash(gh pr *)",
+      "PowerShell($c = Get-Command gh -ErrorAction SilentlyContinue; if \\($null -eq $c\\) { \"gh NOT installed\" } else { \"gh at: \" + $c.Source; gh --version })"
     ]
   }
 }

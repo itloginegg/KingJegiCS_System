@@ -4,7 +4,7 @@ import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
   LayoutGrid, CalendarDays, Wallet, Package, Star,
   UtensilsCrossed, Tent, Wrench, ScrollText, Megaphone, Circle, CalendarClock,
-  X, LogOut, AlertTriangle, RotateCw, Check, Pencil,
+  X, LogOut, AlertTriangle, RotateCw, Check, Pencil, Users,
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
@@ -169,6 +169,7 @@ import type { BookingGroupKey, BookingRowActions } from '../components/admin/boo
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
 import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
 import EventResourcesModal from '../components/admin/EventResourcesModal';
+import { StaffPanel } from '../components/admin/StaffPanel';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -601,7 +602,7 @@ export function FieldLabel({ text }: { text: string }) {
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'announcements' | 'placeholder';
+type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'announcements' | 'staff' | 'placeholder';
 
 /** The sidebar's "Booking Histories" link routes here rather than switching tabs in place. */
 const HISTORIES_PATH = '/admin/booking-histories';
@@ -617,7 +618,7 @@ const HISTORIES_PATH = '/admin/booking-histories';
  */
 const URL_TABS = [
   'bookings', 'payments', 'packages', 'menus', 'rentals',
-  'services', 'testimonials', 'audit', 'announcements',
+  'services', 'testimonials', 'audit', 'announcements', 'staff',
 ] as const;
 
 const isUrlTab = (v: string | null): v is (typeof URL_TABS)[number] =>
@@ -4619,6 +4620,20 @@ export function AdminDashboardPage() {
               <span className="adm-nav-icon"><Megaphone size={18} strokeWidth={1.75} /></span>
               Announcements
             </button>
+            {/* Owner-only. This is NOT the security boundary — the server's
+                [Authorize(Roles = "Owner")] is. Hiding the item just spares an
+                Assistant a tab that would only 403 at them. An undefined adminRole
+                (a session persisted before that field existed) fails closed. */}
+            {authUser?.adminRole === 'Owner' && (
+              <button
+                type="button"
+                className={`adm-nav-item${tab === 'staff' ? ' active' : ''}`}
+                onClick={() => openTab('staff')}
+              >
+                <span className="adm-nav-icon"><Users size={18} strokeWidth={1.75} /></span>
+                Staff Management
+              </button>
+            )}
             {PLACEHOLDER_ITEMS.map((name) => (
               <button
                 key={name}
@@ -4653,7 +4668,7 @@ export function AdminDashboardPage() {
               </svg>
             </button>
             <span className="adm-topbar-title" style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : NAV.find((n) => n.id === tab)?.label}
+              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : tab === 'staff' ? 'Staff Management' : NAV.find((n) => n.id === tab)?.label}
             </span>
             <div style={{ flex: 1 }} />
 
@@ -6899,6 +6914,16 @@ export function AdminDashboardPage() {
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* ══════════ STAFF ══════════ */}
+                {/* Gated here as well as on the nav, so a hand-typed ?tab=staff
+                    lands on nothing. Still not the security boundary. */}
+                {tab === 'staff' && authUser?.adminRole === 'Owner' && (
+                  <div className="fade-up">
+                    <h2 className="adm-title" style={{ marginBottom: '1.2rem' }}>Staff Management</h2>
+                    <StaffPanel notify={notify} />
                   </div>
                 )}
 

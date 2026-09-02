@@ -79,7 +79,7 @@ function prefersReducedMotion(): boolean {
  * Default bust height. Down from the 175px the CSS used to hardcode — the stage
  * was taking a third of a short chat panel before a single message showed.
  */
-const DEFAULT_BUST_SIZE = 150;
+const DEFAULT_BUST_SIZE = 120;
 
 /** The pre-Phase-2 monogram, reused verbatim as every fallback. */
 function AvatarFallback({ hint, size }: { hint?: string; size?: number }) {

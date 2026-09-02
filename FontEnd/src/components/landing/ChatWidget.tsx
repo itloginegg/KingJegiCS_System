@@ -143,8 +143,8 @@ const AVATAR_UI = {
    * edge to edge; the figure also stood taller than most laptop viewports, so
    * maxHeightVh was doing the real sizing rather than heightPx.
    */
-  widthPx: 260,
-  heightPx: 520,
+  widthPx: 220,
+  heightPx: 440,
 
   /**
    * How tightly the figure fills its column — the "scale" control.
@@ -153,7 +153,7 @@ const AVATAR_UI = {
    * higher values pull back and leave air around it. Lower this to make the avatar
    * read bigger without touching the column size.
    */
-  fitMargin: 1.04,
+  fitMargin: 1.12,
 
   /**
    * Ceiling on the rendered height, so a tall avatar can't overrun a short laptop
