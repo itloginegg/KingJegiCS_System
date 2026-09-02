@@ -3212,7 +3212,7 @@ export function AdminDashboardPage() {
   return (
     <>
       <style>{`
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeUp { from { opacity: 0; margin-top: 14px; } to { opacity: 1; margin-top: 0; } }
         .fade-up { animation: fadeUp 0.45s ease both; }
 
         .adm-shell { min-height: 100vh; background: var(--bg-subtle); transition: background 0.4s; }
