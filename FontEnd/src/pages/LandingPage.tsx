@@ -22,9 +22,14 @@ import '../components/landing/landing.css';
  * kinds mix freely. Videos stay muted: AmbientAudio already owns sound here.
  */
 const HERO_MEDIA: HeroMedia[] = [
-  { type: 'image', src: 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=2000&q=80' },
-  { type: 'image', src: 'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=2000&q=80' },
-  { type: 'image', src: 'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=2000&q=80' },
+  { type: 'video', src: '/hero/IMG_6103.MOV' },
+  { type: 'video', src: '/hero/IMG_6117.MOV' },
+  { type: 'video', src: '/hero/IMG_6084.MOV' },
+  { type: 'video', src: '/hero/IMG_6092.MOV' },
+  { type: 'video', src: '/hero/IMG_6029.MOV' },
+  { type: 'image', src: '/hero/IMG_6025.HEIC' },
+  { type: 'image', src: '/hero/IMG_6013.HEIC' },
+  { type: 'video', src: '/hero/IMG_6041.MOV' },
 ];
 
 /**
