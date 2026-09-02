@@ -3466,14 +3466,12 @@ export function AdminDashboardPage() {
         .adm-modal-overlay {
           position: fixed; inset: 0; z-index: 120;
           background: rgba(20, 14, 8, 0.6);
-          display: flex; align-items: flex-start; justify-content: center;
+          display: flex; align-items: center; justify-content: center;
           padding: 1.5rem;
-          overflow-y: auto;
         }
         .adm-modal-panel {
           width: min(100%, 720px);
-          max-height: none;
-          margin: auto 0;
+          max-height: 92vh;
           overflow-y: auto;
           background: var(--surface);
           border: 1px solid var(--border);
