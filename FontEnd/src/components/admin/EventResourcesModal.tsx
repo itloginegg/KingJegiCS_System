@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { readSession } from '../../lib/tokenStorage';
 import {
   BookingApiError,
@@ -207,7 +208,7 @@ export default function EventResourcesModal({
   const pickedRental = resources?.rentalCatalog.find((i) => i.id === rentalPick);
   const pickedService = resources?.serviceCatalog.find((s) => s.id === servicePick);
 
-  return (
+  return createPortal(
     <div className="adm-modal-overlay" onClick={() => !saving && onClose()}>
       <div
         className="adm-modal-panel"
@@ -626,6 +627,7 @@ export default function EventResourcesModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

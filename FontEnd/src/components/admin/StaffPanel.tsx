@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { UserPlus } from 'lucide-react';
 import {
   AdminsApiError,
@@ -250,7 +251,7 @@ export function StaffPanel({ notify }: StaffPanelProps) {
         </div>
       )}
 
-      {showCreate && (
+      {showCreate && createPortal(
         <div className="adm-modal-overlay" onClick={closeCreate}>
           <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()}>
             <h3>Add an assistant</h3>
@@ -294,10 +295,11 @@ export function StaffPanel({ notify }: StaffPanelProps) {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {confirmTarget && (
+      {confirmTarget && createPortal(
         <div className="adm-modal-overlay" onClick={() => setConfirmTarget(null)}>
           <div className="adm-modal-panel" style={{ width: 'min(100%, 480px)' }} onClick={(e) => e.stopPropagation()}>
             <h3>Deactivate {confirmTarget.fullName}?</h3>
@@ -314,7 +316,8 @@ export function StaffPanel({ notify }: StaffPanelProps) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

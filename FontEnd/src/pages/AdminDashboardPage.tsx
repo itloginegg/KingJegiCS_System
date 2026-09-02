@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
@@ -768,7 +769,7 @@ function NewBookingModal({ onClose, onCreated, notify }: {
     }
   };
 
-  return (
+  return createPortal(
     <div className="adm-modal-overlay" onClick={() => !creating && onClose()}>
       <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="New booking" style={{ maxWidth: 580 }}>
         <h3>New Booking</h3>
@@ -854,7 +855,8 @@ function NewBookingModal({ onClose, onCreated, notify }: {
           <button type="button" className="adm-btn primary" onClick={() => void create()} disabled={creating}>{creating ? 'Creating…' : 'Create Draft'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -3212,7 +3214,7 @@ export function AdminDashboardPage() {
   return (
     <>
       <style>{`
-        @keyframes fadeUp { from { opacity: 0; margin-top: 14px; } to { opacity: 1; margin-top: 0; } }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         .fade-up { animation: fadeUp 0.45s ease both; }
 
         .adm-shell { min-height: 100vh; background: var(--bg-subtle); transition: background 0.4s; }
@@ -4113,7 +4115,7 @@ export function AdminDashboardPage() {
       {/* Top level, not inside the Rentals tab: the same modal is reachable from a
           booking's detail view, which renders over any tab. The damage note is required
           by the backend, so the confirm button stays disabled until there is one. */}
-      {damageTarget && (
+      {damageTarget && createPortal(
         <div className="adm-modal-overlay" onClick={() => setDamageTarget(null)}>
           <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Mark rental line damaged">
             <h3>Mark as Damaged</h3>
@@ -4141,7 +4143,8 @@ export function AdminDashboardPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {detailBooking && (() => {
@@ -5003,7 +5006,7 @@ export function AdminDashboardPage() {
                     .filter((r) => r.eventDate === dayDetailDate)
                     .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''));
                   const cal = calendarDays.get(dayDetailDate);
-                  return (
+                  return createPortal(
                     <div className="adm-modal-overlay" onClick={() => setDayDetailDate(null)}>
                       <div
                         className="adm-modal-panel"
@@ -5075,7 +5078,8 @@ export function AdminDashboardPage() {
                           })
                         )}
                       </div>
-                    </div>
+                    </div>,
+                    document.body
                   );
                 })()}
 
@@ -5909,7 +5913,7 @@ export function AdminDashboardPage() {
                   </>
                 )}
 
-                {menuFormOpen && (
+                {menuFormOpen && createPortal(
                   <div className="adm-modal-overlay" onClick={closeMenuForm}>
                     <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={menuFormMode === 'item' ? 'Menu item form' : 'Menu tray form'}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
@@ -6143,7 +6147,8 @@ export function AdminDashboardPage() {
                         </button>
                       </div>
                     </div>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             )}
@@ -6380,7 +6385,7 @@ export function AdminDashboardPage() {
                       )}
                     </div>
 
-                    {rentalFormOpen && (
+                    {rentalFormOpen && createPortal(
                       <div className="adm-modal-overlay" onClick={closeRentalForm}>
                         <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Rental item form">
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
@@ -6516,7 +6521,8 @@ export function AdminDashboardPage() {
                             </button>
                           </div>
                         </div>
-                      </div>
+                      </div>,
+                      document.body
                     )}
                   </div>
                 )}
@@ -6627,7 +6633,7 @@ export function AdminDashboardPage() {
                       </div>
                     )}
 
-                    {serviceFormOpen && (
+                    {serviceFormOpen && createPortal(
                       <div className="adm-modal-overlay" onClick={closeServiceForm}>
                         <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Service item form">
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem' }}>
@@ -6697,7 +6703,8 @@ export function AdminDashboardPage() {
                             </button>
                           </div>
                         </div>
-                      </div>
+                      </div>,
+                      document.body
                     )}
                   </div>
                 )}

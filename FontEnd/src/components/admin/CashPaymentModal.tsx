@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { readSession } from '../../lib/tokenStorage';
 import {
   getInvoiceByBooking,
@@ -96,7 +97,7 @@ export function CashPaymentModal({ bookingId, bookingName, onClose, onRecorded, 
     }
   };
 
-  return (
+  return createPortal(
     <div className="adm-modal-overlay" onClick={() => !saving && onClose()}>
       <div
         className="adm-modal-panel"
@@ -199,6 +200,7 @@ export function CashPaymentModal({ bookingId, bookingName, onClose, onRecorded, 
           </>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
