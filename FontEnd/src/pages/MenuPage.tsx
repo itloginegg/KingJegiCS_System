@@ -586,11 +586,11 @@ export function MenuPage() {
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
 
         {/* ═══════════════════════ HERO ═══════════════════════ */}
-        {/* The dark band is gone from this page. It stays the rentals hero's device
-            only — with both catalogs inverted, /menus and /rentals opened on the
-            same near-black slab and read as one screen. The blush ground is the
-            distinguishing move; the Navbar goes back to its normal tokens because
-            it is no longer inside a band. */}
+        {/* The blush ground, and now /rentals carries the same one. Both catalogs
+            were once inverted and read as a single near-black screen; the fix was to
+            bring this one onto the page ground, and the fix for the pair looking like
+            two different sites in light mode was to bring the other one across too.
+            The Navbar uses its normal tokens on both, because neither is in a band. */}
         <section style={{ background: 'var(--bg-subtle)', padding: 'calc(4rem + 80px) 0 4rem', position: 'relative', overflow: 'hidden' }}>
           {/* Background media placeholder, behind the copy. Swap the div for a
               <video muted playsInline loop autoPlay> when a real clip exists —

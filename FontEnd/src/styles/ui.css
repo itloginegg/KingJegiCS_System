@@ -16,17 +16,24 @@
    ══════════════════════════════════════════════════════════════════════ */
 
 /* ── Containers ───────────────────────────────────────────────────────
-   Gutters follow the foundations grid: 20px under 640, 32px to 1020, 40px
-   and a 1200 cap above it. */
+   One fluid gutter instead of three stepped ones. The old rule spent three
+   breakpoints getting from 20px to 40px and capped the page at 1200; the
+   clamp covers the same range continuously — 20px on a phone, 4vw through
+   the middle, 64px once there is room — so there is no width at which the
+   gutter is between steps and wrong.
+
+   --page-max is a token rather than a literal because the cap is a layout
+   decision the whole page shares, and 1440 only reads as deliberate if the
+   sections that fill it are reading the same number. */
 
 .ui-wrap {
-  max-width: 1200px;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 0 40px;
+  padding: 0 clamp(20px, 4vw, 64px);
 }
 
 .ui-section {
-  padding: 88px 0;
+  padding: 104px 0;
   position: relative;
 }
 .ui-section--tight { padding: 64px 0; }
@@ -105,13 +112,20 @@
 
 /* ── Section header — flush left, optional trailing link ──────────── */
 
+/* The rule under the heading is what makes a section read as a section: it closes
+   the header and opens the content, so the page has one repeated joint instead of
+   five differently-spaced gaps. --rule rather than --border directly, because a
+   section on the dark band needs a light hairline and rebinding one property there
+   is cheaper than a second selector here. */
 .ui-sec-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
-  margin-bottom: 32px;
+  margin-bottom: 40px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .ui-sec-link {

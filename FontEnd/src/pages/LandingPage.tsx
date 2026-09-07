@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getCalendarDays, getDayTimeSlots, type DayTimeSlots } from '../api/calendarApi';
 import { Navbar } from '../components/landing/Navbar';
 import { LandingHero, type HeroMedia } from '../components/landing/LandingHero';
-import { AvailabilityCalendar } from '../components/landing/AvailabilityCalendar';
+import { AvailabilitySection } from '../components/landing/AvailabilitySection';
 import { ServiceSection } from '../components/landing/ServiceSection';
 import { PackagesPreview } from '../components/landing/PackagesPreview';
 import { MenuPreviewSection } from '../components/landing/MenuPreviewSection';
@@ -39,9 +39,17 @@ const HERO_MEDIA: HeroMedia[] = [
  * 2,000-line version could not say: it carried the markup for six sections, a 700-line
  * inline stylesheet, a particle canvas and the calendar all in one scope.
  *
- * The one structural change from the previous build: the date picker used to sit in a
- * mid-page section and open a modal. It is now in the hero. Everything downstream —
- * the ISO date, the preset flow, the router state handed to /book — is unchanged.
+ * Where the date picker sits has now moved three times. It began in a mid-page section
+ * behind a modal, was pulled into the hero so "is my date free" was answerable in the
+ * fold, moved back below the fold into its own <AvailabilitySection> when the hero
+ * became a single centred column, and now sits last before the testimonials — after the
+ * services, packages and menu have made the case, rather than before them.
+ *
+ * That is the furthest it has been from the fold, so the cost named in that component's
+ * header applies most strongly here: nobody sees a date until they have scrolled past
+ * four sections. Everything downstream is unchanged — the state, both fetches, the ISO
+ * date, the preset flow and the router state handed to /book all still live here, and
+ * AvailabilitySection only forwards them.
  */
 export function LandingPage() {
   const navigate = useNavigate();
@@ -129,25 +137,25 @@ export function LandingPage() {
       <Navbar activePage="home" placement="sticky" />
 
       <main style={{ background: 'var(--bg)' }}>
-        <LandingHero media={HERO_MEDIA}>
-          <AvailabilityCalendar
-            year={calYear}
-            month={calMonth}
-            bookedDates={bookedDates}
-            selectedDate={selectedDate}
-            slotsByDate={slotsByDate}
-            hoveredISO={hoveredISO}
-            onPrevMonth={prevMonth}
-            onNextMonth={nextMonth}
-            onHover={setHoveredISO}
-            onSelect={setSelectedDate}
-            onReserve={() => setReserveOpen(true)}
-          />
-        </LandingHero>
+        <LandingHero media={HERO_MEDIA} />
 
         <ServiceSection />
         <PackagesPreview />
         <MenuPreviewSection />
+
+        <AvailabilitySection
+          year={calYear}
+          month={calMonth}
+          bookedDates={bookedDates}
+          selectedDate={selectedDate}
+          slotsByDate={slotsByDate}
+          hoveredISO={hoveredISO}
+          onPrevMonth={prevMonth}
+          onNextMonth={nextMonth}
+          onHover={setHoveredISO}
+          onSelect={setSelectedDate}
+          onReserve={() => setReserveOpen(true)}
+        />
         <TestimonialsSection />
       </main>
 

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AmbientCanvas } from './AmbientCanvas';
 
@@ -18,15 +17,13 @@ export type HeroMedia =
 
 export interface LandingHeroProps {
   /**
-   * Background layers for the right column, cycled in order.
+   * Background layers, cycled in order.
    *
    * A list rather than the old `image: string`, because a `<video>` cannot be a
    * CSS `background-image` — mixing the two means real stacked elements, not a
    * value swap. A single-entry list is the old behaviour and never cycles.
    */
   media: HeroMedia[];
-  /** The date picker. Passed in rather than rendered here so the hero stays presentational. */
-  children: ReactNode;
 }
 
 /** Read once per mount; the preference does not change mid-session in practice. */
@@ -36,15 +33,24 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * The split hero.
+ * The hero: one centred column over full-bleed media.
  *
- * The old hero was a full-bleed photo slideshow with the copy floating on top and
- * three decorative cards stacked over it; availability lived three sections down,
- * behind a modal. This puts the pitch on the left and the live date picker on the
- * right, so the one question a visitor actually arrives with — "is my date free" —
- * is answered above the fold without a click.
+ * Previously a two-column split with the live date picker in the right column, so
+ * that "is my date free" was answerable in the fold. The picker now has its own
+ * section below — see AvailabilitySection, and the note in LandingPage about what
+ * that costs. What is left here is the pitch, so it takes the whole width and the
+ * media runs behind all of it rather than beside it.
+ *
+ * The `children` prop went with the calendar: this component no longer has a slot,
+ * and LandingPage renders `<LandingHero media={HERO_MEDIA} />` self-closing.
+ *
+ * Legibility over playing video is a CSS concern, not a JS one — one scrim built
+ * from --bg sits between the layers and this copy, at an opacity chosen so the
+ * text clears 4.5:1 against any frame. The ambience then paints over that scrim,
+ * so it counts as part of the text's background too, which is what sets the lead
+ * and the stat labels to --text-primary. See the .lp-hero block in landing.css.
  */
-export function LandingHero({ media, children }: LandingHeroProps) {
+export function LandingHero({ media }: LandingHeroProps) {
   const [index, setIndex] = useState(0);
   const [reduced] = useState(prefersReducedMotion);
   const videoRefs = useRef<Array<HTMLVideoElement | null>>([]);
@@ -108,9 +114,42 @@ export function LandingHero({ media, children }: LandingHeroProps) {
 
   return (
     <section id="home" className="lp-hero">
-      {/* Spans the whole hero, behind both columns, so the weather sits directly
-          behind the headline. It used to live inside .lp-hero-media, which is the
-          photograph column — the copy column never saw it. */}
+      {/* Full-bleed, behind the copy rather than beside it. Decorative: the copy
+          carries the meaning, so the whole stack is hidden from assistive tech
+          rather than captioned. */}
+      <div className="lp-hero-layers" aria-hidden="true">
+        {media.map((m, i) =>
+          m.type === 'image' ? (
+            <div
+              key={`${m.src}-${i}`}
+              className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
+              style={{ backgroundImage: `url(${m.src})` }}
+            />
+          ) : (
+            <video
+              key={`${m.src}-${i}`}
+              ref={(el) => { videoRefs.current[i] = el; }}
+              className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
+              src={m.src}
+              poster={m.poster}
+              /* Muted is not a preference: AmbientAudio already owns sound on
+                 this page, and a second source would talk over it. muted +
+                 playsInline are also what make autoplay legal on mobile. */
+              muted
+              playsInline
+              loop
+              preload="metadata"
+            />
+          ),
+        )}
+      </div>
+
+      {/* Ambience, over the scrim rather than under it — beneath a 0.72 veil the
+          effect's own 0.05–0.10 alphas land near 0.02 and it is invisible. Default
+          variant="auto", which is the whole point here: a slow warm glow in --accent
+          and --gold-on-band under the light theme, rain in --band-text under the
+          dark one. The component owns the theme read, the reduced-motion opt-out and
+          the IntersectionObserver that stops the loop when the hero scrolls away. */}
       <div className="lp-hero-ambient" aria-hidden="true">
         <AmbientCanvas />
       </div>
@@ -128,7 +167,7 @@ export function LandingHero({ media, children }: LandingHeroProps) {
           build the quote around it.
         </p>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div className="lp-hero-actions">
           <Link to="/book" className="ui-btn ui-btn-accent">Check a date</Link>
           <Link to="/packages" className="ui-btn ui-btn-outline">Browse packages</Link>
         </div>
@@ -141,40 +180,6 @@ export function LandingHero({ media, children }: LandingHeroProps) {
             </div>
           ))}
         </div>
-      </div>
-
-      <div className="lp-hero-media">
-        {/* Decorative: the copy carries the meaning, so the whole stack is hidden
-            from assistive tech rather than captioned. */}
-        <div className="lp-hero-layers" aria-hidden="true">
-          {media.map((m, i) =>
-            m.type === 'image' ? (
-              <div
-                key={`${m.src}-${i}`}
-                className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
-                style={{ backgroundImage: `url(${m.src})` }}
-              />
-            ) : (
-              <video
-                key={`${m.src}-${i}`}
-                ref={(el) => { videoRefs.current[i] = el; }}
-                className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
-                src={m.src}
-                poster={m.poster}
-                /* Muted is not a preference: AmbientAudio already owns sound on
-                   this page, and a second source would talk over it. muted +
-                   playsInline are also what make autoplay legal on mobile. */
-                muted
-                playsInline
-                loop
-                preload="metadata"
-              />
-            ),
-          )}
-        </div>
-
-        {/* Above every media layer, and still interactive — the calendar lives here. */}
-        <div className="lp-hero-fore">{children}</div>
       </div>
     </section>
   );

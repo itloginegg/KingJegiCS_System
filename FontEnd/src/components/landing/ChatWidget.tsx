@@ -138,13 +138,18 @@ const AVATAR_UI = {
   /**
    * Avatar column size. The chat panel offsets itself by `widthPx` automatically.
    *
-   * Stepped down from 300x600. At the old size the column plus the 370px panel
-   * took ~670px of a 768px viewport at the breakpoint, leaving the pair almost
-   * edge to edge; the figure also stood taller than most laptop viewports, so
-   * maxHeightVh was doing the real sizing rather than heightPx.
+   * Stepped down from 300x600, then to 220x440, now 150x300. At the original size
+   * the column plus the 370px panel took ~670px of a 768px viewport at the
+   * breakpoint, leaving the pair almost edge to edge; the figure also stood taller
+   * than most laptop viewports, so maxHeightVh was doing the real sizing rather
+   * than heightPx. Neither is true at this size.
+   *
+   * The 1:2 ratio is the part to preserve when changing these. The camera fits the
+   * figure to the column's aspect, so a wider box at the same height does not make
+   * the avatar bigger — it pillarboxes it.
    */
-  widthPx: 220,
-  heightPx: 440,
+  widthPx: 150,
+  heightPx: 300,
 
   /**
    * How tightly the figure fills its column — the "scale" control.

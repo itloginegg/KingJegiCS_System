@@ -188,6 +188,14 @@
   --shadow-green: 0 10px 30px rgba(46, 26, 62, 0.28);   /* primary lift */
   --shadow-gold: 0 10px 34px rgba(166, 42, 87, 0.24);   /* accent lift */
 
+  /* ── Page frame ──
+     The width the page is composed against, and the hairline that closes a
+     section header. Both are layout, not colour, so --page-max holds in both
+     themes; --rule forwards to --border here and is rebound on .dark-band,
+     where a dark-on-dark hairline would be invisible. */
+  --page-max: 1440px;
+  --rule: var(--border);
+
   /* Radii step up, not down. --r-2xl is new: cards and sheets sit at 20–28 in
      the new direction, where the old scale topped out at 20. */
   --r-sm: 8px;
@@ -234,6 +242,10 @@
   --band-text:         #f7eff4;   /* 15.6:1 on --band-bg */
   --band-muted:        #c9b8d2;   /*  9.6:1 */
   --band-border:       rgb(255 255 255 / 0.28);
+  /* The section-header hairline, rebound for the band. --border is a plum tint
+     that vanishes on --band-bg; this is the one property .ui-sec-head needs
+     swapped, so it is swapped here rather than duplicating the rule. */
+  --rule:              var(--band-border);
 
   /* Raised panel inside a band. Never paired with backdrop-filter: --band-bg is a
      flat solid, so a blur would sample a uniform colour — the cost of a compositing
@@ -281,6 +293,20 @@
   --band-footer:       #0d0612;
 }
 
+/* ── Section header inside a dark band ──
+   .ui-sec-head is theme-inherited: its kicker takes --accent and its title
+   --text-primary, both of which are wrong on a ground that stays dark in both
+   themes — the rose is the 3.1:1 case named above, and the title would be plum
+   ink on plum. The hairline is already handled by the --rule rebind in the token
+   block. --band-accent is 9.4:1 here and --band-text 15.6:1.
+
+   .ui-sec-link is included even though no band header carries one today: it is
+   the same --accent that fails above, so leaving it out would make a link the
+   trap that the kicker no longer is. */
+.dark-band .ui-kicker { color: var(--band-accent); }
+.dark-band .ui-h2 { color: var(--band-text); }
+.dark-band .ui-sec-link { color: var(--band-accent); }
+
 /* ── Navbar inside a dark band ──
    When <Navbar> sits inside a .dark-band section (e.g. MenuPage hero), its
    generic theme tokens (--text-secondary, --primary) clash with the always-dark
@@ -289,20 +315,25 @@
 .dark-band .nav-link {
   color: var(--band-muted);
 }
+/* Active and hover take --band-text, not the amber. Off the band the active link is
+   --text-primary and the logo is the page ink — both read as plain white in dark
+   mode — so a gold nav on the one page that carries a band made /rentals look like a
+   different site to /menus. The blush CTA is the same pairing --accent gives in dark
+   mode, which is what the unbanded pages show. */
 .dark-band .nav-link:hover,
 .dark-band .nav-link-active {
-  color: var(--band-accent);
+  color: var(--band-text);
 }
 .dark-band .nav-cta {
-  background: var(--band-accent);
+  background: var(--band-accent-soft);
   color: var(--band-accent-text);
 }
 .dark-band .nav-cta:hover {
-  background: color-mix(in srgb, var(--band-accent) 85%, white);
+  background: color-mix(in srgb, var(--band-accent-soft) 85%, white);
 }
 /* Logo and icon buttons use inline styles, so !important is needed to win. */
 .dark-band .nav-logo {
-  color: var(--band-accent) !important;
+  color: var(--band-text) !important;
 }
 .dark-band .nav-icon,
 .dark-band .nav-burger {
