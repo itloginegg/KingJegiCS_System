@@ -1109,7 +1109,10 @@
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
+  /* The prefixed property is the one that actually clamps today; the standard is
+     paired with it so the declaration stops being prefix-only as support lands. */
   -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 /* The promote control: the whole card, under the card's own link.
@@ -1306,7 +1309,10 @@
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
+  /* The prefixed property is the one that actually clamps today; the standard is
+     paired with it so the declaration stops being prefix-only as support lands. */
   -webkit-line-clamp: 3;
+  line-clamp: 3;
 }
 
 .lp-dish-tags {

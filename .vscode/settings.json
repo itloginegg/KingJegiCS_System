@@ -1,0 +1,20 @@
+{
+  // Tailwind v4 puts its configuration in CSS: @theme declares the design tokens
+  // and @custom-variant defines the class-based `dark:` variant, both in
+  // FontEnd/src/index.css. VS Code's built-in CSS language server only knows the
+  // standard at-rules, so it reports every one of them as "Unknown at rule".
+  //
+  // The rules are real and the build compiles them — this silences a false
+  // positive, it does not hide a defect. The Tailwind CSS IntelliSense extension
+  // (bradlc.vscode-tailwindcss) understands them properly and is the better fix if
+  // you want completion for the tokens as well.
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+
+  // The landing layer is hand-written CSS, so keep the formatter off it unless
+  // asked — the token comments are aligned by hand and reflowing them loses the
+  // measured contrast notes' formatting.
+  "[css]": {
+    "editor.formatOnSave": false
+  }
+}
