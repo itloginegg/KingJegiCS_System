@@ -180,19 +180,51 @@ const AURORA_CSS = `
 .evg-shell {
   --evg-ground: var(--bg-subtle);
   --evg-ink: var(--text-primary);
-  --evg-veil: 72%;
+  --evg-veil-head: 72%;
+  --evg-veil-mid: 32%;
+  --evg-veil-foot: 60%;
   --evg-edge: color-mix(in srgb, var(--evg-ink) 70%, transparent);
   --evg-edge-strong: color-mix(in srgb, var(--evg-ink) 90%, transparent);
   --evg-wash: color-mix(in srgb, var(--evg-ink) 10%, transparent);
   --evg-ring: color-mix(in srgb, var(--evg-ink) 14%, transparent);
 }
 
-/* The veil over the blurred photo. A class rather than a Tailwind arbitrary value
-   because the percentage is itself a custom property. */
+/* The veil over the blurred photo — banded, not flat, which is the only way the
+   photograph gets to be visible at all.
+
+   A flat veil is set by its most demanding pixel, and here that is the header: text
+   over an unbounded photograph needs 72%, so a flat veil means 72% everywhere and
+   the picture never reads. But the text is not everywhere. Measured on the rendered
+   block, the kicker, the slide title, the counter and the arrows all sit in the top
+   130px, and the dots in a 6px strip at the bottom. Between them is 400px carrying
+   nothing but the coverflow's own opaque cards.
+
+   So the veil is 72% over the header, 32% over that middle, and 60% under the dots:
+
+     head  72%   text against the worst frame — 6.91 light, 5.22 dark
+     mid   32%   nothing is read against it, so it is free
+     foot  60%   dots are UI, so 3:1 — 4.72 light, 3.51 dark
+
+   The stops are in pixels from the top for the header and from the BOTTOM for the
+   dots (calc(100% - …)), because the block is stretched to match the offerings
+   column beside it: its height is whatever that column is, so neither band can be a
+   percentage of it. Only the middle stretches, which is the one part that should.
+
+   This is why the fallback paths pass no ambient. Their captions sit mid-block,
+   where the veil is 32% and could not hold them — they render on the flat ground
+   with the aurora instead, so the question never arises. */
 .evg-veil {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--evg-ground) var(--evg-veil), transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-head), transparent) 0px,
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-head), transparent) 150px,
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-mid), transparent) 220px,
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-mid), transparent) calc(100% - 100px),
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-foot), transparent) calc(100% - 55px),
+    color-mix(in srgb, var(--evg-ground) var(--evg-veil-foot), transparent) 100%
+  );
 }
 .evg-shell--aurora::before,
 .evg-shell--aurora::after {
@@ -235,14 +267,20 @@ const AURORA_CSS = `
  * layers behind the content — image, scrim and two animated pseudo-elements — which
  * is the stack this section was stripped of in the first place. Two in, two out.
  *
- * The veil is the block's own ground at 72%, so it inverts with the theme — see the
- * .evg-shell token block. Not black at any opacity: measured on the built page, a 60%
- * black veil over a bright photo composites to a mid grey that took the kicker to
- * 3.2:1. 72% is the lightest that holds the ink against the worst frame in BOTH
- * themes, dark being the tighter of the two at 5.2:1.
+ * The veil is the block's own ground, so it inverts with the theme, and it is banded
+ * rather than flat so the photograph is actually legible as one — see .evg-veil.
+ * Not black at any opacity: measured on the built page, a 60% black veil over a bright
+ * photo composites to a mid grey that took the kicker to 3.2:1.
  *
- * scale(1.1) hides the soft edge: a 40px blur samples past the element's bounds and
- * would otherwise show a pale halo around the inside of the rounded corners.
+ * 14px of blur, not the 44px this had. At 44 the photo was only a colour and the
+ * blur did useful work — it averaged a frame's extremes away, so the veil had less
+ * to cover. At 14 the picture reads, and the extremes survive, so the veil carries
+ * the contrast on its own. That is a fair trade only because the veil is banded: the
+ * 72% it costs is confined to the 150px that actually has text on it.
+ *
+ * scale(1.06) hides the soft edge: the blur samples past the element's bounds and
+ * would otherwise show a pale halo inside the rounded corners. Less scale than the
+ * 1.1 the 44px blur needed, which also means less of the photograph is cropped away.
  */
 function Ambient({ src }: { src: string }) {
   return (
@@ -254,7 +292,7 @@ function Ambient({ src }: { src: string }) {
              the ground between slides instead of blending through it. */
           key={src}
           className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: `url(${src})`, filter: 'blur(44px) saturate(1.25)', transform: 'scale(1.1)' }}
+          style={{ backgroundImage: `url(${src})`, filter: 'blur(14px) saturate(1.15)', transform: 'scale(1.06)' }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -690,7 +728,7 @@ export function EventGallery() {
               return a + d;
             })}
             className={`h-1.5 rounded-full transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose ${
-              i === realIndex ? 'w-7 bg-[var(--evg-ink)]' : 'w-1.5 bg-[var(--evg-edge)] hover:bg-[var(--evg-edge-strong)]'
+              i === realIndex ? 'w-7 bg-[var(--evg-ink)]' : 'w-1.5 bg-[var(--evg-ink)] hover:w-3'
             }`}
           />
         ))}
