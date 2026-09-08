@@ -959,10 +959,21 @@
    worst case (a black frame, since this ink is dark) drops them to 3.70:1, and even
    0.98 only reaches 4.41. There is no flat opacity that both shows the photo and
    keeps the heading legible.
-   So the veil is opaque down to 27% — past the heading, which ends at 24% — and
-   opens to 86% below it, where the only things over the photo are cards carrying
-   their own opaque surfaces. The heading therefore always sits on the bare token,
-   and the photograph is visible exactly where nothing has to be read against it.
+   So the veil is opaque past the heading and opens up below it, where the only
+   things over the photo are cards carrying their own opaque surfaces. The heading
+   therefore always sits on the bare token, and the photograph is visible exactly
+   where nothing has to be read against it.
+
+   The stops are in PIXELS, not percentages, and that matters. The heading's height
+   barely moves with the viewport — measured 187px at 1497, 137px at 885, 124px at
+   430 — but the section's height grows as it stacks, so the same heading is 25% of
+   the section at desktop and 12% at phone width. A percentage stop is therefore
+   tightest exactly where the heading is tallest; 210px clears the 187px worst case
+   at every width.
+
+   0.6 below the ramp is the "how much photograph" knob, and it is free to move:
+   nothing is read against that band. Raise it toward 1 to mute the image, lower it
+   to show more.
 
    scale(1.12) hides the soft edge: a 44px blur samples past the element's bounds
    and would otherwise show a pale seam down the sides of the section. */
@@ -986,10 +997,10 @@
   inset: 0;
   background: linear-gradient(
     180deg,
-    var(--bg-subtle) 0%,
-    var(--bg-subtle) 27%,
-    color-mix(in srgb, var(--bg-subtle) 86%, transparent) 42%,
-    color-mix(in srgb, var(--bg-subtle) 86%, transparent) 100%
+    var(--bg-subtle) 0px,
+    var(--bg-subtle) 210px,
+    color-mix(in srgb, var(--bg-subtle) 60%, transparent) 300px,
+    color-mix(in srgb, var(--bg-subtle) 60%, transparent) 100%
   );
 }
 
