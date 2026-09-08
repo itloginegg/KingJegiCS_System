@@ -70,7 +70,7 @@ const HERO_MEDIA: HeroMedia[] = [
   { type: 'image', src: '/hero/738552383_1452772706652417_1832230556915129421_n.jpg' },
   { type: 'image', src: '/hero/741454036_1452773609985660_8306301539792823671_n.jpg' },
   { type: 'image', src: '/hero/771998357_122136450405174569_2473241104732153796_n.jpg' },
-  { type: 'image', src: '/hero/772138440_122136450363174569_4078387265260369892_n.jpg' },
+  { type: 'image', src: '/hero/2.jpg' },
   { type: 'image', src: '/hero/IMG_6013.jpg' },
   { type: 'image', src: '/hero/IMG_6025.jpg' },
 ];
