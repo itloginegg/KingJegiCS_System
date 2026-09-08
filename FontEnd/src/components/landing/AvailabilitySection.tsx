@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { SectionHeading } from './SectionHeading';
+import { HERO_STILLS } from './heroStills';
 import {
   AvailabilityCalendar,
   type AvailabilityCalendarProps,
@@ -10,15 +13,8 @@ import {
  * Copy only — the numbers are decorative and marked aria-hidden, because the list is
  * an <ol> and the order is already in the markup.
  */
-/**
- * The section's ground.
- *
- * One of the hero reel's own stills, so the two ends of the page are shot in the
- * same room. Static: nothing in this section swaps, so there is nothing for it to
- * follow. Any photograph works, but not at any veil — see .lp-avail-ambient-scrim,
- * where the 0.80 is measured against this file.
- */
-const AMBIENT_IMAGE = '/hero/IMG_6025.jpg';
+/** How long a photograph holds before the next one fades in. */
+const CYCLE_MS = 7000;
 
 const STEPS = [
   {
@@ -57,6 +53,32 @@ const STEPS = [
  * one definition; adding a calendar prop does not mean editing this file.
  */
 export function AvailabilitySection(props: AvailabilityCalendarProps) {
+  const reducedMotion = useReducedMotion();
+  const [index, setIndex] = useState(0);
+  const src = HERO_STILLS[index];
+
+  /* Advance the ground. Reduced motion holds the first photograph: this is
+     decoration, and a reader who asked for stillness has no reason to want it. */
+  useEffect(() => {
+    if (reducedMotion || HERO_STILLS.length < 2) return;
+    const t = setTimeout(
+      () => setIndex((i) => (i + 1) % HERO_STILLS.length),
+      CYCLE_MS,
+    );
+    return () => clearTimeout(t);
+  }, [index, reducedMotion]);
+
+  /* Warm the next photograph while this one is showing. Without it the cross-fade
+     starts against an image the browser has not fetched yet and the new layer fades
+     in from nothing — a flash of the bare ground on every tick. Only one image is
+     ever in flight, so this costs one fetch per CYCLE_MS rather than the ~16MB the
+     whole folder would cost if every layer were mounted at once. */
+  useEffect(() => {
+    if (reducedMotion || HERO_STILLS.length < 2) return;
+    const next = new Image();
+    next.src = HERO_STILLS[(index + 1) % HERO_STILLS.length];
+  }, [index, reducedMotion]);
+
   return (
     /* --bg-subtle, the same tinted ground the packages section uses, rather than the
        page's --bg. It also puts the page back into an alternating rhythm: hero,
@@ -66,15 +88,29 @@ export function AvailabilitySection(props: AvailabilityCalendarProps) {
       className="ui-section amb-host lp-photo-ground"
       style={{ background: 'var(--bg-subtle)' }}
     >
-      {/* A hero photograph as the section's ground, lightly blurred. --bg-subtle
-          stays on the section itself underneath, so a failed image load degrades to
-          the tinted ground this section already had rather than to nothing.
-          Decorative, so it is hidden from assistive tech. */}
+      {/* Every hero photograph in turn as the section's ground, lightly blurred.
+          --bg-subtle stays on the section itself underneath, so a failed load
+          degrades to the tinted ground this section already had rather than to
+          nothing. Decorative, so it is hidden from assistive tech. */}
       <div className="lp-avail-ambient" aria-hidden="true">
-        <div
-          className="lp-avail-ambient-img"
-          style={{ backgroundImage: `url(${AMBIENT_IMAGE})` }}
-        />
+        <AnimatePresence initial={false}>
+          <motion.div
+            /* Keyed on the photograph, so a tick mounts a new layer over the old
+               one and the two cross-fade. Default sync mode, not wait: waiting
+               would blank the ground between frames instead of blending through.
+               At most two layers are ever mounted, which is the reason for keying
+               rather than stacking all thirty-nine — each carries a 10px blur, and
+               thirty-nine filtered layers is a real cost for thirty-eight of them
+               that are invisible. */
+            key={src}
+            className="lp-avail-ambient-img"
+            style={{ backgroundImage: `url(${src})` }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={reducedMotion ? { duration: 0 } : { duration: 1.1, ease: 'easeInOut' }}
+          />
+        </AnimatePresence>
         <div className="lp-avail-ambient-scrim" />
       </div>
 

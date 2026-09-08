@@ -265,7 +265,8 @@
 /* ══ Availability ambient ground ═════════════════════════════════════
    The same idea as .lp-pkg-ambient, at the other end of the blur range: that one is
    a 44px wash where the photograph is only a colour, this one is 10px, where it is
-   still a photograph. Static rather than keyed to a card, because nothing here swaps.
+   still a photograph. Every still in public/hero in turn, not one chosen frame — so
+   the veil has to hold for all thirty-nine of them, not for a favourite.
 
    The light blur is what makes this veil heavier, not lighter. A 44px blur averages
    a photograph's extremes away, so the veil only has to cover what is left; at 10px
@@ -274,16 +275,15 @@
    below its heading, whereas this one has a whole column of bare text — the sub,
    three ordinals, titles and bodies, thirteen elements with no surface of their own.
 
-   0.80, worst pixel of each region, measured against the real photograph:
+   0.84, the worst pixel of the worst photograph of the thirty-nine:
 
-                        light   dark
-     heading            7.01    7.42
-     copy (secondary)   5.66    5.06
-     copy (primary)     8.93    7.61
+     light  6.02
+     dark   5.20
 
-   0.70 was tried first and fails: three of the four candidate photographs drop the
-   copy to 4.19-4.46. The calendar needs none of this — it is an opaque panel and
-   covers the right half by itself.
+   0.70 fails outright, and 0.80 — which held for the four photographs this started
+   as — leaves the darkest of the full set at 4.55, five hundredths above the line.
+   0.84 is the first value with room in it. The calendar needs none of this: it is
+   an opaque panel and covers the right half by itself.
 
    scale(1.05) hides the soft edge, the same reason .lp-pkg-ambient-img scales. */
 .lp-avail-ambient {
@@ -304,7 +304,7 @@
 .lp-avail-ambient-scrim {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg-subtle) 80%, transparent);
+  background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
 }
 
 /* ══ Availability calendar ═══════════════════════════════════════════ */
