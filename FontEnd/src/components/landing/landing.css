@@ -262,6 +262,51 @@
   margin: 4px 0 0;
 }
 
+/* ══ Availability ambient ground ═════════════════════════════════════
+   The same idea as .lp-pkg-ambient, at the other end of the blur range: that one is
+   a 44px wash where the photograph is only a colour, this one is 10px, where it is
+   still a photograph. Static rather than keyed to a card, because nothing here swaps.
+
+   The light blur is what makes this veil heavier, not lighter. A 44px blur averages
+   a photograph's extremes away, so the veil only has to cover what is left; at 10px
+   the highlights and shadows survive and the veil has to cover those instead. It
+   also has more to protect: the packages section put opaque cards over everything
+   below its heading, whereas this one has a whole column of bare text — the sub,
+   three ordinals, titles and bodies, thirteen elements with no surface of their own.
+
+   0.80, worst pixel of each region, measured against the real photograph:
+
+                        light   dark
+     heading            7.01    7.42
+     copy (secondary)   5.66    5.06
+     copy (primary)     8.93    7.61
+
+   0.70 was tried first and fails: three of the four candidate photographs drop the
+   copy to 4.19-4.46. The calendar needs none of this — it is an opaque panel and
+   covers the right half by itself.
+
+   scale(1.05) hides the soft edge, the same reason .lp-pkg-ambient-img scales. */
+.lp-avail-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.lp-avail-ambient-img {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(10px) saturate(1.1);
+  transform: scale(1.05);
+}
+.lp-avail-ambient-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg-subtle) 80%, transparent);
+}
+
 /* ══ Availability calendar ═══════════════════════════════════════════ */
 
 .lp-cal {
@@ -960,7 +1005,7 @@
    0.98 only reaches 4.41. There is no flat opacity that both shows the photo and
    keeps the heading legible.
    That paragraph assumed the ink was fixed. It is not, and the numbers change
-   completely once it moves — see --pkg-head-ink below. With that ink the veil does
+   completely once it moves — see --photo-head-ink below. With that ink the veil does
    not have to vary at all, so it doesn't: one flat 0.60 everywhere, no band, no
    ramp, no seam, the photograph at the same strength across the whole section.
 
@@ -1017,17 +1062,18 @@
    25% is chosen for margin, not looks: 30% reads slightly greener but lands at 4.64,
    which leaves 0.14 for the next photograph added to the set.
 
-   Scoped to .lp-pkg-section because this is the only header standing on an image;
-   .amb-host could not carry the rule, as MenuPage and RentalPage share it. */
-.lp-pkg-section {
-  --pkg-head-ink: color-mix(in srgb, var(--accent) 25%, var(--text-primary));
+   Carried by .lp-photo-ground, worn by every section whose heading stands on a
+   photograph — packages and availability so far. .amb-host could not carry it, as
+   MenuPage and RentalPage share that one and their headings sit on a flat ground. */
+.lp-photo-ground {
+  --photo-head-ink: color-mix(in srgb, var(--accent) 25%, var(--text-primary));
 }
-.dark .lp-pkg-section {
-  --pkg-head-ink: var(--accent-hover);
+.dark .lp-photo-ground {
+  --photo-head-ink: var(--accent-hover);
 }
-.lp-pkg-section .ui-kicker,
-.lp-pkg-section .ui-sec-link {
-  color: var(--pkg-head-ink);
+.lp-photo-ground .ui-kicker,
+.lp-photo-ground .ui-sec-link {
+  color: var(--photo-head-ink);
 }
 
 /* Colour is .ui-sec-link's only hover affordance, and the rule above overrides the
@@ -1035,7 +1081,7 @@
    one section hovering did nothing. An underline rather than a fourth green: it
    restores the feedback without another value to measure, and it is visible to
    anyone who cannot separate two dark greens. */
-.lp-pkg-section .ui-sec-link:hover {
+.lp-photo-ground .ui-sec-link:hover {
   text-decoration: underline;
 }
 

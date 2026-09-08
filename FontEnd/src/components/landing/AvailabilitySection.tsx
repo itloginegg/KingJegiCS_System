@@ -10,6 +10,16 @@ import {
  * Copy only — the numbers are decorative and marked aria-hidden, because the list is
  * an <ol> and the order is already in the markup.
  */
+/**
+ * The section's ground.
+ *
+ * One of the hero reel's own stills, so the two ends of the page are shot in the
+ * same room. Static: nothing in this section swaps, so there is nothing for it to
+ * follow. Any photograph works, but not at any veil — see .lp-avail-ambient-scrim,
+ * where the 0.80 is measured against this file.
+ */
+const AMBIENT_IMAGE = '/hero/IMG_6025.jpg';
+
 const STEPS = [
   {
     title: 'Pick a date',
@@ -51,8 +61,24 @@ export function AvailabilitySection(props: AvailabilityCalendarProps) {
     /* --bg-subtle, the same tinted ground the packages section uses, rather than the
        page's --bg. It also puts the page back into an alternating rhythm: hero,
        tinted, plain, tinted, plain, band. */
-    <section id="availability" className="ui-section" style={{ background: 'var(--bg-subtle)' }}>
-      <div className="ui-wrap">
+    <section
+      id="availability"
+      className="ui-section amb-host lp-photo-ground"
+      style={{ background: 'var(--bg-subtle)' }}
+    >
+      {/* A hero photograph as the section's ground, lightly blurred. --bg-subtle
+          stays on the section itself underneath, so a failed image load degrades to
+          the tinted ground this section already had rather than to nothing.
+          Decorative, so it is hidden from assistive tech. */}
+      <div className="lp-avail-ambient" aria-hidden="true">
+        <div
+          className="lp-avail-ambient-img"
+          style={{ backgroundImage: `url(${AMBIENT_IMAGE})` }}
+        />
+        <div className="lp-avail-ambient-scrim" />
+      </div>
+
+      <div className="ui-wrap amb-over">
         {/* The heading sits above the split, ruled, like every other section on the
             page — it stopped being a grid child when the layout moved to auto-fit.
             Two children only: the pitch, and the panel. */}
