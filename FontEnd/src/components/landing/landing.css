@@ -960,29 +960,19 @@
    0.98 only reaches 4.41. There is no flat opacity that both shows the photo and
    keeps the heading legible.
    That paragraph assumed the ink was fixed. It is not, and the numbers change
-   completely once it moves — see .lp-pkg-section below, which swaps the heading's
-   accent for --accent-hover. With that ink the veil no longer has to be opaque
-   anywhere, so it isn't: the section carries the photograph edge to edge, heavily
-   over the heading and lightly below it.
+   completely once it moves — see --pkg-head-ink below. With that ink the veil does
+   not have to vary at all, so it doesn't: one flat 0.60 everywhere, no band, no
+   ramp, no seam, the photograph at the same strength across the whole section.
 
-   The two levels, measured against all three package photographs rather than a
-   hypothetical worst frame (there are only three, and they are constants in
-   PackagesPreview):
+   0.60 is the "how much photograph" knob and the heading is what bounds it,
+   measured against all three package photographs rather than a hypothetical worst
+   frame (there are only three, and they are constants in PackagesPreview):
 
-     0.88 over the heading  light 4.69 / 4.86 / 4.98   dark 9.41 / 9.72 / 10.63
-     0.60 below it          nothing is read against it
+     light  4.89   dark  5.05
 
-   0.88 is the floor, not a preference — 0.86 drops the darkest of the three to
-   4.52 and the next photograph added could be darker still. Lower it only after
-   re-running the numbers. 0.60 below is free and is the "how much photograph"
-   knob: raise it toward 1 to mute the image, lower it to show more.
-
-   The stops are in PIXELS, not percentages. The heading's height barely moves with
-   the viewport — measured 187px at 1497, 137px at 885, 124px at 430 — but the
-   section's height grows as it stacks, so the same heading is 25% of the section at
-   desktop and 12% at phone width. A percentage stop is therefore tightest exactly
-   where the heading is tallest; 190px covers the 187px worst case at every width,
-   and the ramp to 330px keeps the change off the text entirely.
+   Lower it and re-run those two numbers; the harness is a canvas that redraws this
+   layer (cover-fit, blur 44 / saturate 1.15, scale 1.12), composites the veil over
+   it and takes the worst pixel under the heading's box.
 
    scale(1.12) hides the soft edge: a 44px blur samples past the element's bounds
    and would otherwise show a pale seam down the sides of the section. */
@@ -1004,40 +994,47 @@
 .lp-pkg-ambient-scrim {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--bg-subtle) 88%, transparent) 0px,
-    color-mix(in srgb, var(--bg-subtle) 88%, transparent) 190px,
-    color-mix(in srgb, var(--bg-subtle) 60%, transparent) 330px,
-    color-mix(in srgb, var(--bg-subtle) 60%, transparent) 100%
-  );
+  background: color-mix(in srgb, var(--bg-subtle) 60%, transparent);
 }
 
 /* The heading ink, deepened so it can sit on the photograph at all.
 
    --accent is the kicker and section-link colour everywhere else on the page, and
    on the flat token it measures 4.62:1 — over the line, but with nothing to spare.
-   Put any photograph behind it, however heavily veiled, and it fails: measured
-   against the three package images it peaks at 3.99 even under a 0.90 veil. There
-   is no veil that keeps the forest green legible AND shows the photo, which is why
-   the top of this section used to be a flat dead band.
+   Put any photograph behind it, however heavily veiled, and it fails: against the
+   three package images it peaks at 3.99 even under a 0.90 veil. --accent-hover, one
+   step darker, only reaches 4.03 at 0.80. Neither can stand on a light veil, which
+   is why the top of this section was a flat opaque band for as long as it was.
 
-   --accent-hover is the same green one step darker (#146B34 light, #E2ECDC dark),
-   already in the palette as the hover state for accent fills. It clears 4.5:1 on
-   every one of the three photographs under the 0.88 veil, in both themes, so the
-   heading keeps its colour and the section keeps its picture.
+   So light mode mixes its own: the accent green pulled three quarters of the way to
+   the page ink. Still a forest green rather than the near-black --text-primary would
+   give, and dark enough to hold 4.89:1 at 0.60. Derived with color-mix rather than
+   written as a hex so it follows the palette if the theme is retuned.
+
+   Dark mode needs no mix — its accent is a pale sage on a dark ground, so the same
+   --accent-hover that light mode cannot use clears 5.05:1 there untouched.
+
+   25% is chosen for margin, not looks: 30% reads slightly greener but lands at 4.64,
+   which leaves 0.14 for the next photograph added to the set.
 
    Scoped to .lp-pkg-section because this is the only header standing on an image;
    .amb-host could not carry the rule, as MenuPage and RentalPage share it. */
+.lp-pkg-section {
+  --pkg-head-ink: color-mix(in srgb, var(--accent) 25%, var(--text-primary));
+}
+.dark .lp-pkg-section {
+  --pkg-head-ink: var(--accent-hover);
+}
 .lp-pkg-section .ui-kicker,
 .lp-pkg-section .ui-sec-link {
-  color: var(--accent-hover);
+  color: var(--pkg-head-ink);
 }
 
-/* Colour is .ui-sec-link's only hover affordance, and the rule above just made the
-   resting state equal the hover state — so in this one section hovering did nothing.
-   An underline rather than a fourth green: it restores the feedback without another
-   value to measure, and it is visible to anyone who cannot separate the two greens. */
+/* Colour is .ui-sec-link's only hover affordance, and the rule above overrides the
+   resting colour with something the hover state cannot brighten past — so in this
+   one section hovering did nothing. An underline rather than a fourth green: it
+   restores the feedback without another value to measure, and it is visible to
+   anyone who cannot separate two dark greens. */
 .lp-pkg-section .ui-sec-link:hover {
   text-decoration: underline;
 }
