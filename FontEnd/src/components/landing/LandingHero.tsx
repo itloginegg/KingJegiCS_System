@@ -10,6 +10,8 @@ const STATS = [
 
 /** How long a still holds before the next layer fades in. Videos ignore it. */
 const IMAGE_MS = 6000;
+/** Layers either side of the active one that carry their image. See `near`. */
+const PRELOAD_WINDOW = 1;
 
 export type HeroMedia =
   | { type: 'image'; src: string }
@@ -58,6 +60,27 @@ export function LandingHero({ media }: LandingHeroProps) {
   const count = media.length;
   /* One layer has nothing to cross-fade to, and reduced motion holds frame one. */
   const cycles = count > 1 && !reduced;
+
+  /**
+   * Whether a layer is close enough to the active one to be worth loading.
+   *
+   * Every layer mounts — the refs, the timing and the pause logic below all index
+   * into the full list, and windowing the elements would misalign them. What is
+   * windowed is the background-image: a layer outside the window carries none, so
+   * the browser never requests it. With 38 stills in public/hero that is the
+   * difference between 16MB on first paint and roughly one megabyte.
+   *
+   * Wrap-aware, so the last layer counts as adjacent to the first — the reel loops,
+   * and the neighbour before index 0 is the final frame. One layer of lookahead is
+   * six seconds of warning at IMAGE_MS, which is ample for a few hundred KB.
+   *
+   * Nothing is unloaded in any meaningful sense: once fetched an image is in the
+   * HTTP cache, so a layer re-entering the window paints from memory.
+   */
+  const near = (i: number) => {
+    const d = Math.abs(i - index);
+    return Math.min(d, count - d) <= PRELOAD_WINDOW;
+  };
 
   /**
    * Advance the slideshow.
@@ -123,14 +146,16 @@ export function LandingHero({ media }: LandingHeroProps) {
             <div
               key={`${m.src}-${i}`}
               className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
-              style={{ backgroundImage: `url(${m.src})` }}
+              style={near(i) ? { backgroundImage: `url(${m.src})` } : undefined}
             />
           ) : (
             <video
               key={`${m.src}-${i}`}
               ref={(el) => { videoRefs.current[i] = el; }}
               className={`lp-hero-layer${i === index ? ' is-on' : ''}`}
-              src={m.src}
+              /* Same window as the stills. preload="metadata" keeps this small
+                 either way, but an unset src is zero requests rather than a few. */
+              src={near(i) ? m.src : undefined}
               poster={m.poster}
               /* Muted is not a preference: AmbientAudio already owns sound on
                  this page, and a second source would talk over it. muted +

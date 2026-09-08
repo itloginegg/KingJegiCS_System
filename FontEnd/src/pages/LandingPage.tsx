@@ -20,15 +20,59 @@ import '../components/landing/landing.css';
  * Drop a `{ type: 'video', src, poster }` entry in and it plays in place — the
  * hero stacks real elements rather than swapping a CSS background, so the two
  * kinds mix freely. Videos stay muted: AmbientAudio already owns sound here.
+ *
+ * Every photograph in public/hero, with the clips interleaved roughly every eight
+ * so the reel never runs long on one kind. Order is the filenames' own; the two
+ * IMG_* stills close it out.
+ *
+ * 38 stills is 16MB if they all load at once, which is why LandingHero only sets a
+ * layer's background-image when that layer is near the active one. Adding entries
+ * here is therefore cheap — the cost is per-visible-layer, not per-entry.
  */
 const HERO_MEDIA: HeroMedia[] = [
   { type: 'video', src: '/hero/IMG_6103.mp4' },
+  { type: 'image', src: '/hero/475791402_1053532609909764_4981430293773791916_n.jpg' },
+  { type: 'image', src: '/hero/475882223_1053532676576424_7453945570792069785_n.jpg' },
+  { type: 'image', src: '/hero/475885781_1053532873243071_739548449675657919_n.jpg' },
+  { type: 'image', src: '/hero/475935832_1053532753243083_204533552706617820_n%20%281%29.jpg' },
+  { type: 'image', src: '/hero/476003522_1053532876576404_2841522414474075162_n.jpg' },
+  { type: 'image', src: '/hero/476021624_1053532693243089_6450707443146943903_n.jpg' },
+  { type: 'image', src: '/hero/476030991_1053532466576445_805751608116762178_n.jpg' },
+  { type: 'image', src: '/hero/476069041_1053532813243077_2751738037370215620_n.jpg' },
   { type: 'video', src: '/hero/IMG_6117.mp4' },
+  { type: 'image', src: '/hero/476278532_1053532683243090_158351261579523031_n.jpg' },
+  { type: 'image', src: '/hero/476312599_1053532633243095_2770354154287174301_n.jpg' },
+  { type: 'image', src: '/hero/648019737_1355931806336508_6965164466184933880_n.jpg' },
+  { type: 'image', src: '/hero/648832511_1355931453003210_4602903017174356830_n.jpg' },
+  { type: 'image', src: '/hero/648991669_1355933883002967_7635247740489269885_n.jpg' },
+  { type: 'image', src: '/hero/649334371_1355931486336540_6564044671628030550_n.jpg' },
+  { type: 'image', src: '/hero/650757354_1358780446051644_7540690133881728036_n.jpg' },
+  { type: 'image', src: '/hero/650981336_1358780622718293_375876479677361105_n.jpg' },
   { type: 'video', src: '/hero/IMG_6092.mp4' },
+  { type: 'image', src: '/hero/651090097_1358780706051618_7507925435931852959_n.jpg' },
+  { type: 'image', src: '/hero/651217534_1358780659384956_6191535843346171980_n.jpg' },
+  { type: 'image', src: '/hero/655913859_1370284794901209_5634616107795083968_n.jpg' },
+  { type: 'image', src: '/hero/657373626_1370284998234522_8672412175734879214_n.jpg' },
+  { type: 'image', src: '/hero/657385281_1370284761567879_3493865220430027531_n.jpg' },
+  { type: 'image', src: '/hero/657586134_1370284891567866_7176804982523438533_n.jpg' },
+  { type: 'image', src: '/hero/721119020_1435797765016578_6591129480672024861_n.jpg' },
+  { type: 'image', src: '/hero/724777748_1438286398101048_2028803709003395940_n.jpg' },
   { type: 'video', src: '/hero/IMG_6029.mp4' },
-  { type: 'image', src: '/hero/IMG_6025.jpg' },
-  { type: 'image', src: '/hero/IMG_6013.jpg' },
+  { type: 'image', src: '/hero/726357880_1438290521433969_921599286252158990_n.jpg' },
+  { type: 'image', src: '/hero/726596851_1438286338101054_7481206446141031975_n.jpg' },
+  { type: 'image', src: '/hero/727519078_1438286461434375_4129001469063785725_n.jpg' },
+  { type: 'image', src: '/hero/727519457_1438286241434397_4792549088553892762_n.jpg' },
+  { type: 'image', src: '/hero/736019865_1452772623319092_4127398391280102040_n.jpg' },
+  { type: 'image', src: '/hero/737799956_1452773646652323_6435897556678668090_n.jpg' },
+  { type: 'image', src: '/hero/737911773_1452772986652389_9191038347997591932_n.jpg' },
+  { type: 'image', src: '/hero/738068418_1452772489985772_5602471432875962684_n.jpg' },
   { type: 'video', src: '/hero/IMG_6041.mp4' },
+  { type: 'image', src: '/hero/738552383_1452772706652417_1832230556915129421_n.jpg' },
+  { type: 'image', src: '/hero/741454036_1452773609985660_8306301539792823671_n.jpg' },
+  { type: 'image', src: '/hero/771998357_122136450405174569_2473241104732153796_n.jpg' },
+  { type: 'image', src: '/hero/772138440_122136450363174569_4078387265260369892_n.jpg' },
+  { type: 'image', src: '/hero/IMG_6013.jpg' },
+  { type: 'image', src: '/hero/IMG_6025.jpg' },
 ];
 
 /**
