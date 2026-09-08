@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, ShoppingCart, X } from 'lucide-react';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -69,6 +69,36 @@ export function Navbar({
   const [scrolled, setScrolled] = useState(false);
   const onHero = sticky && !scrolled;
 
+  /**
+   * Publish the bar's height as --nav-h.
+   *
+   * A fixed bar is out of flow, so anything else that parks at the top of the
+   * viewport no longer has that space to itself — MenuPage's filter toolbar is
+   * sticky at top:0 and landed underneath this one the moment the bar stopped
+   * scrolling away. Measured rather than written down as 74px, so the two cannot
+   * drift apart when this bar's padding changes.
+   *
+   * Layout effect, not effect: a consumer positions itself against this value, and
+   * reading it a frame late would show that consumer in the wrong place first.
+   */
+  const barRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!sticky) return;
+    const publish = () => {
+      const h = barRef.current?.offsetHeight;
+      if (h) document.documentElement.style.setProperty('--nav-h', `${h}px`);
+    };
+    publish();
+    window.addEventListener('resize', publish);
+    return () => {
+      window.removeEventListener('resize', publish);
+      /* Cleared on unmount: a page whose bar is not sticky must not inherit an
+         offset from the page the user came from. */
+      document.documentElement.style.removeProperty('--nav-h');
+    };
+  }, [sticky]);
+
   useEffect(() => {
     if (!sticky) return;
     const read = () => setScrolled(window.scrollY > SOLID_AFTER_PX);
@@ -118,6 +148,7 @@ export function Navbar({
 
   return (
     <header
+      ref={barRef}
       className={onHero ? 'nav-on-hero' : undefined}
       style={
         sticky
@@ -129,7 +160,11 @@ export function Navbar({
               top: 0,
               left: 0,
               right: 0,
-              zIndex: 30,
+              /* Above MenuPage's sticky toolbar (30), below its drawer and modals
+                 (80-100). The toolbar rides up past this bar's band when its own
+                 container scrolls out, so equal z-indices would let it paint over
+                 the nav on the way. */
+              zIndex: 40,
               /* Over the hero: nothing at all, so the media is unbroken. Once
                  scrolled: tinted rather than opaque, so what is behind still reads
                  through the bar instead of stopping dead at a seam.

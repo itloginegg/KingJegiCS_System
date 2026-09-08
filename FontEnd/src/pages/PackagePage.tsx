@@ -415,7 +415,7 @@ export function PackagePage() {
         }
       `}</style>
 
-      <Navbar activePage="packages" />
+      <Navbar activePage="packages" placement="sticky" />
 
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
 

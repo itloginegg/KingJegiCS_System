@@ -1023,7 +1023,7 @@ export function BookingPage() {
         .bk-select:focus{border-color:var(--primary)}
       `}</style>
 
-      <Navbar activePage="quotation" />
+      <Navbar activePage="quotation" placement="sticky" />
 
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
         

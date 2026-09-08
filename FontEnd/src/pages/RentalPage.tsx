@@ -240,6 +240,7 @@ export function RentalPage() {
       <RentalHero query={query} onQueryChange={setQuery}>
         <Navbar
           activePage="rentals"
+          placement="sticky"
           cartCount={cartCount}
           onCartClick={() => setCheckoutOpen(true)}
         />

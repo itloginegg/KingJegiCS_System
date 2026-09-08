@@ -405,7 +405,7 @@ export function MenuPage() {
         @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .fade-up { animation: fadeUp 0.7s ease both; }
 
-        .mnu-toolbar { position: sticky; top: 0; z-index: 30; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); border-bottom: 1px solid var(--border); }
+        .mnu-toolbar { position: sticky; top: var(--nav-h, 74px); z-index: 30; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); border-bottom: 1px solid var(--border); }
         .mnu-toolbar-inner { max-width: 1200px; margin: 0 auto; padding: 0.9rem 2.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
         .mnu-pills { display: flex; align-items: center; gap: 0.4rem; overflow-x: auto; flex: 1 1 auto; scrollbar-width: none; padding: 2px; }
         .mnu-pills::-webkit-scrollbar { display: none; }
@@ -616,7 +616,7 @@ export function MenuPage() {
             />
           </div>
 
-          <Navbar activePage="menus" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
+          <Navbar activePage="menus" placement="sticky" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
           <div className="fade-up" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
             <p className="ui-kicker">Full menu</p>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.375rem, 5vw, 3.875rem)', fontWeight: 600, lineHeight: 0.98, letterSpacing: '-0.04em', color: 'var(--text-primary)', textWrap: 'balance', margin: '0 0 1rem' }}>
