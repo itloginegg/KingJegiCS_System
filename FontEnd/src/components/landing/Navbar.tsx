@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, ShoppingCart, X } from 'lucide-react';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -10,6 +10,12 @@ import { useAuth } from '../../hooks/useAuth';
  * "Book Now" is gone from this list: it is the rose pill on the right, and having
  * it in both places made the bar carry the same destination twice.
  */
+/**
+ * How far the page scrolls before the sticky bar takes its solid ground.
+ * Small on purpose — see `scrolled` in the component.
+ */
+const SOLID_AFTER_PX = 16;
+
 const NAV_LINKS = [
   { label: 'Home', href: '/' },
   { label: 'Packages', href: '/packages' },
@@ -30,7 +36,9 @@ export interface NavbarProps {
    * whatever section renders it, which every page except the landing page relies
    * on for its hero to start at y=0. `sticky` is the new direction's own bar: it
    * holds the top of the viewport on a tinted, blurred ground with a hairline
-   * under it. Kept a prop rather than a global switch so adopting it is per-page
+   * under it, and it is TRANSPARENT until the page scrolls, so the hero runs
+   * unbroken beneath it and the bar only takes that ground once there is content
+   * behind it. Kept a prop rather than a global switch so adopting it is per-page
    * and does not silently reflow five heroes that were built around the overlay.
    */
   placement?: 'overlay' | 'sticky';
@@ -48,10 +56,39 @@ export function Navbar({
 
   const sticky = placement === 'sticky';
 
+  /**
+   * Whether the bar has left the very top of the page.
+   *
+   * Deliberately a small number and not "past the hero". While the bar is
+   * transparent its text stands on the hero's media, and the only thing making
+   * that legible is .lp-hero's scrim — so the transparent state has to be confined
+   * to scroll offsets where the hero is guaranteed to be behind it. 16px
+   * guarantees that; "past the hero" would too, but it would also hold the bar
+   * transparent over a hero the user has half scrolled away, for no gain.
+   */
+  const [scrolled, setScrolled] = useState(false);
+  const onHero = sticky && !scrolled;
+
+  useEffect(() => {
+    if (!sticky) return;
+    const read = () => setScrolled(window.scrollY > SOLID_AFTER_PX);
+    /* Read once on mount rather than assuming 0: a back-navigation or a reload
+       restores the previous scroll offset, and the bar would otherwise mount
+       transparent halfway down the page. */
+    read();
+    window.addEventListener('scroll', read, { passive: true });
+    return () => window.removeEventListener('scroll', read);
+  }, [sticky]);
+
+  /* --text-muted is what the bar uses on its own ground; over the hero it is not
+     available at all. The scrim there is an opacity, not a surface, so the ink has
+     to clear the worst frame of the reel rather than a known colour — .lp-hero's
+     own comment records that --text-muted cannot pass at any usable scrim, which is
+     why .lp-stat-label is rebound the same way. --text-primary clears 8:1. */
   const iconBtn: React.CSSProperties = {
     background: 'transparent',
     border: 'none',
-    color: 'var(--text-muted)',
+    color: onHero ? 'var(--text-primary)' : 'var(--text-muted)',
     cursor: 'pointer',
     width: 36,
     height: 36,
@@ -81,18 +118,29 @@ export function Navbar({
 
   return (
     <header
+      className={onHero ? 'nav-on-hero' : undefined}
       style={
         sticky
           ? {
-              position: 'sticky',
+              /* Fixed, not sticky. Sticky keeps the bar in flow, so the hero would
+                 begin below it and the two would meet at a seam — the whole point
+                 here is that the hero's media runs to y=0 and the bar sits on it. */
+              position: 'fixed',
               top: 0,
+              left: 0,
+              right: 0,
               zIndex: 30,
-              /* Tinted rather than opaque, so the hero's ground reads through the
-                 bar instead of stopping dead at a seam. */
-              background: 'color-mix(in srgb, var(--bg) 88%, transparent)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              borderBottom: '1px solid var(--border)',
+              /* Over the hero: nothing at all, so the media is unbroken. Once
+                 scrolled: tinted rather than opaque, so what is behind still reads
+                 through the bar instead of stopping dead at a seam.
+                 The border is transparent rather than absent in the first state —
+                 dropping it would change the bar's height and jog the page by a
+                 pixel every time the threshold is crossed. */
+              background: onHero ? 'transparent' : 'color-mix(in srgb, var(--bg) 88%, transparent)',
+              backdropFilter: onHero ? 'none' : 'blur(12px)',
+              WebkitBackdropFilter: onHero ? 'none' : 'blur(12px)',
+              borderBottom: `1px solid ${onHero ? 'transparent' : 'var(--border)'}`,
+              transition: 'background 0.25s ease, border-color 0.25s ease',
             }
           : { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20 }
       }
@@ -115,6 +163,12 @@ export function Navbar({
           white-space: nowrap;
         }
         .nav-link:hover { color: var(--text-primary); }
+        /* See the note on iconBtn: over the hero the muted ink has no scrim it can
+           pass at, so every link takes the primary. That makes the resting and the
+           hover colour identical here, hence the underline — .ui-sec-link in the
+           packages header lost its hover the same way and is fixed the same way. */
+        .nav-on-hero .nav-link { color: var(--text-primary); }
+        .nav-on-hero .nav-link:hover { text-decoration: underline; }
         .nav-link-active { color: var(--text-primary); font-weight: 600; }
         .nav-signin { padding: 0 0.5rem; }
         .nav-icon:hover { background: var(--primary-muted); color: var(--text-primary); }
