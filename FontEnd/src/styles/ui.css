@@ -182,7 +182,7 @@
 /* On a .dark-band section, where --primary and --accent are both wrong: they
    flip light in dark mode, and a band stays dark in both. The edge is not
    decoration — in light the chip is near-white on a near-black band and reads
-   on its own; in dark it is #241531 on #120a18, 1.3:1, an invisible button.
+   on its own; in dark it is #24402A on #101E13, 1.4:1, an invisible button.
    --band-chip-edge is `transparent` in light, so one declaration covers both. */
 .ui-btn-band {
   background: var(--band-chip);
@@ -509,7 +509,7 @@ select.ui-input {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: rgba(27, 16, 36, 0.55);
+  background: rgba(22, 40, 26, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;

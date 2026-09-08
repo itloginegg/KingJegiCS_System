@@ -1,7 +1,7 @@
 /* ══════════════════════════════════════════════════════════════════════
    Packages carousel — artboard 5a.
 
-   One active card on a light spotlight surface, the rest on the plum fill.
+   One active card on a light spotlight surface, the rest on the hunter fill.
    The spotlight values are pinned literals in both themes for the reason set
    out in PackageCard.tsx: 5a is the dark artboard and still draws the centred
    card near-white, because it inverts against the page rather than following
@@ -11,7 +11,7 @@
 /* The spotlight card inverts AGAINST the page rather than following it, which is
    what makes it read as spotlit. That only works if both themes get a real swap:
    the near-white card the dark artboard draws is invisible on the light ground
-   (--bg is #faf6f7), so under :root the centred card is the plum one and the
+   (--bg is #F7F9F4), so under :root the centred card is the hunter one and the
    flanks are light. .dark reverses both roles below.
 
    `.pkg-theme` is a tokens-only alias: the layout rules further down this file
@@ -19,34 +19,34 @@
    component's own track, so the component takes this class and not `.pkg-rail`. */
 .pkg-rail,
 .pkg-theme {
-  --pkgc-lift: #2e1a3e;          /* active fill — plum, against a light page */
-  --pkgc-ink: #f7eff4;           /* on the active fill */
-  --pkgc-muted: #c9b8d2;
-  /* On the plum spotlight the brand rose reads 3.1:1 — the same reason
-     index.css forbids --accent on a band. The CTA takes the amber that palette
-     keeps for this exact ground (9.4:1), with plum ink on it. */
-  --pkgc-accent: #e8b45f;
-  --pkgc-accent-hover: #f2ce93;
-  --pkgc-accent-on: #1b1024;
+  --pkgc-lift: #224326;          /* active fill — hunter, against a light page */
+  --pkgc-ink: #EEF3EA;           /* on the active fill */
+  --pkgc-muted: #BDCBB6;
+  /* On the hunter spotlight the brand forest reads 2.9:1 — the same reason
+     index.css forbids --accent on a band. The CTA takes the khaki that palette
+     keeps for this exact ground (5.2:1), with hunter ink on it. */
+  --pkgc-accent: #BAB569;
+  --pkgc-accent-hover: #D2CE8E;
+  --pkgc-accent-on: #16281A;
   --pkgc-side: #ffffff;          /* flanking fill — light, against a light page */
-  --pkgc-side-edge: rgba(27, 16, 36, 0.12);
-  --pkgc-side-ink: #1b1024;
-  --pkgc-side-muted: #7a6b84;
+  --pkgc-side-edge: rgba(22, 40, 26, 0.12);
+  --pkgc-side-ink: #16281A;
+  --pkgc-side-muted: #61705B;
 }
 .dark .pkg-rail,
 .dark .pkg-theme {
-  /* Page is near-black, so the roles swap: spotlight goes light, flanks plum.
-     The rose returns as the CTA — 6.9:1 on the near-white card. */
-  --pkgc-lift: #faf6f7;
-  --pkgc-ink: #1b1024;
-  --pkgc-muted: #7a6b84;
-  --pkgc-accent: #a62a57;
-  --pkgc-accent-hover: #8e1f49;
+  /* Page is near-black, so the roles swap: spotlight goes light, flanks hunter.
+     The forest returns as the CTA — 5.2:1 on the near-white card. */
+  --pkgc-lift: #F7F9F4;
+  --pkgc-ink: #16281A;
+  --pkgc-muted: #61705B;
+  --pkgc-accent: #1B7C3D;
+  --pkgc-accent-hover: #146B34;
   --pkgc-accent-on: #ffffff;
-  --pkgc-side: #241531;
-  --pkgc-side-edge: rgba(247, 239, 244, 0.18);
-  --pkgc-side-ink: #f7eff4;
-  --pkgc-side-muted: #c9b8d2;
+  --pkgc-side: #24402A;
+  --pkgc-side-edge: rgba(238, 243, 234, 0.18);
+  --pkgc-side-ink: #EEF3EA;
+  --pkgc-side-muted: #BDCBB6;
 }
 
 /* A flex track, not a 3-column grid: the rail renders every published package,
@@ -146,7 +146,7 @@
   font-family: var(--font-body);
   font-size: 0.875rem;
   line-height: 1.45;
-  color: #4a3a56;
+  color: #3A4736;
 }
 .pkgc-list svg { flex: none; color: var(--pkgc-accent); margin-top: 1px; }
 
@@ -179,16 +179,16 @@
 .pkgc-btn--tray {
   background: transparent;
   color: var(--pkgc-ink);
-  border-color: rgba(27, 16, 36, 0.22);
+  border-color: rgba(22, 40, 26, 0.22);
 }
-.pkgc-btn--tray:hover { background: rgba(27, 16, 36, 0.05); }
+.pkgc-btn--tray:hover { background: rgba(22, 40, 26, 0.05); }
 
 .pkgc-btn--ghost {
   background: transparent;
   color: var(--pkgc-side-ink);
   border-color: var(--pkgc-side-edge);
 }
-.pkgc-btn--ghost:hover { background: rgba(247, 239, 244, 0.08); }
+.pkgc-btn--ghost:hover { background: rgba(238, 243, 234, 0.08); }
 
 .pkgc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

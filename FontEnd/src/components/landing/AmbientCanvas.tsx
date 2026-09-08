@@ -70,17 +70,17 @@ export function AmbientCanvas({ variant = 'auto' }: { variant?: 'auto' | 'rain' 
     /* Rain is drawn on a dark ground, so it takes the band ink. The glow sits on
        the light page ground and takes the brand accent and gold — a theme token
        either way, never a literal. */
-    let ink: [number, number, number] = [247, 239, 244];
+    let ink: [number, number, number] = [238, 243, 234];
     let warm: [[number, number, number], [number, number, number]] = [
-      [166, 42, 87],
-      [232, 180, 95],
+      [27, 124, 61],
+      [186, 181, 105],
     ];
 
     const readPalette = () => {
-      ink = toRgb(cssVar('--band-text') || '#f7eff4');
+      ink = toRgb(cssVar('--band-text') || '#EEF3EA');
       warm = [
-        toRgb(cssVar('--accent') || '#a62a57'),
-        toRgb(cssVar('--gold-on-band') || '#e8b45f'),
+        toRgb(cssVar('--accent') || '#1B7C3D'),
+        toRgb(cssVar('--gold-on-band') || '#BAB569'),
       ];
     };
 

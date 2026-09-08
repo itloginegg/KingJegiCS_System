@@ -372,7 +372,7 @@ export function PackagePage() {
 
         .modal-overlay {
           position: fixed; inset: 0;
-          background: rgba(27, 16, 36, 0.32);
+          background: rgba(22, 40, 26, 0.32);
           backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
           z-index: 300;
           display: flex; align-items: center; justify-content: center;

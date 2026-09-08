@@ -13,20 +13,30 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
   /* Brand palette — the five source colours, exposed as Tailwind utilities
-     (bg-plum-deep, text-blush, …). */
-  --color-plum-deep: #2e1a3e;
-  --color-plum-deeper: #1b1024;
-  --color-rose: #a62a57;
-  --color-blush: #f2c1d1;
-  --color-off-white: #faf6f7;
+     (bg-hunter, text-sage, …). */
+  --color-hunter: #224326;
+  --color-hunter-deep: #16281A;
+  --color-forest: #1B7C3D;
+  --color-sage: #A8BA9C;
+  --color-olive: #556B2F;
+  --color-moss: #889A58;
+  --color-khaki: #BAB569;
+  --color-off-white: #F7F9F4;
 
-  /* Aliases — old teal-era names, new plum values. Every `bg-teal-deep` and
-     `text-beige` in the tree keeps resolving, so the re-skin does not have to
-     land in the same commit as ~500 call-site renames. Retire in a later pass. */
-  --color-teal-deep: #2e1a3e;
-  --color-teal-deeper: #1b1024;
-  --color-beige: #f2c1d1;
-  --color-warm-gray: #7a6b84;
+  /* Aliases — the plum-era names, new green values. ~25 call sites still read
+     `bg-plum-deep` / `text-blush`; they keep resolving so the re-skin need not
+     land with the renames. Retire in a later pass. */
+  --color-plum-deep: #224326;
+  --color-plum-deeper: #16281A;
+  --color-rose: #1B7C3D;
+  --color-blush: #A8BA9C;
+
+  /* Aliases — the oldest, teal-era names. Same reason as the plum block above:
+     every `bg-teal-deep` and `text-beige` in the tree keeps resolving. */
+  --color-teal-deep: #224326;
+  --color-teal-deeper: #16281A;
+  --color-beige: #A8BA9C;
+  --color-warm-gray: #61705B;
 
   /* ── Semantic tokens as Tailwind utilities ──
      Each one forwards to the themed custom property defined in :root / .dark
@@ -110,45 +120,51 @@
    Consumed by the landing page (and any page that opts into the system).
 ─────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Palette: #1B1024 / #2E1A3E plum · #A62A57 rose · #F2C1D1 blush · #FAF6F7 ground */
+  /* Palette — six greens.
+     #16281A / #224326 hunter · #556B2F olive · #1B7C3D forest
+     #889A58 moss · #A8BA9C sage · #BAB569 khaki · #F7F9F4 ground
 
-  --bg: #faf6f7;
-  --bg-subtle: #fbeef2;      /* the blush band — tinted, not grey */
+     Forest, sage and hunter are shifted a step from the raw swatches so that
+     white-on-fill and text-on-band clear 4.5:1: the source forest #1F8A44 is
+     4.4:1 under white, which is a button label you cannot read. */
+
+  --bg: #F7F9F4;
+  --bg-subtle: #EDF2E7;      /* the sage band — tinted, not grey */
   --bg-card: #ffffff;
   --surface: #ffffff;
 
-  /* Text is the plum, stepped toward mauve as it recedes. */
-  --text-primary: #1b1024;   /* 16.1:1 on --bg */
-  --text-secondary: #4a3a56; /*  8.9:1 */
-  --text-muted: #7a6b84;     /*  4.7:1 */
+  /* Text is the hunter, stepped toward sage as it recedes. */
+  --text-primary: #16281A;   /* 14.6:1 on --bg */
+  --text-secondary: #3A4736; /*  9.3:1 */
+  --text-muted: #61705B;     /*  5.0:1 */
   /* Carries table counts, field captions and calendar numerals — real text,
      so it clears 4.5:1 rather than sitting at decorative weight. */
-  --text-dim: #6f6379;       /*  5.6:1 on --surface */
+  --text-dim: #5C6A57;       /*  5.7:1 on --surface */
 
-  /* primary is "action structure" — the plum fills, nav, sidebars, bands. */
-  --primary: #2e1a3e;
-  --primary-hover: #1b1024;
-  --primary-text: #faf6f7;
-  --primary-muted: rgba(46, 26, 62, 0.10);
+  /* primary is "action structure" — the hunter fills, nav, sidebars, bands. */
+  --primary: #224326;
+  --primary-hover: #16281A;
+  --primary-text: #F7F9F4;
+  --primary-muted: rgba(34, 67, 38, 0.10);
 
-  --secondary: #2e1a3e;
-  --secondary-muted: rgba(46, 26, 62, 0.07);
+  --secondary: #224326;
+  --secondary-muted: rgba(34, 67, 38, 0.07);
 
-  /* accent is "the button you press" — every primary CTA is this rose. */
-  --accent: #a62a57;         /* 6.9:1 on --surface */
-  --accent-hover: #8e1f49;
-  --accent-muted: rgba(166, 42, 87, 0.12);
-  --accent-text: #ffffff;    /* 6.9:1 on the rose fill */
+  /* accent is "the button you press" — every primary CTA is this forest green. */
+  --accent: #1B7C3D;         /* 5.3:1 on --surface */
+  --accent-hover: #146B34;
+  --accent-muted: rgba(27, 124, 61, 0.12);
+  --accent-text: #ffffff;    /* 5.3:1 on the forest fill */
 
-  --border: rgba(27, 16, 36, 0.12);
-  --border-strong: rgba(27, 16, 36, 0.28);
-  --border-accent: rgba(166, 42, 87, 0.35);
+  --border: rgba(22, 40, 26, 0.12);
+  --border-strong: rgba(22, 40, 26, 0.28);
+  --border-accent: rgba(27, 124, 61, 0.35);
 
   /* Raised panel over a busy background. Semi-opaque rather than a
      backdrop-filter, for the same reason as before: the surfaces underneath
      animate, and a blur re-runs every frame for a tint a fill gives free. */
   --glass: rgba(255, 255, 255, 0.55);
-  --glass-border: rgba(27, 16, 36, 0.10);
+  --glass-border: rgba(22, 40, 26, 0.10);
 
   --danger: #dc2626;
   --danger-muted: rgba(220, 38, 38, 0.12);
@@ -158,35 +174,41 @@
      takes the body copy from 4.8:1 to 6.9:1 on --surface. */
   --danger-ink: #b01f1f;
 
-  --warning: #b4741a;        /* 4.6:1 on --surface */
-  --warning-muted: rgba(180, 116, 26, 0.14);
+  /* Amber, and deliberately not a palette green: --warning has to survive a page
+     where every other piece of chrome is green, and a khaki 'attention' state next
+     to a moss 'ok' state is not a state change anyone reads. Darkened from the
+     old #B4741A, which was annotated 4.6:1 but actually measured 3.9:1. */
+  --warning: #9A6412;        /* 5.0:1 on --surface */
+  --warning-muted: rgba(154, 100, 18, 0.14);
   --warning-text: #ffffff;
 
   /* ── Decorative accent ──
-     The teal-era palette needed two gold tokens because the brand gold was
-     unusable as text on the off-white. The plum direction has no separate
-     ornamental gold: on the page ground the rose carries ornament, and the
-     amber survives only ON the dark band, where it has room. Both token
-     names are kept so no consumer breaks — --gold is now the rose. */
-  --gold: #a62a57;           /* 6.9:1 on --bg */
-  --gold-on-band: #e8b45f;   /* 9.4:1 on --band-bg — band use only */
+     Two tokens, for the reason they have always existed: one value cannot
+     serve both grounds. On the off-white the forest green carries ornament;
+     on the dark band it collapses to 3.0:1, so the khaki takes over there.
+     Both names are kept so no consumer breaks — --gold is now the forest. */
+  --gold: #1B7C3D;           /* 5.0:1 on --bg */
+  --gold-on-band: #BAB569;   /* 7.3:1 on --band-bg — band use only */
 
   /* ── Status ramp ──
-     Unchanged from the teal build. These five must stay distinguishable from
-     each other and from --accent, which is why they are not re-tinted toward
-     the plum: a Pending badge that reads as a Confirmed one is worse than a
-     badge slightly off-palette. Each clears 4.5:1 on --surface. */
+     Unchanged across the teal, plum and green builds. These five must stay
+     distinguishable from each other and from --accent, which is why they are
+     not re-tinted toward the greens: a Pending badge that reads as a Confirmed
+     one is worse than a badge slightly off-palette. Each clears 4.5:1 on
+     --surface. Note --status-paid is a green sitting near --accent — the same
+     adjacency --status-unpaid had with the rose, and tolerable for the same
+     reason: a badge is never rendered as a button. */
   --status-info: #2b6ba6;      /* Completed              — 5.6:1 */
   --status-refund: #146b80;    /* Refunded / Partially   — 6.1:1 */
-  --status-unpaid: #c2255c;    /* Deposit Unpaid         — 5.5:1 */
-  --status-partial: #7048e8;   /* Deposit Partial        — 5.4:1 */
+  --status-unpaid: #c2255c;    /* Deposit Unpaid         — 5.7:1 */
+  --status-partial: #7048e8;   /* Deposit Partial        — 5.6:1 */
   --status-paid: #1f7a33;      /* Deposit Paid           — 5.4:1 */
 
-  --shadow-sm: 0 1px 2px rgba(27, 16, 36, 0.06);
-  --shadow-md: 0 8px 24px rgba(27, 16, 36, 0.09);
-  --shadow-lg: 0 20px 52px rgba(27, 16, 36, 0.14);
-  --shadow-green: 0 10px 30px rgba(46, 26, 62, 0.28);   /* primary lift */
-  --shadow-gold: 0 10px 34px rgba(166, 42, 87, 0.24);   /* accent lift */
+  --shadow-sm: 0 1px 2px rgba(22, 40, 26, 0.06);
+  --shadow-md: 0 8px 24px rgba(22, 40, 26, 0.09);
+  --shadow-lg: 0 20px 52px rgba(22, 40, 26, 0.14);
+  --shadow-green: 0 10px 30px rgba(34, 67, 38, 0.28);   /* primary lift */
+  --shadow-gold: 0 10px 34px rgba(27, 124, 61, 0.24);   /* accent lift */
 
   /* ── Page frame ──
      The width the page is composed against, and the hairline that closes a
@@ -216,12 +238,12 @@
   --text-shadow-on-bg: none;
   --surface-glass: rgba(255, 255, 255, 0.72);
   --border-glass: rgba(255, 255, 255, 0.55);
-  --shadow-glass: 0 8px 32px rgba(27, 16, 36, 0.12);
+  --shadow-glass: 0 8px 32px rgba(22, 40, 26, 0.12);
 
   /* menu card imagery */
   --menu-img-filter: brightness(1.03) contrast(1.05) saturate(1.04);
-  --menu-vignette: rgba(27, 16, 36, 0.30);
-  --menu-chip-bg: rgba(250, 246, 247, 0.66);
+  --menu-vignette: rgba(22, 40, 26, 0.30);
+  --menu-chip-bg: rgba(247, 249, 244, 0.66);
   --menu-chip-border: rgba(255, 255, 255, 0.72);
 }
 
@@ -238,11 +260,11 @@
    such attribute anywhere.
 ─────────────────────────────────────────────────────────────────────── */
 .dark-band {
-  --band-bg:           #1b1024;
-  --band-text:         #f7eff4;   /* 15.6:1 on --band-bg */
-  --band-muted:        #c9b8d2;   /*  9.6:1 */
+  --band-bg:           #16281A;
+  --band-text:         #EEF3EA;   /* 13.8:1 on --band-bg */
+  --band-muted:        #BDCBB6;   /*  9.2:1 */
   --band-border:       rgb(255 255 255 / 0.28);
-  /* The section-header hairline, rebound for the band. --border is a plum tint
+  /* The section-header hairline, rebound for the band. --border is a hunter tint
      that vanishes on --band-bg; this is the one property .ui-sec-head needs
      swapped, so it is swapped here rather than duplicating the rule. */
   --rule:              var(--band-border);
@@ -254,51 +276,51 @@
   --band-glass-border: rgb(255 255 255 / 0.10);
 
   /* Drives the active pill, the active card and the CTA together. */
-  --band-chip:         #f7eff4;
-  --band-chip-text:    #1b1024;
+  --band-chip:         #EEF3EA;
+  --band-chip-text:    #16281A;
   --band-chip-edge:    transparent;
 
-  /* --accent CANNOT be used on a band: the rose reads 3.1:1 on --band-bg —
-     enough for chrome, not for the kicker text it would carry. The amber is
-     pinned across both themes, exactly as the brand gold was before it. */
-  --band-accent:       #e8b45f;   /* 9.4:1 on --band-bg */
-  --band-accent-text:  #1b1024;   /* 9.4:1 on the amber */
+  /* --accent CANNOT be used on a band: the forest reads 3.0:1 on --band-bg —
+     enough for chrome, not for the kicker text it would carry. The khaki is
+     pinned across both themes, exactly as the amber was before it. */
+  --band-accent:       #BAB569;   /* 7.3:1 on --band-bg */
+  --band-accent-text:  #16281A;   /* 7.3:1 on the khaki */
 
-  /* Blush as the soft mark on a band — the packages hero kicker and price.
-     Distinct from --band-accent, which is the amber that carries chrome. */
-  --band-accent-soft:  #f2c1d1;   /* 10.2:1 on --band-bg */
-  --band-quote:        #e8709a;   /* the opening quote mark */
-  --band-footer:       #1b1024;   /* the closing footer, one step below the band */
+  /* Sage as the soft mark on a band — the packages hero kicker and price.
+     Distinct from --band-accent, which is the khaki that carries chrome. */
+  --band-accent-soft:  #A8BA9C;   /*  7.5:1 on --band-bg */
+  --band-quote:        #6DC489;   /*  7.3:1 — the opening quote mark */
+  --band-footer:       #16281A;   /* the closing footer, one step below the band */
 }
 
 .dark .dark-band {
-  --band-bg:           #120a18;
-  --band-text:         #f7eff4;
-  --band-muted:        #a89ab2;   /*  7.2:1 */
-  --band-border:       rgb(247 239 244 / 0.16);
+  --band-bg:           #101E13;
+  --band-text:         #EEF3EA;
+  --band-muted:        #9AAA94;   /*  7.0:1 */
+  --band-border:       rgb(238 243 234 / 0.16);
 
   --band-glass:        rgb(255 255 255 / 0.05);
-  --band-glass-border: rgb(247 239 244 / 0.10);
+  --band-glass-border: rgb(238 243 234 / 0.10);
 
-  --band-chip:         #241531;
-  --band-chip-text:    #f7eff4;
-  /* Without an edge the active card vanishes: #241531 on the glass panel is
-     1.3:1, and a translucent hairline cannot recover it. */
-  --band-chip-edge:    #6b5a78;
+  --band-chip:         #24402A;
+  --band-chip-text:    #EEF3EA;
+  /* Without an edge the active card vanishes: #24402A on the glass panel is
+     1.4:1, and a translucent hairline cannot recover it. */
+  --band-chip-edge:    #7A9880;
 
-  --band-accent:       #e8b45f;
-  --band-accent-text:  #1b1024;
-  --band-accent-soft:  #f2c1d1;
-  --band-quote:        #e8709a;
-  --band-footer:       #0d0612;
+  --band-accent:       #BAB569;
+  --band-accent-text:  #16281A;
+  --band-accent-soft:  #A8BA9C;
+  --band-quote:        #6DC489;
+  --band-footer:       #0A140C;
 }
 
 /* ── Section header inside a dark band ──
    .ui-sec-head is theme-inherited: its kicker takes --accent and its title
    --text-primary, both of which are wrong on a ground that stays dark in both
-   themes — the rose is the 3.1:1 case named above, and the title would be plum
-   ink on plum. The hairline is already handled by the --rule rebind in the token
-   block. --band-accent is 9.4:1 here and --band-text 15.6:1.
+   themes — the forest is the 3.0:1 case named above, and the title would be
+   hunter ink on hunter. The hairline is already handled by the --rule rebind in
+   the token block. --band-accent is 7.3:1 here and --band-text 13.8:1.
 
    .ui-sec-link is included even though no band header carries one today: it is
    the same --accent that fails above, so leaving it out would make a link the
@@ -315,10 +337,10 @@
 .dark-band .nav-link {
   color: var(--band-muted);
 }
-/* Active and hover take --band-text, not the amber. Off the band the active link is
+/* Active and hover take --band-text, not the khaki. Off the band the active link is
    --text-primary and the logo is the page ink — both read as plain white in dark
-   mode — so a gold nav on the one page that carries a band made /rentals look like a
-   different site to /menus. The blush CTA is the same pairing --accent gives in dark
+   mode — so a khaki nav on the one page that carries a band made /rentals look like a
+   different site to /menus. The sage CTA is the same pairing --accent gives in dark
    mode, which is what the unbanded pages show. */
 .dark-band .nav-link:hover,
 .dark-band .nav-link-active {
@@ -434,78 +456,81 @@ body {
    light and their text dark, so each pair inverts.
 ─────────────────────────────────────────────────────────────────────── */
 .dark {
-  --bg: #150c1c;
-  --bg-subtle: #2a1b36;
-  --bg-card: #1f1428;
-  --surface: #1f1428;
+  --bg: #101710;
+  --bg-subtle: #1E2C1F;
+  --bg-card: #182218;
+  --surface: #182218;
 
-  --text-primary: #f7eff4;   /* 15.4:1 on --bg */
-  --text-secondary: #c9b8d2; /*  9.4:1 */
-  --text-muted: #9a88a6;     /*  5.5:1 */
-  --text-dim: #8a7896;       /*  4.6:1 on --surface */
+  --text-primary: #EEF3EA;   /* 16.2:1 on --bg */
+  --text-secondary: #BDCBB6; /* 10.7:1 */
+  --text-muted: #8B9A85;     /*  6.1:1 */
+  --text-dim: #7E8D79;       /*  4.7:1 on --surface */
 
-  --primary: #e8709a;
-  --primary-hover: #f2c1d1;
-  --primary-text: #150c1c;   /* 8.1:1 on the rose fill */
-  --primary-muted: rgba(232, 112, 154, 0.14);
+  --primary: #6DC489;
+  --primary-hover: #93D6A8;
+  --primary-text: #101710;   /* 8.6:1 on the moss fill */
+  --primary-muted: rgba(109, 196, 137, 0.14);
 
-  --secondary: #e8709a;
-  --secondary-muted: rgba(232, 112, 154, 0.08);
+  --secondary: #6DC489;
+  --secondary-muted: rgba(109, 196, 137, 0.08);
 
-  /* Blush rather than rose, so a decorative accent and a live action are still
-     two different things once both have to be light. */
-  --accent: #f2c1d1;         /* 11.7:1 on --surface */
-  --accent-hover: #ffffff;
-  --accent-muted: rgba(242, 193, 209, 0.14);
-  --accent-text: #1b1024;    /* 11.7:1 on the blush fill */
+  /* Sage rather than moss, so a decorative accent and a live action are still
+     two different things once both have to be light — and pitched a step LIGHTER
+     than --primary, not level with it. The CTA has to be the brightest thing on
+     a dark page; at #A8BA9C it measured 7.9:1 against --primary's 7.7:1, which is
+     no separation at all, and the button read as the quieter of the two. */
+  --accent: #CBDCC1;         /* 11.4:1 on --surface, vs --primary's 7.7:1 */
+  --accent-hover: #E2ECDC;
+  --accent-muted: rgba(203, 220, 193, 0.14);
+  --accent-text: #16281A;    /* 10.8:1 on the sage fill */
 
-  --border: rgba(247, 239, 244, 0.12);
-  --border-strong: rgba(247, 239, 244, 0.30);
-  --border-accent: rgba(232, 112, 154, 0.35);
+  --border: rgba(238, 243, 234, 0.12);
+  --border-strong: rgba(238, 243, 234, 0.30);
+  --border-accent: rgba(109, 196, 137, 0.35);
 
   /* A veil, not a wash — 5% is enough to separate the panel from the ground
      without turning it grey. */
   --glass: rgba(255, 255, 255, 0.05);
-  --glass-border: rgba(247, 239, 244, 0.10);
+  --glass-border: rgba(238, 243, 234, 0.10);
 
-  --danger: #f2828c;         /* 6.4:1 on --surface */
+  --danger: #f2828c;         /* 6.5:1 on --surface */
   --danger-muted: rgba(242, 130, 140, 0.14);
-  --danger-text: #150c1c;    /* dark ON a light red — white would be 2.6:1 */
+  --danger-text: #101710;    /* dark ON a light red — white would be 2.6:1 */
   /* On the dark ground the light red already clears 6.4:1 as text, so ink and
      fill converge — darkening here would move it the wrong way. */
   --danger-ink: #f2828c;
 
-  --warning: #e8b45f;        /* 8.7:1 on --surface */
+  --warning: #E8B45F;        /* 8.7:1 on --surface */
   --warning-muted: rgba(232, 180, 95, 0.14);
-  --warning-text: #150c1c;
+  --warning-text: #101710;
 
-  /* On the near-black ground the amber needs no darkening, so both gold tokens
-     converge — the same behaviour the teal palette had. */
-  --gold: #e8b45f;
-  --gold-on-band: #e8b45f;
+  /* On the near-black ground the khaki needs no darkening, so both gold tokens
+     converge — the same behaviour the teal and plum palettes had. */
+  --gold: #BAB569;           /* 7.7:1 on --surface */
+  --gold-on-band: #BAB569;
 
   /* Status ramp — lighter counterparts, each ≥4.5:1 on the dark --surface. */
   --status-info: #6fa8e0;      /* 6.6:1 */
   --status-refund: #4cc4d6;    /* 8.5:1 */
   --status-unpaid: #f06a92;    /* 5.7:1 */
   --status-partial: #b9a3fa;   /* 7.5:1 */
-  --status-paid: #7fd48f;      /* 9.6:1 */
+  --status-paid: #7fd48f;      /* 9.6:1 — near --primary; see the light block */
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.50);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
   --shadow-lg: 0 20px 52px rgba(0, 0, 0, 0.55);
-  --shadow-green: 0 10px 30px rgba(232, 112, 154, 0.25);
-  --shadow-gold: 0 10px 34px rgba(232, 180, 95, 0.18);
+  --shadow-green: 0 10px 30px rgba(109, 196, 137, 0.25);
+  --shadow-gold: 0 10px 34px rgba(186, 181, 105, 0.18);
 
-  --text-on-bg: #f7eff4;
-  --text-on-bg-muted: rgba(247, 239, 244, 0.75);
+  --text-on-bg: #EEF3EA;
+  --text-on-bg-muted: rgba(238, 243, 234, 0.75);
   --text-shadow-on-bg: 0 1px 6px rgba(0, 0, 0, 0.55);
-  --surface-glass: rgba(21, 12, 28, 0.60);
+  --surface-glass: rgba(16, 23, 16, 0.60);
   --border-glass: rgba(255, 255, 255, 0.10);
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.40);
 
   --menu-img-filter: brightness(0.88) contrast(1.08) saturate(1.05);
-  --menu-vignette: rgba(10, 5, 14, 0.52);
-  --menu-chip-bg: rgba(31, 20, 40, 0.62);
+  --menu-vignette: rgba(8, 16, 9, 0.52);
+  --menu-chip-bg: rgba(24, 34, 24, 0.62);
   --menu-chip-border: rgba(255, 255, 255, 0.10);
 }

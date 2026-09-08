@@ -299,9 +299,11 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
  *
  * Every entry reads the status ramp, never --accent or --primary. Those two were
  * survivable under the teal palette, where --accent was a bronze and --primary a
- * deep teal; under the plum direction --accent is the rose #A62A57 and --danger
- * the red #DC2626, so a Pending badge and a Cancelled one became two reds, and
- * Confirmed on --primary rendered as near-black body text rather than a status.
+ * deep teal; under the plum direction --accent was a rose that collided with
+ * --danger #DC2626, and under the green direction --accent is the forest #1B7C3D
+ * that collides with --status-paid instead. Either way a Pending badge stopped
+ * being separable, and Confirmed on --primary rendered as near-black body text
+ * rather than a status.
  * The ramp exists precisely so these five stay separable — see the note on it in
  * index.css.
  */
@@ -3342,7 +3344,7 @@ export function AdminDashboardPage() {
         .adm-foot-btn.danger { color: var(--danger); }
         .adm-foot-btn.danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-muted); }
 
-        .adm-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(27, 16, 36, 0.32); display: none; }
+        .adm-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(22, 40, 26, 0.32); display: none; }
 
         /* ── topbar ── */
         .adm-topbar {
@@ -3632,14 +3634,14 @@ export function AdminDashboardPage() {
         .adm-ov-kpi.accent {
           border-color: transparent;
           background:
-            radial-gradient(120% 95% at 92% 4%, rgba(242, 193, 209, 0.38) 0%, rgba(242, 193, 209, 0) 58%),
-            linear-gradient(142deg, #4a2c60 0%, #2e1a3e 52%, #1b1024 100%);
-          box-shadow: 0 10px 30px rgba(27, 16, 36, 0.28);
+            radial-gradient(120% 95% at 92% 4%, rgba(168, 186, 156, 0.38) 0%, rgba(168, 186, 156, 0) 58%),
+            linear-gradient(142deg, #3E6B43 0%, #224326 52%, #16281A 100%);
+          box-shadow: 0 10px 30px rgba(22, 40, 26, 0.28);
         }
-        .adm-ov-kpi.accent .lbl { color: rgba(247, 239, 244, 0.9); }
-        .adm-ov-kpi.accent .num { color: #f7eff4; }
-        .adm-ov-kpi.accent .foot { color: rgba(247, 239, 244, 0.84); }
-        .adm-ov-kpi.accent .ico { background: rgba(247, 239, 244, 0.16); color: #f7eff4; }
+        .adm-ov-kpi.accent .lbl { color: rgba(238, 243, 234, 0.9); }
+        .adm-ov-kpi.accent .num { color: #EEF3EA; }
+        .adm-ov-kpi.accent .foot { color: rgba(238, 243, 234, 0.84); }
+        .adm-ov-kpi.accent .ico { background: rgba(238, 243, 234, 0.16); color: #EEF3EA; }
 
         .adm-ov-badge {
           display: inline-flex; align-items: center; gap: 0.15rem;
@@ -3649,7 +3651,7 @@ export function AdminDashboardPage() {
         }
         .adm-ov-badge.up   { background: var(--ov-lime-soft); color: var(--ov-lime-ink); }
         .adm-ov-badge.down { background: var(--ov-neg); color: var(--ov-neg-ink); }
-        .adm-ov-kpi.accent .adm-ov-badge { background: rgba(242, 193, 209, 0.20); color: #f2c1d1; }
+        .adm-ov-kpi.accent .adm-ov-badge { background: rgba(168, 186, 156, 0.20); color: #A8BA9C; }
 
         /* sales panel */
         .adm-ov-panel { padding: 1.3rem 1.4rem 1.2rem; display: flex; flex-direction: column; }
@@ -5423,7 +5425,7 @@ export function AdminDashboardPage() {
                       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '4px 18px' }}>
                         {auditRows.map((row, idx) => {
                           const actionColor = row.action === 'CREATE' ? 'var(--primary)' : row.action === 'DELETE' ? 'var(--danger)' : 'var(--warning)';
-                          const actionBg = row.action === 'CREATE' ? 'rgba(46,26,62,.12)' : row.action === 'DELETE' ? 'rgba(220,38,38,.12)' : 'rgba(180,116,26,.14)';
+                          const actionBg = row.action === 'CREATE' ? 'rgba(34, 67, 38,.12)' : row.action === 'DELETE' ? 'rgba(220,38,38,.12)' : 'rgba(154, 100, 18,.14)';
                           return (
                             <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 0', borderBottom: idx < auditRows.length - 1 ? '1px solid var(--border)' : 'none', flexWrap: 'wrap' }}>
                               <div style={{ flex: 1, minWidth: '220px' }}>
@@ -5475,7 +5477,7 @@ export function AdminDashboardPage() {
                     <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--band-muted)' }}>
                       {pendingTesti} pending review
                     </span>
-                    <span onClick={() => void loadTestimonials()} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'rgba(247,239,244,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    <span onClick={() => void loadTestimonials()} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'rgba(238, 243, 234,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                       {testiLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)' }} />}
                     </span>
                   </div>
@@ -5497,7 +5499,7 @@ export function AdminDashboardPage() {
                       <span
                         key={k}
                         onClick={() => setTestiFilter(k)}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: isActive ? 600 : 500, lineHeight: 1, padding: '10px 15px', borderRadius: '999px', background: isActive ? 'var(--accent)' : 'rgba(247,239,244,.07)', color: isActive ? 'var(--band-bg)' : 'var(--band-muted)', cursor: 'pointer' }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: isActive ? 600 : 500, lineHeight: 1, padding: '10px 15px', borderRadius: '999px', background: isActive ? 'var(--accent)' : 'rgba(238, 243, 234,.07)', color: isActive ? 'var(--band-bg)' : 'var(--band-muted)', cursor: 'pointer' }}
                       >
                         {k === 'all' ? 'All' : TESTI_STATUS[k].label}
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: isActive ? 'var(--band-bg)' : 'var(--band-muted)' }}>{count}</span>
@@ -5515,7 +5517,7 @@ export function AdminDashboardPage() {
                     return (
                       <div key={t.id} style={{ background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '18px', padding: '20px 22px' }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
-                          <span style={{ flex: 'none', width: '42px', height: '42px', borderRadius: '999px', background: 'rgba(232,112,154,.16)', border: '1px solid rgba(232,112,154,.34)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 600, lineHeight: 1, color: 'var(--accent)' }}>
+                          <span style={{ flex: 'none', width: '42px', height: '42px', borderRadius: '999px', background: 'rgba(109, 196, 137,.16)', border: '1px solid rgba(109, 196, 137,.34)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 600, lineHeight: 1, color: 'var(--accent)' }}>
                             {t.authorName.charAt(0)}
                           </span>
                           <div style={{ flex: 1, minWidth: '220px' }}>
@@ -5534,7 +5536,7 @@ export function AdminDashboardPage() {
                               Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing "{t.bookingName}" ({fmtDate(t.eventDate)})
                             </span>
                           </div>
-                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(232,180,95,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#E8B45F' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
+                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(186, 181, 105,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#BAB569' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
                             {t.status}
                           </span>
                         </div>
@@ -5592,7 +5594,7 @@ export function AdminDashboardPage() {
                             style={{
                               display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer', border: 'none',
                               padding: '10px 4px', borderBottom: '1px solid var(--border)',
-                              background: historyBookingId === r.id ? 'rgba(46,26,62,.07)' : 'transparent',
+                              background: historyBookingId === r.id ? 'rgba(34, 67, 38,.07)' : 'transparent',
                               borderRadius: historyBookingId === r.id ? '8px' : '0'
                             }}
                           >

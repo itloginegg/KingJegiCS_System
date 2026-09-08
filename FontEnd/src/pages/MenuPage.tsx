@@ -447,7 +447,7 @@ export function MenuPage() {
 
         @keyframes drawerIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes sheetIn { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .mnu-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(27, 16, 36, 0.32); backdrop-filter: blur(3px); display: none; }
+        .mnu-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(22, 40, 26, 0.32); backdrop-filter: blur(3px); display: none; }
         .mnu-drawer { position: fixed; top: 0; right: 0; z-index: 95; height: 100vh; width: 340px; max-width: 92vw; background: var(--surface); border-left: 1px solid var(--border-accent); box-shadow: -8px 0 48px rgba(0,0,0,0.16); padding: 5.5rem 1.75rem 1.75rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.9rem; animation: drawerIn 0.3s cubic-bezier(0.22,1,0.36,1) both; }
         @media (max-width: 900px) { .mnu-backdrop { display: block; } .mnu-drawer { top: auto; bottom: 0; right: 0; left: 0; width: 100%; max-width: none; height: auto; max-height: 78vh; border-left: none; border-top: 1px solid var(--border-accent); border-radius: var(--r-xl) var(--r-xl) 0 0; padding: 1.5rem 1.5rem 2rem; animation: sheetIn 0.3s cubic-bezier(0.22,1,0.36,1) both; } }
         .mnu-drawer-photo { aspect-ratio: 4 / 3; width: 100%; border-radius: var(--r-lg); background-size: cover; background-position: center; background-color: var(--bg-subtle); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
@@ -464,7 +464,7 @@ export function MenuPage() {
         .mnu-plan-cta:hover { background: var(--primary-hover); }
 
         /* ── checkout modal ── */
-        .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(27, 16, 36, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+        .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(22, 40, 26, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
         .mnu-co-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); padding: 1.6rem 1.75rem; display: flex; flex-direction: column; gap: 1rem; }
         .mnu-co-label { font-family: var(--font-body); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.5rem; }
         .mnu-co-input { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 0.8rem 0.875rem; font-family: var(--font-body); font-size: 0.875rem; color: var(--text-primary); outline: none; transition: border-color 0.2s; }

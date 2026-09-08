@@ -967,7 +967,7 @@
   background: var(--band-bg);
   border-radius: 26px;
   overflow: hidden;
-  box-shadow: 0 24px 60px rgba(27, 16, 36, 0.16);
+  box-shadow: 0 24px 60px rgba(22, 40, 26, 0.16);
   display: flex;
   flex-direction: column;
   /* Fills the stretched seat. The media band keeps its fixed height and the body
@@ -1004,7 +1004,7 @@
   line-height: 1;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--band-accent-soft, #f2c1d1);
+  color: var(--band-accent-soft, #A8BA9C);
   margin-bottom: 11px;
 }
 .lp-pkg-hero-name {
@@ -1036,7 +1036,7 @@
   font-size: 1.25rem;
   font-weight: 500;
   line-height: 1;
-  color: var(--band-accent-soft, #f2c1d1);
+  color: var(--band-accent-soft, #A8BA9C);
   white-space: nowrap;
 }
 
@@ -1642,7 +1642,7 @@
 /* ══ Footer — deep plum, in both themes ══════════════════════════════ */
 
 .lp-footer-dark {
-  background: var(--band-footer, #1b1024);
+  background: var(--band-footer, #16281A);
   border-top: none;
   padding: 36px 0;
 }
