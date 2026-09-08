@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutGroup, motion, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
 import { SectionHeading } from './SectionHeading';
 import { AmbientCanvas } from './AmbientCanvas';
 import { readSession } from '../../lib/tokenStorage';
 import { fetchPackages, getFullImageUrl, type AdminPackage } from '../../api/packageAdminApi';
 
 /** Fallback art. The catalog carries its own gallery now, but a package with no
- *  uploaded photo still has to fill the media panel rather than show a grey box. */
-const HERO_IMAGE =
-  'https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1200&q=80';
-const SIDE_IMAGE =
-  'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=800&q=80';
+ *  uploaded photo still has to fill the media panel rather than show a grey box.
+ *
+ *  Root-relative, with the leading slash: 'hero/1.jpg' resolves against whatever
+ *  route is current, so it would only find the file on '/' and 404 anywhere else. */
+const HERO_IMAGE = '/hero/1.jpg';
+const SIDE_IMAGE = '/hero/2.jpg';
 /**
  * The Custom card's artwork.
  *
@@ -27,7 +28,7 @@ const SIDE_IMAGE =
  * stack it was the one card whose copy started at the card edge instead of after a
  * thumbnail. One image settles both.
  */
-const CUSTOM_IMAGE = '/gallery/team-function-hall.jpg';
+const CUSTOM_IMAGE = '/hero/650757354_1358780446051644_7540690133881728036_n.jpg';
 
 /** The rotary swap, as specified. Shared by the card that flies out and the one
  *  that flies in, so both halves of the exchange move on the same physics. */
@@ -214,6 +215,30 @@ export function PackagesPreview() {
 
   return (
     <section id="packages" className="ui-section amb-host" style={{ background: 'var(--bg-subtle)' }}>
+      {/* The section's ground, taken from whichever card is seated in the hero
+          column. It follows the rotation: promote a card and the whole section's
+          colour moves with it, because `hero` is seated[0] and nothing else feeds
+          this. Only rendered once a card exists — during the fetch the section is
+          its plain --bg-subtle. */}
+      {hero?.image && (
+        <div className="lp-pkg-ambient" aria-hidden="true">
+          <AnimatePresence initial={false}>
+            <motion.div
+              /* Keyed on the photo so a promotion mounts a new layer over the old
+                 one and the two cross-fade. Default sync mode, not wait: waiting
+                 would blank the ground between cards instead of blending through. */
+              key={hero.image}
+              className="lp-pkg-ambient-img"
+              style={{ backgroundImage: `url(${hero.image})` }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={reducedMotion ? INSTANT : { duration: 0.5, ease: 'easeInOut' }}
+            />
+          </AnimatePresence>
+          <div className="lp-pkg-ambient-scrim" />
+        </div>
+      )}
       <AmbientCanvas />
       <div className="ui-wrap amb-over">
         <SectionHeading
