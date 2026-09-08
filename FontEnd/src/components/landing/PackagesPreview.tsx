@@ -214,7 +214,7 @@ export function PackagesPreview() {
   const solo = !loading && stack.length === 0;
 
   return (
-    <section id="packages" className="ui-section amb-host" style={{ background: 'var(--bg-subtle)' }}>
+    <section id="packages" className="ui-section amb-host lp-pkg-section" style={{ background: 'var(--bg-subtle)' }}>
       {/* The section's ground, taken from whichever card is seated in the hero
           column. It follows the rotation: promote a card and the whole section's
           colour moves with it, because `hero` is seated[0] and nothing else feeds
