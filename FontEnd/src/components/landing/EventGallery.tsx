@@ -86,13 +86,14 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), h
 
 /**
  * The gallery's eyebrow — the one piece of the header every path that renders the
- * plum shell shows, because it names the block whether or not there is a photo to
+ * gallery shell shows, because it names the block whether or not there is a photo to
  * count.
  *
- * --off-white, the brand's white, rather than the amber it carried before. Note what
- * this rules out: --accent cannot be used here at all, because index.css records the
- * rose at 3.1:1 on --band-bg, which is this ground. Off-white measures 9.9:1 against
- * the worst case the ambient layer can produce (a white photo region under the
+ * --evg-ink, which is the page's own --text-primary and therefore inverts with the
+ * theme. Note what this rules out: --accent cannot be used here at all — it has no
+ * headroom over a photograph in light mode, the same wall .lp-photo-ground hit. The
+ * ink measures 6.9 light and 5.2 dark against the worst case the ambient layer can
+ * produce (an all-white or all-black photo region under the
  * scrim), so it clears with room.
  *
  * It does mean the kicker and the caption below it are now the same colour; the
@@ -100,7 +101,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), h
  */
 function Kicker() {
   return (
-    <p className="m-0 font-mono text-[0.900rem] font-medium uppercase tracking-[0.14em] text-off-white">
+    <p className="m-0 font-mono text-[0.900rem] font-medium uppercase tracking-[0.14em] text-[var(--evg-ink)]">
       Events by King Jegi
     </p>
   );
@@ -140,7 +141,10 @@ function cardMotion(offset: number, reduced: boolean) {
 }
 
 /**
- * The aurora, as two pseudo-element layers over the plum ground.
+ * The aurora, as two pseudo-element layers over the block's ground.
+ *
+ * Its two tints are --accent and --primary mixed down rather than the fixed purple and
+ * teal they were, so the empty state follows the theme like everything else here.
  *
  * Deliberately small. The version of this section that was stripped stacked four
  * radial gradients, an animated blob canvas, a noise plate and a backdrop-filter —
@@ -153,6 +157,43 @@ function cardMotion(offset: number, reduced: boolean) {
  * landing.css stays untouched and the rules travel with the component.
  */
 const AURORA_CSS = `
+/* The block's palette, and the whole reason it can follow the theme now.
+
+   --bg-subtle and --text-primary already flip: light gives #EDF2E7 on #16281A,
+   dark gives #1E2C1F on #EEF3EA. So the block needs no band tokens and no second
+   set of values — it reads the two the page already has, and the ground and the
+   ink invert together.
+
+   ONE ink, not an ink and a muted one. The counter, the caption and the arrows
+   used --blush at 80%; a mid-tone cannot survive here, because the photo behind
+   the veil is unbounded — it comes from /api/Gallery, so unlike the hero folder
+   there is no set to measure and the worst frame has to be assumed white or black.
+   Measured against that bound, --band-muted tops out at 3.99 even under the old
+   0.82 veil. Hierarchy in this block is size and weight, never colour. The same
+   call .lp-stat-label makes on the hero.
+
+   --evg-veil at 72%, down from the 82% this had. The floor is the ink against the
+   worst frame: 6.9 light, 5.2 dark. 62% would fail dark outright at 3.82.
+
+   The edges are the ink mixed down. They are UI, not text, so they answer to 3:1
+   rather than 4.5:1, and mixing keeps them correct in both themes for free. */
+.evg-shell {
+  --evg-ground: var(--bg-subtle);
+  --evg-ink: var(--text-primary);
+  --evg-veil: 72%;
+  --evg-edge: color-mix(in srgb, var(--evg-ink) 70%, transparent);
+  --evg-edge-strong: color-mix(in srgb, var(--evg-ink) 90%, transparent);
+  --evg-wash: color-mix(in srgb, var(--evg-ink) 10%, transparent);
+  --evg-ring: color-mix(in srgb, var(--evg-ink) 14%, transparent);
+}
+
+/* The veil over the blurred photo. A class rather than a Tailwind arbitrary value
+   because the percentage is itself a custom property. */
+.evg-veil {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--evg-ground) var(--evg-veil), transparent);
+}
 .evg-shell--aurora::before,
 .evg-shell--aurora::after {
   content: '';
@@ -163,11 +204,11 @@ const AURORA_CSS = `
   will-change: transform, opacity;
 }
 .evg-shell--aurora::before {
-  background: radial-gradient(closest-side, rgba(78, 44, 122, 0.55), transparent 72%);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 45%, transparent), transparent 72%);
   animation: evg-drift-a 28s ease-in-out infinite;
 }
 .evg-shell--aurora::after {
-  background: radial-gradient(closest-side, rgba(19, 58, 51, 0.45), transparent 72%);
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--primary) 38%, transparent), transparent 72%);
   animation: evg-drift-b 36s ease-in-out infinite;
 }
 @keyframes evg-drift-a {
@@ -194,10 +235,11 @@ const AURORA_CSS = `
  * layers behind the content — image, scrim and two animated pseudo-elements — which
  * is the stack this section was stripped of in the first place. Two in, two out.
  *
- * The scrim is --band-bg at 82%, not black at 60%. Measured on the built page, a 60%
- * black veil over a bright photo composites to a mid grey that takes the gold kicker
- * to 3.2:1 — the block's own text stops passing. Plum keeps the brand ground and 82%
- * is what holds every label above 4.5:1 against a white frame.
+ * The veil is the block's own ground at 72%, so it inverts with the theme — see the
+ * .evg-shell token block. Not black at any opacity: measured on the built page, a 60%
+ * black veil over a bright photo composites to a mid grey that took the kicker to
+ * 3.2:1. 72% is the lightest that holds the ink against the worst frame in BOTH
+ * themes, dark being the tighter of the two at 5.2:1.
  *
  * scale(1.1) hides the soft edge: a 40px blur samples past the element's bounds and
  * would otherwise show a pale halo around the inside of the rounded corners.
@@ -219,7 +261,7 @@ function Ambient({ src }: { src: string }) {
           transition={{ duration: 0.5, ease: 'easeInOut' }}
         />
       </AnimatePresence>
-      <div className="absolute inset-0 bg-plum-deeper/[0.82]" />
+      <div className="evg-veil" />
     </div>
   );
 }
@@ -227,19 +269,21 @@ function Ambient({ src }: { src: string }) {
 /**
  * The dark block itself.
  *
- * A deliberate override of the light/dark toggle: photographs read better against a
- * dark ground, so this one block commits to plum in both themes. It is scoped to the
- * gallery and rounded rather than full-bleed — the offerings columns above it keep
- * inheriting the page ground, and the corner radius is what makes the tonal jump read
- * as a designed seam instead of a section that forgot to follow the theme.
+ * It used to be a deliberate override of the light/dark toggle — plum in both themes,
+ * on the argument that photographs read better against a dark ground. They do, but the
+ * block sat dark on a light page and read as a section that had forgotten the theme
+ * rather than one that meant it. It now takes --bg-subtle and inverts with everything
+ * else. Still scoped and rounded rather than full-bleed: the offerings column beside it
+ * keeps the page ground, and the corner radius is what makes the tonal step read as a
+ * designed seam.
  */
 function Shell({ ambient, children }: { ambient?: React.ReactNode; children: React.ReactNode }) {
   return (
     /* h-full + a centred column: when the block is stretched to match a taller
-       neighbour, the extra height becomes plum around the coverflow rather than a
+       neighbour, the extra height becomes ground around the coverflow rather than a
        gap under it, and the aurora already fills that space. */
     <div
-      className={`evg-shell relative isolate flex h-full flex-col overflow-hidden rounded-[28px] bg-plum-deeper px-4 py-9 sm:px-8 sm:py-11${
+      className={`evg-shell relative isolate flex h-full flex-col overflow-hidden rounded-[28px] bg-[var(--evg-ground)] px-4 py-9 sm:px-8 sm:py-11${
         ambient ? '' : ' evg-shell--aurora'
       }`}
     >
@@ -257,9 +301,9 @@ function Shell({ ambient, children }: { ambient?: React.ReactNode; children: Rea
  * Chosen over hiding the block. An empty gallery means nobody has uploaded yet, and a
  * marketing section that silently loses a third of its height on a fresh install reads
  * as a bug, while two real photos of the crew read as the page. It reuses the existing
- * `.lp-gallery` rules rather than adding any, and stays theme-inherited: the plum block
- * is the live gallery's identity, so a fallback that never came from the API should not
- * borrow it.
+ * `.lp-gallery` rules rather than adding any, and stays outside the shell: the tinted
+ * block is the live gallery's identity, so a fallback that never came from the API
+ * should not borrow it.
  */
 function StaticFallback({ note }: { note?: string }) {
   return (
@@ -287,7 +331,7 @@ function Skeleton({ cardW, cardH, step }: { cardW: number; cardH: number; step: 
       {[-1, 1].map((offset) => (
         <div
           key={offset}
-          className="absolute top-0 rounded-[20px] bg-white/5"
+          className="absolute top-0 rounded-[20px] bg-[var(--evg-wash)]"
           style={{
             left: '50%',
             width: cardW,
@@ -298,7 +342,7 @@ function Skeleton({ cardW, cardH, step }: { cardW: number; cardH: number; step: 
         />
       ))}
       <div
-        className="absolute top-0 animate-pulse rounded-[20px] bg-white/10"
+        className="absolute top-0 animate-pulse rounded-[20px] bg-[var(--evg-wash)]"
         style={{ left: '50%', width: cardW, height: cardH, marginLeft: -cardW / 2 }}
       />
     </div>
@@ -458,7 +502,7 @@ export function EventGallery() {
   if (count === 0) return <StaticFallback />;
 
   /* One or two photos: no side cards to fan out, so the coverflow collapses to plain
-     centred frames — still on the plum ground, because these did come from the API. */
+     centred frames — still on the block's ground, because these did come from the API. */
   if (count < MIN_COVERFLOW_ITEMS) {
     return (
       <Shell>
@@ -480,10 +524,10 @@ export function EventGallery() {
                 alt={slide.caption ?? 'King Jegi event photo'}
                 loading="lazy"
                 decoding="async"
-                className="block h-[260px] w-full rounded-[20px] object-cover ring-1 ring-white/10 sm:h-[300px]"
+                className="block h-[260px] w-full rounded-[20px] object-cover ring-1 ring-[var(--evg-ring)] sm:h-[300px]"
               />
               {slide.caption && (
-                <figcaption className="mt-3 text-center text-[0.8125rem] text-blush/80">
+                <figcaption className="mt-3 text-center text-[0.8125rem] text-[var(--evg-ink)]">
                   {slide.caption}
                 </figcaption>
               )}
@@ -516,7 +560,7 @@ export function EventGallery() {
               /* Line-height pinned to the reserved height rather than left to the
                  font: measured, an uncaptioned photo came out 2px shorter than a
                  captioned one, which is a visible twitch on every other step. */
-              <h3 className="m-0 truncate font-serif text-[1.0625rem] font-semibold leading-[1.875rem] tracking-[-0.015em] text-off-white sm:text-[1.25rem]">
+              <h3 className="m-0 truncate font-serif text-[1.0625rem] font-semibold leading-[1.875rem] tracking-[-0.015em] text-[var(--evg-ink)] sm:text-[1.25rem]">
                 {activeCaption}
               </h3>
             )}
@@ -524,7 +568,7 @@ export function EventGallery() {
         </div>
 
         <div className="flex flex-none items-center gap-3">
-          <span className="font-mono text-[0.6875rem] tabular-nums text-blush/80">
+          <span className="font-mono text-[0.6875rem] tabular-nums text-[var(--evg-ink)]">
             {String(realIndex + 1).padStart(2, '0')} / {String(count).padStart(2, '0')}
           </span>
           {/* Never disabled: the strip wraps, so there is no last photo to stop on. */}
@@ -532,7 +576,7 @@ export function EventGallery() {
             type="button"
             aria-label="Previous photo"
             onClick={() => stepBy(-1)}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/45 text-blush transition-colors hover:border-white/80 hover:bg-white/10"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--evg-edge)] text-[var(--evg-ink)] transition-colors hover:border-[var(--evg-edge-strong)] hover:bg-[var(--evg-wash)]"
           >
             <ChevronLeft size={17} strokeWidth={1.75} aria-hidden="true" />
           </button>
@@ -540,7 +584,7 @@ export function EventGallery() {
             type="button"
             aria-label="Next photo"
             onClick={() => stepBy(1)}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/45 text-blush transition-colors hover:border-white/80 hover:bg-white/10"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--evg-edge)] text-[var(--evg-ink)] transition-colors hover:border-[var(--evg-edge-strong)] hover:bg-[var(--evg-wash)]"
           >
             <ChevronRight size={17} strokeWidth={1.75} aria-hidden="true" />
           </button>
@@ -619,7 +663,7 @@ export function EventGallery() {
                   /* Native image dragging starts its own gesture and cancels Framer's on
                      the first pointer move. */
                   draggable={false}
-                  className="pointer-events-none block h-full w-full rounded-[20px] object-cover shadow-[0_18px_44px_rgba(0,0,0,0.45)] ring-1 ring-white/10"
+                  className="pointer-events-none block h-full w-full rounded-[20px] object-cover shadow-[0_18px_44px_rgba(0,0,0,0.45)] ring-1 ring-[var(--evg-ring)]"
                 />
               </motion.div>
             );
@@ -646,7 +690,7 @@ export function EventGallery() {
               return a + d;
             })}
             className={`h-1.5 rounded-full transition-all duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose ${
-              i === realIndex ? 'w-7 bg-blush' : 'w-1.5 bg-white/40 hover:bg-white/70'
+              i === realIndex ? 'w-7 bg-[var(--evg-ink)]' : 'w-1.5 bg-[var(--evg-edge)] hover:bg-[var(--evg-edge-strong)]'
             }`}
           />
         ))}
