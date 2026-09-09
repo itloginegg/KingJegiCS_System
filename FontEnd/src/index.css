@@ -124,6 +124,7 @@
   --color-warning: var(--warning);
   --color-warning-muted: var(--warning-muted);
   --color-warning-text: var(--warning-text);
+  --color-warning-ink: var(--warning-ink);
 
   --color-status-info: var(--status-info);
   --color-status-refund: var(--status-refund);
@@ -203,6 +204,11 @@
   --warning: #9A6412;        /* 5.0:1 on --surface */
   --warning-muted: rgba(154, 100, 18, 0.14);
   --warning-text: #ffffff;
+  /* Warning as TEXT on a --warning tint, exactly as --danger-ink is for danger.
+     StatusBadge in both dashboards lays its colour on a 12% tint of ITSELF, which
+     costs about 0.8:1 — enough that --warning lands at 4.27 there and a Pending
+     badge fails. This measures 5.76 on that tint and 6.74 on --surface. */
+  --warning-ink: #7F520E;
 
   /* ── Decorative accent ──
      Two tokens, for the reason they have always existed: one value cannot
@@ -525,6 +531,9 @@ body {
   --warning: #E8B45F;        /* 8.7:1 on --surface */
   --warning-muted: rgba(232, 180, 95, 0.14);
   --warning-text: #101710;
+  /* The amber already clears 6.8:1 on its own tint here, so ink and fill converge
+     — darkening would move it the wrong way. Same as --danger-ink below. */
+  --warning-ink: #E8B45F;
 
   /* On the near-black ground the khaki needs no darkening, so both gold tokens
      converge — the same behaviour the teal and plum palettes had. */

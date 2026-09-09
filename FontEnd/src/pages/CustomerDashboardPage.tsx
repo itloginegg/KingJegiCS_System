@@ -2123,7 +2123,7 @@ export function CustomerDashboardPage() {
                           </div>
                           <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
                             {b.cancellationRequested && (
-                              <StatusBadge label="Cancellation Requested" color="var(--status-partial)" />
+                              <StatusBadge label="Cancellation Requested" color="var(--warning-ink)" />
                             )}
                             {cancellable && (
                               <button type="button" className="cds-btn dangerghost" onClick={() => setConfirmCancel(b.id)}>
@@ -2147,7 +2147,7 @@ export function CustomerDashboardPage() {
                             {myReviews.some((r) => r.bookingId === b.id) && (
                               <StatusBadge
                                 label={`Review ${(myReviews.find((r) => r.bookingId === b.id)!.status).toLowerCase()}`}
-                                color={myReviews.find((r) => r.bookingId === b.id)!.status === 'Approved' ? 'var(--status-paid)' : 'var(--status-partial)'}
+                                color={myReviews.find((r) => r.bookingId === b.id)!.status === 'Approved' ? 'var(--status-paid)' : 'var(--warning-ink)'}
                               />
                             )}
 
@@ -2321,10 +2321,7 @@ export function CustomerDashboardPage() {
                             const stColor =
                               p.status === 'Success' ? 'var(--status-paid)'
                               : p.status === 'Failed' ? 'var(--danger-ink)'
-                              // Not --warning, which admin uses: that is 4.27:1 on
-                              // the tint StatusBadge lays down. Partial reads as
-                              // "in flight" and stays clear of Failed's red.
-                              : p.status === 'Pending' ? 'var(--status-partial)'
+                              : p.status === 'Pending' ? 'var(--warning-ink)'
                               : 'var(--status-refund)';
                             // A completed event has already been delivered, so its
                             // payments are no longer refundable — asking would be a

@@ -307,12 +307,19 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
  * The ramp exists precisely so these five stay separable — see the note on it in
  * index.css.
  */
+/* Ink variants, not fills. StatusBadge below lays the colour on a 12% tint of
+   ITSELF, and that ground costs about 0.8:1 — measured, not assumed. Against it
+   --warning was 4.27 and --danger 4.01, so Pending and Cancelled were failing AA
+   while every ramp role beside them passed. --warning-ink and --danger-ink are
+   the tokens for text on their own tint; the ramp five need no such variant
+   because they were tuned as text to begin with.
+   Draft moves off --text-dim for the same reason: 3.97 in dark mode. */
 export const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
-  Draft: { label: 'Draft', color: 'var(--text-dim)' },
-  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Draft: { label: 'Draft', color: 'var(--text-secondary)' },
+  Pending: { label: 'Pending', color: 'var(--warning-ink)' },
   Confirmed: { label: 'Confirmed', color: 'var(--status-paid)' },
   Completed: { label: 'Completed', color: 'var(--status-info)' },
-  Cancelled: { label: 'Cancelled', color: 'var(--danger)' },
+  Cancelled: { label: 'Cancelled', color: 'var(--danger-ink)' },
 };
 
 type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' | 'Refunded';
@@ -321,15 +328,15 @@ type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' |
    Success --primary, which under the plum palette put Pending next to Failed as a
    second red and rendered Success as near-black text. */
 const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Pending: { label: 'Pending', color: 'var(--warning-ink)' },
   Success: { label: 'Success', color: 'var(--status-paid)' },
-  Failed: { label: 'Failed', color: 'var(--danger)' },
+  Failed: { label: 'Failed', color: 'var(--danger-ink)' },
   PartiallyRefunded: { label: 'Partially Refunded', color: 'var(--status-refund)' },
   Refunded: { label: 'Refunded', color: 'var(--status-refund)' },
 };
 
 const paymentStatusMeta = (status: string) =>
-  PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-dim)' };
+  PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-secondary)' };
 
 /**
  * Booking.DepositStatus → badge colour.
@@ -355,12 +362,12 @@ export const DEPOSIT_STATUS: Record<DepositStatusKey, { label: string; color: st
 export const DEPOSIT_STATUS_ORDER: DepositStatusKey[] = ['Unpaid', 'Reserved', 'Partial', 'Paid'];
 
 export const depositStatusMeta = (status: string) =>
-  DEPOSIT_STATUS[status as DepositStatusKey] ?? { label: status, color: 'var(--text-dim)' };
+  DEPOSIT_STATUS[status as DepositStatusKey] ?? { label: status, color: 'var(--text-secondary)' };
 
 const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'var(--warning)' },
+  Pending: { label: 'Pending', color: 'var(--warning-ink)' },
   Approved: { label: 'Approved', color: 'var(--status-paid)' },
-  Rejected: { label: 'Rejected', color: 'var(--danger)' },
+  Rejected: { label: 'Rejected', color: 'var(--danger-ink)' },
 };
 
 export const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
@@ -4193,7 +4200,7 @@ export function AdminDashboardPage() {
                   </h3>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? 'var(--text-muted)'} />
+                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? 'var(--text-secondary)'} />
                   <button type="button" className="adm-iconbtn" aria-label="Close" onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}>✕</button>
                 </div>
               </div>
@@ -4946,9 +4953,11 @@ export function AdminDashboardPage() {
                         >
                           <div className="d" style={{ color: isToday ? 'var(--ov-charcoal)' : undefined }}>{day}</div>
                           {dayEvents.slice(0, 2).map((ev) => {
-                            const c = RES_STATUS[ev.status as ResStatus]?.color || 'var(--text-muted)';
+                            const c = RES_STATUS[ev.status as ResStatus]?.color || 'var(--text-secondary)';
                             return (
-                              <span key={ev.id} className="adm-cal-ev" style={{ color: c, background: `color-mix(in srgb, ${c} 14%, transparent)` }}>
+                              <span key={ev.id} className="adm-cal-ev" /* 12%, matching StatusBadge. At 14% the same colours lose another 0.13 and
+                                 --status-paid drops to 4.45. */
+                              style={{ color: c, background: `color-mix(in srgb, ${c} 12%, transparent)` }}>
                                 {ev.bookingName}
                               </span>
                             );
@@ -5055,7 +5064,7 @@ export function AdminDashboardPage() {
                                   </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                  <StatusBadge label={st?.label ?? r.status} color={st?.color ?? 'var(--text-muted)'} />
+                                  <StatusBadge label={st?.label ?? r.status} color={st?.color ?? 'var(--text-secondary)'} />
                                   <button
                                     type="button"
                                     className="adm-btn outline"
