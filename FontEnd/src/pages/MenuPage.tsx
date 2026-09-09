@@ -413,7 +413,7 @@ export function MenuPage() {
            numeric face so a two-digit tally doesn't shift the pill's label. */
         .mnu-pill { border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); font-family: var(--font-body); font-size: 0.8125rem; letter-spacing: 0; text-transform: none; font-weight: 500; padding: 0.5625rem 1rem; border-radius: var(--r-full); cursor: pointer; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
         .mnu-pill:hover { color: var(--text-primary); border-color: var(--border-strong); }
-        .mnu-pill.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); font-weight: 600; }
+        .mnu-pill.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
         .mnu-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         .mnu-pill .count { font-family: var(--font-numeric); font-variant-numeric: tabular-nums; font-size: 0.6875rem; opacity: 0.65; margin-left: 0.4rem; }
         .mnu-search { flex: 0 1 240px; min-width: 170px; display: flex; align-items: center; gap: 0.5rem; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-full); padding: 0.5rem 1rem; transition: border-color 0.2s; }
@@ -438,11 +438,15 @@ export function MenuPage() {
         .mnu-price { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; line-height: 1; color: var(--primary); margin-right: auto; }
         .mnu-price small { font-family: var(--font-body); font-size: 0.55rem; font-weight: 400; letter-spacing: 0.08em; color: var(--text-dim); }
         .mnu-qty { display: flex; align-items: center; border: 1px solid var(--border); border-radius: var(--r-full); background: var(--bg-subtle); overflow: hidden; }
-        .mnu-qty button { border: none; background: transparent; cursor: pointer; width: 26px; height: 26px; line-height: 1; color: var(--primary); font-size: 0.9rem; font-weight: 600; transition: background 0.15s; }
-        .mnu-qty button:hover { background: var(--primary-muted); }
+        .mnu-qty button { border: none; background: transparent; cursor: pointer; width: 26px; height: 26px; line-height: 1; color: var(--accent); font-size: 0.9rem; font-weight: 600; transition: background 0.15s; }
+        /* The glyph deepens one step on hover. --accent on its own tint is 3.94:1
+           in light mode; --accent-hover on that same tint is 4.95:1. Same trade the
+           .mnu-add label below makes, and the one .lp-photo-ground makes on the
+           landing page: accent has no headroom left once it sits on itself. */
+        .mnu-qty button:hover { background: var(--accent-muted); color: var(--accent-hover); }
         .mnu-qty span { min-width: 24px; text-align: center; font-family: var(--font-body); font-size: 0.72rem; font-weight: 500; color: var(--text-primary); }
-        .mnu-add { border: 1px solid var(--border-accent); background: var(--primary-muted); color: var(--primary); font-family: var(--font-body); font-size: 0.56rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: var(--r-full); cursor: pointer; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
-        .mnu-add:hover, .mnu-add.flash { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+        .mnu-add { border: 1px solid var(--border-accent); background: var(--accent-muted); color: var(--accent-hover); font-family: var(--font-body); font-size: 0.56rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: var(--r-full); cursor: pointer; white-space: nowrap; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+        .mnu-add:hover, .mnu-add.flash { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
         .mnu-empty { background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--r-xl); padding: 3.5rem 2rem; text-align: center; }
 
         @keyframes drawerIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
@@ -460,8 +464,8 @@ export function MenuPage() {
         .mnu-plan { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 1rem; background: var(--surface); border: 1px solid var(--border-accent); border-radius: var(--r-full); padding: 0.6rem 0.7rem 0.6rem 1.4rem; box-shadow: var(--shadow-lg); animation: planIn 0.3s ease both; max-width: calc(100vw - 8rem); }
         .mnu-plan-clear { border: none; background: transparent; cursor: pointer; font-family: var(--font-body); font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); transition: color 0.2s; white-space: nowrap; }
         .mnu-plan-clear:hover { color: var(--danger); }
-        .mnu-plan-cta { background: var(--primary); color: var(--primary-text); font-family: var(--font-body); font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; border: none; border-radius: var(--r-full); padding: 0.65rem 1.25rem; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
-        .mnu-plan-cta:hover { background: var(--primary-hover); }
+        .mnu-plan-cta { background: var(--accent); color: var(--accent-text); font-family: var(--font-body); font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; border: none; border-radius: var(--r-full); padding: 0.65rem 1.25rem; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
+        .mnu-plan-cta:hover { background: var(--accent-hover); }
 
         /* ── checkout modal ── */
         .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(22, 40, 26, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
@@ -559,14 +563,22 @@ export function MenuPage() {
           font-family: var(--font-body); font-size: 0.58rem; font-weight: 600;
           letter-spacing: 0.08em; padding: 0.28rem 0.7rem; border-radius: var(--r-full);
         }
+        /* --accent, not --primary, and the same for every filled control below.
+            index.css calls --primary "action" and --accent "attention", but the
+            catalog pages had already voted the other way: every filled control in
+            components/rentals uses the accent fill with accent-fg on it, and so
+            does the landing page's CTA. MenuPage was the last page filling with
+            --primary,
+            which is why its Add button read as near-black beside Rentals' green.
+            The pair is 5.25:1 light and 10.8:1 dark, so it carries its own label. */
         .mnu-add2 {
           border: none; cursor: pointer; border-radius: var(--r-full);
-          background: var(--primary); color: var(--primary-text);
+          background: var(--accent); color: var(--accent-text);
           font-family: var(--font-body); font-size: 0.74rem; font-weight: 600;
           padding: 0.45rem 1rem; white-space: nowrap;
         }
-        .mnu-add2:hover, .mnu-add2.flash { background: var(--primary-hover); }
-        .mnu-add2:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+        .mnu-add2:hover, .mnu-add2.flash { background: var(--accent-hover); }
+        .mnu-add2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
         /* list view — same card, laid on its side */
         .mnu-list .mnu-card2 { flex-direction: row; }
@@ -579,7 +591,7 @@ export function MenuPage() {
           border: 1px solid var(--border); border-radius: var(--r-sm); cursor: pointer;
           background: var(--bg-card); color: var(--text-muted);
         }
-        .mnu-iconbtn.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+        .mnu-iconbtn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
         .mnu-iconbtn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
       `}</style>
 
