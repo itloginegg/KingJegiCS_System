@@ -431,7 +431,7 @@ export function MenuPage() {
         .mnu-card:hover .mnu-photo { transform: scale(1.05); }
         .mnu-letter { display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 30% 30%, var(--primary-muted), transparent 60%), var(--bg-subtle); font-family: var(--font-display); font-size: 3.5rem; font-weight: 600; color: var(--primary); }
         .mnu-card-body { padding: 1.15rem 1.25rem 1.25rem; display: flex; flex-direction: column; flex: 1; gap: 0.45rem; }
-        .mnu-cat-chip { align-self: flex-start; font-family: var(--font-body); font-size: 0.52rem; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 500; color: var(--primary); background: var(--primary-muted); border: 1px solid var(--border-accent); border-radius: var(--r-full); padding: 0.2rem 0.6rem; }
+        .mnu-cat-chip { align-self: flex-start; font-family: var(--font-body); font-size: 0.52rem; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 500; color: var(--accent-hover); background: var(--accent-muted); border: 1px solid var(--border-accent); border-radius: var(--r-full); padding: 0.2rem 0.6rem; }
         .mnu-dish-name { font-family: var(--font-display); font-size: 1.25rem; font-weight: 500; line-height: 1.2; color: var(--text-primary); }
         .mnu-dish-desc { font-family: var(--font-body); font-size: 0.78rem; font-weight: 300; line-height: 1.6; color: var(--text-muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex: 1; }
         .mnu-card-foot { border-top: 1px solid var(--border); margin-top: 0.55rem; padding-top: 0.8rem; display: flex; align-items: center; gap: 0.55rem; }
@@ -557,9 +557,12 @@ export function MenuPage() {
         }
         .mnu-card2:hover { border-color: var(--border-accent); box-shadow: var(--shadow-md); transform: translateY(-3px); }
         .mnu-card2.selected { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted), var(--shadow-md); }
+        /* The accent pair, so this matches the category badge on a rental card
+           (components/rentals/RentalCard.tsx) rather than reading near-black
+           beside it. 5.25:1 light, 10.75:1 dark. */
         .mnu-card2-badge {
           position: absolute; top: 0.7rem; left: 0.7rem; z-index: 2;
-          background: var(--primary); color: var(--primary-text);
+          background: var(--accent); color: var(--accent-text);
           font-family: var(--font-body); font-size: 0.58rem; font-weight: 600;
           letter-spacing: 0.08em; padding: 0.28rem 0.7rem; border-radius: var(--r-full);
         }
