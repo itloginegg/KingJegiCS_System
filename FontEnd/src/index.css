@@ -64,9 +64,31 @@
   --color-primary-text: var(--primary-text);
   --color-primary-muted: var(--primary-muted);
 
-  /* Kept distinct from --primary: primary is "action" (buttons, links, Confirmed),
-     accent is "attention" (Pending, decorative rules). Merging them would make a
-     Pending badge indistinguishable from a Confirmed one. */
+  /* Kept distinct from --primary, though no longer for the reason this note used
+     to give. It said primary was "action" (buttons, links, Confirmed) and accent
+     was "attention" (Pending, decorative rules), and that merging them would make
+     a Pending badge indistinguishable from a Confirmed one. Both halves have since
+     stopped being true.
+
+     Status badges read NEITHER token now. RES_STATUS and PAYMENT_STATUS in
+     AdminDashboardPage take the --status-* ramp, --warning and --danger, and the
+     note there records why: under the green direction --accent IS the forest that
+     collides with --status-paid. The ramp is what keeps Pending off Confirmed.
+
+     And the public surfaces fill with --accent, not --primary. ui.css ships both
+     .ui-btn-accent and .ui-btn-primary, but only the accent one is used anywhere;
+     the landing CTA, the rentals catalog, MenuPage, PackagePage and the booking
+     flow all follow it. --accent-hover exists only because those fills needed one.
+     --primary is now the signed-in shell's fill — both dashboards, .ui-chip--active
+     — plus the deep green behind headings, borders and card selection.
+
+     So the split is surface, not semantics: --accent is what a visitor clicks,
+     --primary is what a signed-in user clicks. They stay separate because both
+     greens can appear on one page, not because either encodes a status.
+
+     One straggler still contradicts this: CustomerDashboardPage maps payment
+     Success to --primary and Pending to --accent, the exact pairing the admin
+     file moved off the ramp to avoid. */
   --color-accent: var(--accent);
   --color-accent-muted: var(--accent-muted);
   /* Hover state for an --accent fill. --primary has always had --primary-hover;
