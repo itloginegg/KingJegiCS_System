@@ -976,7 +976,12 @@ export function BookingPage() {
         }
         .bk-error svg{flex:none;margin-top:2px}
         .bk-error-title{font-weight:600;font-size:.8125rem;line-height:1.3;margin-bottom:4px}
-        .bk-error-body{font-weight:400;font-size:.75rem;line-height:1.45;opacity:.85}
+        /* No opacity. It was .85, and fading the ink is the one thing in this panel
+           that broke it: --danger-ink measures 5.70 light / 5.21 dark on the
+           --danger-muted ground, and .85 took that to 4.53 / 4.20. The body is
+           already separated from the title by weight (400 vs 600) and size, so the
+           fade bought nothing the type was not doing. */
+        .bk-error-body{font-weight:400;font-size:.75rem;line-height:1.45}
 
         .bk-success-card{text-align:center;padding:2rem}
         /* The mark sits in a 56px tint disc rather than being a 3.5rem glyph on its
