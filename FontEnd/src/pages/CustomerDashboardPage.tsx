@@ -112,19 +112,41 @@ export interface DerivedBookingStatus {
   color: string;
 }
 
+/**
+ * Ramp roles only — the same rule RES_STATUS and PAYMENT_STATUS follow in
+ * AdminDashboardPage, and for the same reason recorded there: --accent is the
+ * forest that collides with --status-paid, and --primary renders as near-black
+ * body text rather than a status. This map was the last place still using them.
+ *
+ * --success was worse than inconsistent: it is not defined anywhere. StatusBadge
+ * builds its background and border with color-mix() from the colour it is given,
+ * so an unknown token invalidated all three declarations at once and a "Paid"
+ * badge rendered as borderless inherited text.
+ *
+ * The colour carries the MONEY state and the label carries the lifecycle, which
+ * is why awaiting_confirmation and confirmed_balance share a hue: both are
+ * part-paid, and their labels already say which is confirmed.
+ *
+ * Every value clears 4.5:1 against the 12% tint of itself that StatusBadge lays
+ * down — measured, because that tint costs about 0.8 and it is what rules out
+ * --warning (4.27) and plain --danger (4.01) here. Cancelled therefore takes
+ * --danger-ink, which exists for exactly this and measures 5.60 / 5.39, and
+ * Draft takes --text-secondary rather than --text-dim, which failed at 3.97 in
+ * dark mode.
+ */
 export const DERIVED_STATUS: Record<BookingStatusKey, { label: string; color: string }> = {
-  draft: { label: 'Draft — Not Submitted', color: 'var(--text-dim)' },
-  awaiting_fee: { label: 'Awaiting Reservation Fee', color: 'var(--accent)' },
+  draft: { label: 'Draft — Not Submitted', color: 'var(--text-secondary)' },
+  awaiting_fee: { label: 'Awaiting Reservation Fee', color: 'var(--status-unpaid)' },
   // Money is on file but the date is NOT secured yet — a walk-in deliberately doesn't
   // auto-confirm, so calling this "Confirmed" would promise a slot nobody has held.
-  awaiting_confirmation: { label: 'Payment Received — Awaiting Confirmation', color: 'var(--accent)' },
-  confirmed_balance: { label: 'Confirmed · Awaiting Balance', color: 'var(--primary)' },
-  confirmed_paid: { label: 'Confirmed · Fully Paid', color: 'var(--primary)' },
-  // Kept as a warning colour, not success: the event happened, but there is money
-  // outstanding and the row should not read as finished business.
-  completed_balance: { label: 'Completed · Balance Due', color: 'var(--accent)' },
-  completed_paid: { label: 'Completed · Paid', color: 'var(--success)' },
-  cancelled: { label: 'Cancelled', color: 'var(--danger)' },
+  awaiting_confirmation: { label: 'Payment Received — Awaiting Confirmation', color: 'var(--status-partial)' },
+  confirmed_balance: { label: 'Confirmed · Awaiting Balance', color: 'var(--status-partial)' },
+  confirmed_paid: { label: 'Confirmed · Fully Paid', color: 'var(--status-paid)' },
+  // Not a success colour: the event happened, but there is money outstanding and the
+  // row should not read as finished business. --status-unpaid is literally that role.
+  completed_balance: { label: 'Completed · Balance Due', color: 'var(--status-unpaid)' },
+  completed_paid: { label: 'Completed · Paid', color: 'var(--status-info)' },
+  cancelled: { label: 'Cancelled', color: 'var(--danger-ink)' },
 };
 
 /** Every label the filter can offer, in the order a booking travels through them. */
@@ -529,7 +551,8 @@ function InvoiceModal({ order, customer, onClose }: { order: InvoiceResponseDto;
 
   const remaining = invoice.grandTotal - invoice.paidTotal;
   const isPaid = invoice.status === 'Paid';
-  const stColor = isPaid ? 'var(--success)' : 'var(--text-dim)';
+  // Same pairing the invoice list uses, and off --success, which is undefined.
+  const stColor = isPaid ? 'var(--status-paid)' : 'var(--status-unpaid)';
 
   return (
     <div className="cds-overlay" onClick={onClose}>
@@ -784,9 +807,9 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
                 <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
                   <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(m.amountDue)}</div>
                   {m.status === 'Paid' ? (
-                    <StatusBadge label="Paid" color="var(--success)" />
+                    <StatusBadge label="Paid" color="var(--status-paid)" />
                   ) : (
-                    <StatusBadge label={m.status} color="var(--accent)" />
+                    <StatusBadge label={m.status} color="var(--status-unpaid)" />
                   )}
                 </div>
               </div>
@@ -869,7 +892,7 @@ function PaymentScheduleModal({ order, invoice, onClose }: { order: BookingRespo
                 </p>
               </div>
 
-              {checkoutError && <div style={{ color: 'var(--accent)', fontSize: '0.8rem', marginBottom: '1rem', textAlign: 'center' }}>{checkoutError}</div>}
+              {checkoutError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem', marginBottom: '1rem', textAlign: 'center' }}>{checkoutError}</div>}
             </div>
           )}
 
@@ -2100,7 +2123,7 @@ export function CustomerDashboardPage() {
                           </div>
                           <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap' }}>
                             {b.cancellationRequested && (
-                              <StatusBadge label="Cancellation Requested" color="var(--accent)" />
+                              <StatusBadge label="Cancellation Requested" color="var(--status-partial)" />
                             )}
                             {cancellable && (
                               <button type="button" className="cds-btn dangerghost" onClick={() => setConfirmCancel(b.id)}>
@@ -2124,7 +2147,7 @@ export function CustomerDashboardPage() {
                             {myReviews.some((r) => r.bookingId === b.id) && (
                               <StatusBadge
                                 label={`Review ${(myReviews.find((r) => r.bookingId === b.id)!.status).toLowerCase()}`}
-                                color={myReviews.find((r) => r.bookingId === b.id)!.status === 'Approved' ? 'var(--success)' : 'var(--accent)'}
+                                color={myReviews.find((r) => r.bookingId === b.id)!.status === 'Approved' ? 'var(--status-paid)' : 'var(--status-partial)'}
                               />
                             )}
 
@@ -2184,7 +2207,7 @@ export function CustomerDashboardPage() {
     if (!b) return null;
     const o = inv;
   
-                  const stColor = inv.status === 'Paid' ? 'var(--success)' : 'var(--accent)';
+                  const stColor = inv.status === 'Paid' ? 'var(--status-paid)' : 'var(--status-unpaid)';
                     const st = { label: inv.status, color: stColor };
                   const total = inv.grandTotal;
                   const paid = inv.paidTotal;
@@ -2296,10 +2319,13 @@ export function CustomerDashboardPage() {
                             const inv = invoices.find((i) => i.id === p.invoiceId);
                             const bk = inv ? bookings.find((x) => x.id === inv.bookingId) : undefined;
                             const stColor =
-                              p.status === 'Success' ? 'var(--primary)'
-                              : p.status === 'Failed' ? 'var(--danger)'
-                              : p.status === 'Pending' ? 'var(--accent)'
-                              : 'var(--status-info)';
+                              p.status === 'Success' ? 'var(--status-paid)'
+                              : p.status === 'Failed' ? 'var(--danger-ink)'
+                              // Not --warning, which admin uses: that is 4.27:1 on
+                              // the tint StatusBadge lays down. Partial reads as
+                              // "in flight" and stays clear of Failed's red.
+                              : p.status === 'Pending' ? 'var(--status-partial)'
+                              : 'var(--status-refund)';
                             // A completed event has already been delivered, so its
                             // payments are no longer refundable — asking would be a
                             // dispute, not a refund request.
@@ -2321,7 +2347,7 @@ export function CustomerDashboardPage() {
                                 <td>
                                   <StatusBadge
                                     label={p.refundRequested ? 'Refund Requested' : p.status}
-                                    color={p.refundRequested ? 'var(--accent)' : stColor}
+                                    color={p.refundRequested ? 'var(--status-refund)' : stColor}
                                   />
                                 </td>
                                 <td style={{ paddingRight: '1.4rem', textAlign: 'right' }}>
