@@ -67,8 +67,8 @@ export function LandingHero({ media }: LandingHeroProps) {
    * Every layer mounts — the refs, the timing and the pause logic below all index
    * into the full list, and windowing the elements would misalign them. What is
    * windowed is the background-image: a layer outside the window carries none, so
-   * the browser never requests it. With 38 stills in public/hero that is the
-   * difference between 16MB on first paint and roughly one megabyte.
+   * the browser never requests it. With 32 stills in public/hero that is the
+   * difference between ~15MB on first paint and roughly one megabyte.
    *
    * Wrap-aware, so the last layer counts as adjacent to the first — the reel loops,
    * and the neighbour before index 0 is the final frame. One layer of lookahead is

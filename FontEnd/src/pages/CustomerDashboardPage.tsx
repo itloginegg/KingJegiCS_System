@@ -40,15 +40,12 @@ import {
 
 
 import {
-  
   DERIVED_STATUS,
   BOOKING_STATUS_ORDER,
   derivedStatusOf,
   bookingMeta,
-  
   fmt,
   fmtDate,
-  
   type BookingStatusKey,
   type DerivedBookingStatus,
 } from '../components/customer/bookingStatus';

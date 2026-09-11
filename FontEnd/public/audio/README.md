@@ -1,8 +1,11 @@
 # Background audio for the public browsing pages
 
-`AmbientAudio.tsx` expects **`ambient.mp3`** in this directory, and AppRoutes
-mounts it on `/`, `/packages`, `/menus` and `/rentals`. Not on `/book`, `/cart`
-or `/dashboard` — people are entering details or reviewing money there.
+`components/site/AmbientAudio.tsx` expects **`ambient.mp3`** in this directory.
+
+Which routes carry it is decided by `AUDIO_ROUTES` in `routes/AppRoutes.tsx`,
+and that list is the only place it is written down. An earlier version of this
+file restated it, the list grew, and the copy here ended up claiming the opposite
+of the code for `/book` and `/cart` — so read it there.
 
 Requirements:
 

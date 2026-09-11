@@ -18,8 +18,9 @@ interface Props {
 
 /**
  * The WebGL surface. Default-exported so it can be the target of a dynamic import —
- * three + R3F + drei is roughly 600 kB gzipped, which must not land in the main bundle
- * for the majority of visitors who never open voice mode.
+ * three + R3F + drei build a 1,132 kB chunk, 299 kB gzipped, which must not land in
+ * the main bundle for the majority of visitors who never open voice mode. (The note
+ * here used to say 600 kB gzipped; measured from the build output, it is half that.)
  */
 export default function AvatarCanvas({
   visemesRef, getPlaybackMs, state, framing, fitMargin, greetKey,

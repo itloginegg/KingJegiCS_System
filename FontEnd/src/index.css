@@ -5,9 +5,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* --font-serif keeps its name because ~500 call sites read it, but the display
-     face is no longer a serif: Bricolage Grotesque is a variable grotesque. The
-     name is the contract; the value is the direction. */
+  /* The display face is not a serif: Bricolage Grotesque is a variable grotesque.
+     The name survives from when it was, and the note here used to justify keeping
+     it by saying ~500 call sites read it. Counted: ONE, in EventGallery. Almost
+     everything reads --font-display instead. Renaming this is a one-line change
+     whenever someone wants it. */
   --font-serif: "Bricolage Grotesque", Georgia, sans-serif;
   --font-sans: "Inter Tight", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -23,16 +25,20 @@
   --color-khaki: #BAB569;
   --color-off-white: #F7F9F4;
 
-  /* Aliases — the plum-era names, new green values. ~25 call sites still read
-     `bg-plum-deep` / `text-blush`; they keep resolving so the re-skin need not
-     land with the renames. Retire in a later pass. */
+  /* Aliases — the plum-era names, new green values. Kept so the re-skin need not
+     land with the renames.
+
+     THE RENAMES HAVE LANDED. Nothing reads these any more: the only occurrences
+     of `bg-plum-deep` and `text-blush` in the tree are the words in this comment.
+     Same for the teal block below. Eight tokens, zero consumers — safe to delete
+     whenever someone is in here. */
   --color-plum-deep: #224326;
   --color-plum-deeper: #16281A;
   --color-rose: #1B7C3D;
   --color-blush: #A8BA9C;
 
-  /* Aliases — the oldest, teal-era names. Same reason as the plum block above:
-     every `bg-teal-deep` and `text-beige` in the tree keeps resolving. */
+  /* Aliases — the oldest, teal-era names. Same story as the plum block above, and
+     the same count: zero real call sites. */
   --color-teal-deep: #224326;
   --color-teal-deeper: #16281A;
   --color-beige: #A8BA9C;

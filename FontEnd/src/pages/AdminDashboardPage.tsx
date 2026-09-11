@@ -296,25 +296,16 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
    Status maps & helpers
 ───────────────────────────────────────────────────────────────────────── */
 
-/**
- * Booking status → badge colour.
- *
- * Every entry reads the status ramp, never --accent or --primary. Those two were
- * survivable under the teal palette, where --accent was a bronze and --primary a
- * deep teal; under the plum direction --accent was a rose that collided with
- * --danger #DC2626, and under the green direction --accent is the forest #1B7C3D
- * that collides with --status-paid instead. Either way a Pending badge stopped
- * being separable, and Confirmed on --primary rendered as near-black body text
- * rather than a status.
- * The ramp exists precisely so these five stay separable — see the note on it in
- * index.css.
- */
+/* RES_STATUS, DEPOSIT_STATUS and their helpers live in
+   components/admin/shared/statusMeta, where the reasoning about the status ramp
+   now sits with them. The two maps below stay here because nothing outside this
+   file reads them. */
 
 type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' | 'Refunded';
 
-/* Same reasoning as RES_STATUS above: ramp roles only. Pending was --accent and
-   Success --primary, which under the plum palette put Pending next to Failed as a
-   second red and rendered Success as near-black text. */
+/* Same reasoning as RES_STATUS in statusMeta: ramp roles only. Pending was
+   --accent and Success --primary, which under the plum palette put Pending next
+   to Failed as a second red and rendered Success as near-black text. */
 const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }> = {
   Pending: { label: 'Pending', color: 'var(--warning-ink)' },
   Success: { label: 'Success', color: 'var(--status-paid)' },
@@ -325,19 +316,6 @@ const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }>
 
 const paymentStatusMeta = (status: string) =>
   PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-secondary)' };
-
-/**
- * Booking.DepositStatus → badge colour.
- *
- * Deliberately NOT PAYMENT_STATUS, despite both being "payment" colours: that map is
- * keyed by the *Payment record's* status (Pending/Success/Failed/PartiallyRefunded/
- * Refunded) and shares not one key with DepositStatus. Reusing it would silently fall
- * through to the grey default on every booking row.
- *
- * Same { label, color } shape as the maps above, so StatusBadge and the bookings
- * table derive the soft wash from one value via color-mix.
- */
-
 
 const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
   Pending: { label: 'Pending', color: 'var(--warning-ink)' },
