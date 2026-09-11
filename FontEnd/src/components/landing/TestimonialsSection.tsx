@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReducedMotion } from 'framer-motion';
 import { getApprovedTestimonials, type PublicTestimonial } from '../../api/testimonialsApi';
-import { AmbientCanvas } from './AmbientCanvas';
+import { AmbientCanvas } from '../site/AmbientCanvas';
 import { SectionHeading } from './SectionHeading';
 
 /**

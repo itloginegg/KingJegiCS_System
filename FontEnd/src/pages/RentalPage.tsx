@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Navbar } from '../components/landing/Navbar';
+import { Navbar } from '../components/site/Navbar';
 import { useCart } from '../hooks/useCart';
 import { readSession } from '../lib/tokenStorage';
 import { fetchRentalItems } from '../api/rentalAdminApi';
 import { RentalHero } from '../components/rentals/RentalHero';
-import { AmbientCanvas } from '../components/landing/AmbientCanvas';
+import { AmbientCanvas } from '../components/site/AmbientCanvas';
 import {
   CatalogTopBar,
   type SortKey,
@@ -29,7 +29,7 @@ import {
   type RentalCategory,
   type RentalItem,
 } from '../components/rentals/rentalData';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { SiteFooter } from '../components/site/SiteFooter';
 
 const SKELETON_COUNT = 6;
 

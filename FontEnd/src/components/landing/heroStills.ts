@@ -5,12 +5,17 @@
  * backs a CSS background-image, and a <video> cannot be one; the hero mixes the
  * two by stacking real elements, which is a cost only the hero pays.
  *
- * Generated from the directory listing rather than written by hand, and that is
- * the only reason it is trustworthy: LandingPage's own copy of this list has
- * drifted from the folder and still points at 771998357_...jpg, which is not
- * there. Adding a photograph to public/hero means adding a line here — files
- * under public/ are copied verbatim and never seen by the bundler, so
- * import.meta.glob cannot enumerate them.
+ * Generated from the directory listing rather than written by hand. Adding a
+ * photograph to public/hero means adding a line here — files under public/ are
+ * copied verbatim and never seen by the bundler, so import.meta.glob cannot
+ * enumerate them.
+ *
+ * THIS IS THE SECOND SUCH LIST. LandingPage's HERO_MEDIA holds the same
+ * photographs plus the clips, and the two drift independently: seven entries
+ * were pruned from HERO_MEDIA when their files were deleted and this list kept
+ * requesting them, 404ing on every visit to the availability section. Prune both
+ * or neither. A missing entry here paints an empty background rather than
+ * throwing, which is why the drift went unnoticed.
  *
  * Percent-encoded, because one filename carries a space and parentheses and
  * these are interpolated straight into url().
@@ -18,15 +23,10 @@
 export const HERO_STILLS: readonly string[] = [
   '/hero/1.jpg',
   '/hero/2.jpg',
-  '/hero/475791402_1053532609909764_4981430293773791916_n.jpg',
   '/hero/475882223_1053532676576424_7453945570792069785_n.jpg',
   '/hero/475885781_1053532873243071_739548449675657919_n.jpg',
   '/hero/475935832_1053532753243083_204533552706617820_n%20%281%29.jpg',
-  '/hero/476003522_1053532876576404_2841522414474075162_n.jpg',
   '/hero/476021624_1053532693243089_6450707443146943903_n.jpg',
-  '/hero/476030991_1053532466576445_805751608116762178_n.jpg',
-  '/hero/476069041_1053532813243077_2751738037370215620_n.jpg',
-  '/hero/476278532_1053532683243090_158351261579523031_n.jpg',
   '/hero/476312599_1053532633243095_2770354154287174301_n.jpg',
   '/hero/648019737_1355931806336508_6965164466184933880_n.jpg',
   '/hero/648832511_1355931453003210_4602903017174356830_n.jpg',
@@ -38,11 +38,9 @@ export const HERO_STILLS: readonly string[] = [
   '/hero/651217534_1358780659384956_6191535843346171980_n.jpg',
   '/hero/655913859_1370284794901209_5634616107795083968_n.jpg',
   '/hero/657373626_1370284998234522_8672412175734879214_n.jpg',
-  '/hero/657385281_1370284761567879_3493865220430027531_n.jpg',
   '/hero/657586134_1370284891567866_7176804982523438533_n.jpg',
   '/hero/721119020_1435797765016578_6591129480672024861_n.jpg',
   '/hero/724777748_1438286398101048_2028803709003395940_n.jpg',
-  '/hero/726357880_1438290521433969_921599286252158990_n.jpg',
   '/hero/726596851_1438286338101054_7481206446141031975_n.jpg',
   '/hero/727519078_1438286461434375_4129001469063785725_n.jpg',
   '/hero/727519457_1438286241434397_4792549088553892762_n.jpg',

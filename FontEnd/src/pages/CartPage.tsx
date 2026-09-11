@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 
-import { Navbar } from '../components/landing/Navbar';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { Navbar } from '../components/site/Navbar';
+import { SiteFooter } from '../components/site/SiteFooter';
 import { useAuth } from '../hooks/useAuth';
 import { useCart } from '../hooks/useCart';
 import { readSession } from '../lib/tokenStorage';

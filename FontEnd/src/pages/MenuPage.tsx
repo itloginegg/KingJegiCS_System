@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Navbar } from '../components/landing/Navbar';
-import { AmbientCanvas } from '../components/landing/AmbientCanvas';
+import { Navbar } from '../components/site/Navbar';
+import { AmbientCanvas } from '../components/site/AmbientCanvas';
 import { useCart } from '../hooks/useCart';
 import { readSession } from '../lib/tokenStorage';
 import { fetchMenuItems, fetchMenuTrays, getFullImageUrl } from '../api/menuAdminApi';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { SiteFooter } from '../components/site/SiteFooter';
 
 /** Stock backdrop for the menu hero until a real asset is dropped in. */
 const MENU_HERO_MEDIA =

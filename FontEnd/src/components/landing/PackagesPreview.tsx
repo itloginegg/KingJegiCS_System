@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'framer-motion';
 import { SectionHeading } from './SectionHeading';
-import { AmbientCanvas } from './AmbientCanvas';
+import { AmbientCanvas } from '../site/AmbientCanvas';
 import { readSession } from '../../lib/tokenStorage';
 import { fetchPackages, getFullImageUrl, type AdminPackage } from '../../api/packageAdminApi';
 

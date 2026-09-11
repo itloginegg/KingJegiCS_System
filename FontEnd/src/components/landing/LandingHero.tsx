@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AmbientCanvas } from './AmbientCanvas';
+import { AmbientCanvas } from '../site/AmbientCanvas';
 
 const STATS = [
   { value: '500+', label: 'Events Served' },

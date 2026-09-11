@@ -1,7 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { AmbientAudio } from '../components/landing/AmbientAudio';
-import { ChatWidget } from '../components/landing/ChatWidget';
+import { AmbientAudio } from '../components/site/AmbientAudio';
+import { ChatWidget } from '../components/site/ChatWidget';
 import { AuthProvider } from '../context/AuthContext';
 import { CartProvider } from '../context/CartContext';
 import { ThemeProvider } from '../context/ThemeContext';

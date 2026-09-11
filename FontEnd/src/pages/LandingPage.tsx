@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getCalendarDays, getDayTimeSlots, type DayTimeSlots } from '../api/calendarApi';
-import { Navbar } from '../components/landing/Navbar';
+import { Navbar } from '../components/site/Navbar';
 import { LandingHero, type HeroMedia } from '../components/landing/LandingHero';
 import { AvailabilitySection } from '../components/landing/AvailabilitySection';
 import { ServiceSection } from '../components/landing/ServiceSection';
 import { PackagesPreview } from '../components/landing/PackagesPreview';
 import { MenuPreviewSection } from '../components/landing/MenuPreviewSection';
 import { TestimonialsSection } from '../components/landing/TestimonialsSection';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { SiteFooter } from '../components/site/SiteFooter';
 import { ReserveDialog, type BookingPreset } from '../components/landing/ReserveDialog';
 import { getDaysInMonth, toISO } from '../components/landing/calendarUtils';
 import '../components/landing/landing.css';

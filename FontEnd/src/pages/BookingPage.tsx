@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Check } from 'lucide-react';
-import { Navbar } from '../components/landing/Navbar';
+import { Navbar } from '../components/site/Navbar';
 import { PlanByBudget } from '../components/suggestions/PlanByBudget';
 import { HERO_CARDS, HeroLayout } from '../components/booking/HeroLayout';
 import type {
@@ -43,7 +43,7 @@ import {
   type PackageTemplateResponse,
 } from '../api/bookingApi';
 import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules } from '../api/calendarApi';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { SiteFooter } from '../components/site/SiteFooter';
 
 /* ── constants ────────────────────────────────────────────────────────── */
 

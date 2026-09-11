@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, X } from 'lucide-react';
-import { Navbar } from '../components/landing/Navbar';
+import { Navbar } from '../components/site/Navbar';
 import { PackageCarousel } from '../components/packages/PackageCarousel';
-import { AmbientCanvas } from '../components/landing/AmbientCanvas';
+import { AmbientCanvas } from '../components/site/AmbientCanvas';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuTrays } from '../api/menuAdminApi';
-import { SiteFooter } from '../components/landing/SiteFooter';
+import { SiteFooter } from '../components/site/SiteFooter';
 
 
 /** Backdrop placeholder for the packages section. */

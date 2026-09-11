@@ -30,7 +30,7 @@ import {
   notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
-import { OPEN_SUPPORT_CHAT_EVENT } from '../components/landing/ChatWidget';
+import { OPEN_SUPPORT_CHAT_EVENT } from '../components/site/ChatWidget';
 import {
   getMyTestimonials,
   submitTestimonial,
