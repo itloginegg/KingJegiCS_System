@@ -9,6 +9,8 @@
  * summary may take a round trip to Gemini or be unavailable entirely.
  */
 
+import { notifyUnauthorized } from '../lib/authEvents';
+
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
 ).replace(/\/+$/, '');
@@ -84,6 +86,9 @@ async function request<T>(path: string, token: string): Promise<T> {
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new ReportsApiError(
       'Only an Owner or Assistant account may view sales reports. Sign in again to continue.',
       res.status,

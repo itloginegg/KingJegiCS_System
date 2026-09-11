@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Menu, ShoppingCart, X } from 'lucide-react';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAuth } from '../../hooks/useAuth';
+import { useCart } from '../../hooks/useCart';
 
 /**
  * Sentence case, not the old 0.22em uppercase tracking.
@@ -25,10 +26,6 @@ const NAV_LINKS = [
 
 export interface NavbarProps {
   activePage?: string;
-  /** Item count for the cart badge (0 hides it). Defaults to 0 so other pages are unaffected. */
-  cartCount?: number;
-  /** Click handler for the cart icon (e.g. open the checkout modal). Optional. */
-  onCartClick?: () => void;
   /**
    * How the bar sits on the page.
    *
@@ -47,11 +44,18 @@ export interface NavbarProps {
 /** Site navbar. */
 export function Navbar({
   activePage,
-  cartCount = 0,
-  onCartClick,
   placement = 'overlay',
 }: NavbarProps) {
   const { isAuthenticated, logout } = useAuth();
+
+  /* The badge counts the WHOLE cart, and is read here rather than passed in.
+     Every page used to hand the bar its own number: MenuPage counted only food,
+     RentalPage only rentals (and only after its catalog fetch resolved, so it
+     read 0 on first paint), and Landing, Packages and Booking passed nothing at
+     all — which left the icon showing an empty cart, and inert, on three pages
+     where the cart was not empty. One cart, one number, owned by the bar. */
+  const { pieces } = useCart();
+
   const [menuOpen, setMenuOpen] = useState(false);
 
   const sticky = placement === 'sticky';
@@ -289,15 +293,18 @@ export function Navbar({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-          <button
-            type="button"
+          {/* A link, not a button: the cart icon has one destination now, so it
+             should middle-click and open in a new tab like any other nav item.
+             It used to be a button whose handler each page supplied — and three
+             pages supplied none, leaving it clickable but dead. */}
+          <Link
+            to="/cart"
             className="nav-icon"
-            aria-label={cartCount > 0 ? `View cart (${cartCount} item${cartCount === 1 ? '' : 's'})` : 'View cart'}
-            style={{ ...iconBtn, position: 'relative' }}
-            onClick={onCartClick}
+            aria-label={pieces > 0 ? `View cart (${pieces} item${pieces === 1 ? '' : 's'})` : 'View cart'}
+            style={{ ...iconBtn, position: 'relative', textDecoration: 'none' }}
           >
             <ShoppingCart size={18} strokeWidth={1.75} aria-hidden="true" />
-            {cartCount > 0 && (
+            {pieces > 0 && (
               <span
                 aria-hidden="true"
                 style={{
@@ -309,10 +316,10 @@ export function Navbar({
                   lineHeight: '15px', textAlign: 'center',
                 }}
               >
-                {cartCount > 99 ? '99+' : cartCount}
+                {pieces > 99 ? '99+' : pieces}
               </span>
             )}
-          </button>
+          </Link>
 
           <ThemeToggle className="nav-icon" style={iconBtn} />
 

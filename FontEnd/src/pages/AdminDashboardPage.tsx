@@ -1,5 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { fmt, fmtDate, fmtTime } from '../lib/format';
+import { StatusBadge, FieldLabel } from '../components/admin/shared/StatusBadge';
+import { RES_STATUS, type ResStatus } from '../components/admin/shared/statusMeta';
+
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import {
@@ -155,7 +159,6 @@ import {
   getFullImageUrl as getGalleryImageUrl,
   GalleryApiError,
   GALLERY_ACCEPTED_TYPES,
-  GALLERY_MAX_IMAGES,
   GALLERY_MAX_IMAGE_BYTES,
   type GalleryImageAdmin,
 } from '../api/galleryApi';
@@ -180,7 +183,6 @@ import { ToastViewport, useToasts } from '../components/ui/Toasts';
 /* Fallback identity; the signed-in admin account takes precedence. */
 const FALLBACK_ADMIN = { name: 'Chris Paul', role: 'Administrator' };
 
-export type ResStatus = 'Draft' | 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
 
 /** Sort order for the Bookings tab list. */
 
@@ -307,20 +309,6 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
  * The ramp exists precisely so these five stay separable — see the note on it in
  * index.css.
  */
-/* Ink variants, not fills. StatusBadge below lays the colour on a 12% tint of
-   ITSELF, and that ground costs about 0.8:1 — measured, not assumed. Against it
-   --warning was 4.27 and --danger 4.01, so Pending and Cancelled were failing AA
-   while every ramp role beside them passed. --warning-ink and --danger-ink are
-   the tokens for text on their own tint; the ramp five need no such variant
-   because they were tuned as text to begin with.
-   Draft moves off --text-dim for the same reason: 3.97 in dark mode. */
-export const RES_STATUS: Record<ResStatus, { label: string; color: string }> = {
-  Draft: { label: 'Draft', color: 'var(--text-secondary)' },
-  Pending: { label: 'Pending', color: 'var(--warning-ink)' },
-  Confirmed: { label: 'Confirmed', color: 'var(--status-paid)' },
-  Completed: { label: 'Completed', color: 'var(--status-info)' },
-  Cancelled: { label: 'Cancelled', color: 'var(--danger-ink)' },
-};
 
 type PaymentStatusKey = 'Pending' | 'Success' | 'Failed' | 'PartiallyRefunded' | 'Refunded';
 
@@ -349,20 +337,7 @@ const paymentStatusMeta = (status: string) =>
  * Same { label, color } shape as the maps above, so StatusBadge and the bookings
  * table derive the soft wash from one value via color-mix.
  */
-export type DepositStatusKey = 'Unpaid' | 'Reserved' | 'Partial' | 'Paid';
 
-export const DEPOSIT_STATUS: Record<DepositStatusKey, { label: string; color: string }> = {
-  Unpaid: { label: 'Unpaid', color: 'var(--status-unpaid)' },
-  Reserved: { label: 'Reserved', color: 'var(--status-info)' },
-  Partial: { label: 'Partial', color: 'var(--status-partial)' },
-  Paid: { label: 'Paid', color: 'var(--status-paid)' },
-};
-
-/** Enum order, for sorting the Payment Status column by progress rather than alphabet. */
-export const DEPOSIT_STATUS_ORDER: DepositStatusKey[] = ['Unpaid', 'Reserved', 'Partial', 'Paid'];
-
-export const depositStatusMeta = (status: string) =>
-  DEPOSIT_STATUS[status as DepositStatusKey] ?? { label: status, color: 'var(--text-secondary)' };
 
 const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
   Pending: { label: 'Pending', color: 'var(--warning-ink)' },
@@ -370,7 +345,6 @@ const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> 
   Rejected: { label: 'Rejected', color: 'var(--danger-ink)' },
 };
 
-export const fmt = (n: number) => `₱${n.toLocaleString('en-PH')}`;
 
 /** Zero-pads a month/day for building a local "YYYY-MM-DD" without UTC drift. */
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -485,6 +459,10 @@ function AdminTabHeader({
         {onSearchChange && (
           <input
             type="search"
+            /* The placeholder is the only visible cue, and a placeholder is not an
+               accessible name — it is announced as a value hint and vanishes once
+               the field has content. */
+            aria-label={searchPlaceholder}
             placeholder={searchPlaceholder}
             value={searchValue ?? ''}
             onChange={(e) => onSearchChange(e.target.value)}
@@ -541,26 +519,6 @@ function OvIcon({ name }: { name: 'wallet' | 'clock' | 'calendar' | 'inbox' }) {
     </svg>
   );
 }
-export const fmtDate = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
-  } catch {
-    return iso;
-  }
-};
-
-/**
- * "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, which isn't a date, so it's
- * parsed positionally. Null/absent renders as an em dash.
- */
-export const fmtTime = (hms: string | null | undefined) => {
-  if (!hms) return '—';
-  const [h, m] = hms.split(':').map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return hms;
-  const period = h >= 12 ? 'PM' : 'AM';
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
-};
 
 const fmtDateTime = (iso: string) => {
   try {
@@ -571,42 +529,6 @@ const fmtDateTime = (iso: string) => {
     return iso;
   }
 };
-
-export function StatusBadge({ label, color }: { label: string; color: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        fontFamily: 'var(--font-body)',
-        fontSize: '0.62rem',
-        fontWeight: 600,
-        letterSpacing: '0.12em',
-        textTransform: 'uppercase',
-        color,
-        background: `color-mix(in srgb, ${color} 12%, transparent)`,
-        border: `1px solid color-mix(in srgb, ${color} 40%, transparent)`,
-        padding: '0.28rem 0.68rem', borderRadius: 'var(--r-full)',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-export function FieldLabel({ text }: { text: string }) {
-  return (
-    <span
-      style={{
-        fontFamily: 'var(--font-body)', fontSize: '0.52rem',
-        letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500,
-        color: 'var(--text-dim)', display: 'block', marginBottom: '0.4rem',
-      }}
-    >
-      {text}
-    </span>
-  );
-}
 
 /* ─────────────────────────────────────────────────────────────────────────
    Main component
@@ -791,7 +713,7 @@ function NewBookingModal({ onClose, onCreated, notify }: {
         {custMode === 'search' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <input className="adm-input" placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(); }} style={{ flex: 1 }} />
+              <input className="adm-input" aria-label="Search customers by name or email" placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void runSearch(); }} style={{ flex: 1 }} />
               <button type="button" className="adm-btn" onClick={() => void runSearch()} disabled={searching}>{searching ? '…' : 'Search'}</button>
             </div>
             <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)' }}>
@@ -812,9 +734,9 @@ function NewBookingModal({ onClose, onCreated, notify }: {
           </div>
         ) : (
           <div className="form-grid" style={{ marginBottom: '1rem' }}>
-            <div className="form-row"><label>Full name</label><input className="adm-input" value={wName} onChange={(e) => setWName(e.target.value)} /></div>
-            <div className="form-row"><label>Email</label><input className="adm-input" type="email" value={wEmail} onChange={(e) => setWEmail(e.target.value)} /></div>
-            <div className="form-row"><label>Phone</label><PhoneNumberInput className="adm-input" value={wPhone} onChange={setWPhone} /></div>
+            <div className="form-row"><label htmlFor="admin-dashboard-full-name">Full name</label><input className="adm-input" value={wName} onChange={(e) => setWName(e.target.value)}  id="admin-dashboard-full-name"/></div>
+            <div className="form-row"><label htmlFor="admin-dashboard-email">Email</label><input className="adm-input" type="email" value={wEmail} onChange={(e) => setWEmail(e.target.value)}  id="admin-dashboard-email"/></div>
+            <div className="form-row"><label htmlFor="admin-dashboard-phone">Phone</label><PhoneNumberInput className="adm-input" value={wPhone} onChange={setWPhone}  id="admin-dashboard-phone"/></div>
           </div>
         )}
 
@@ -833,20 +755,20 @@ function NewBookingModal({ onClose, onCreated, notify }: {
               </select>
             </div>
           )}
-          {isFull && <div className="form-row"><label>Guests</label><input className="adm-input" type="number" min={1} value={guests} onChange={(e) => setGuests(e.target.value)} /></div>}
+          {isFull && <div className="form-row"><label htmlFor="admin-dashboard-guests">Guests</label><input className="adm-input" type="number" min={1} value={guests} onChange={(e) => setGuests(e.target.value)}  id="admin-dashboard-guests"/></div>}
           <div className="form-row">
-            <label>{isFull ? 'Event date' : 'Delivery date'}</label>
-            <input className="adm-input" type="date" min={earliestDate} value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+            <label htmlFor="admin-dashboard-event-date">{isFull ? 'Event date' : 'Delivery date'}</label>
+            <input id="admin-dashboard-event-date" className="adm-input" type="date" min={earliestDate} value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
             {earliestDate && (
               <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', fontWeight: 300, color: dateTooSoon ? 'var(--danger)' : 'var(--text-dim)', textTransform: 'none', letterSpacing: 'normal' }}>
                 Earliest: {fmtDate(earliestDate)} ({leadDays} days' notice)
               </span>
             )}
           </div>
-          <div className="form-row"><label>{isFull ? 'Start time' : 'Delivery time'}</label><input className="adm-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
-          {isFull && <div className="form-row"><label>End date</label><input className="adm-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>}
-          {isFull && <div className="form-row"><label>End time</label><input className="adm-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div>}
-          <div className="form-row"><label>Contact number (optional)</label><PhoneNumberInput className="adm-input" value={contact} onChange={setContact} /></div>
+          <div className="form-row"><label htmlFor="admin-dashboard-start-time">{isFull ? 'Start time' : 'Delivery time'}</label><input id="admin-dashboard-start-time" className="adm-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
+          {isFull && <div className="form-row"><label htmlFor="admin-dashboard-end-date">End date</label><input className="adm-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}  id="admin-dashboard-end-date"/></div>}
+          {isFull && <div className="form-row"><label htmlFor="admin-dashboard-end-time">End time</label><input className="adm-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)}  id="admin-dashboard-end-time"/></div>}
+          <div className="form-row"><label htmlFor="admin-dashboard-contact-number-optional">Contact number (optional)</label><PhoneNumberInput className="adm-input" value={contact} onChange={setContact}  id="admin-dashboard-contact-number-optional"/></div>
         </div>
 
         <VenueAddressFields
@@ -915,7 +837,15 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
   const selectedRef = useRef<string | null>(null);
   useEffect(() => { selectedRef.current = selectedId; }, [selectedId]);
 
-  const loadThreads = async () => {
+  /* useCallback so the effect below can depend on it honestly.
+
+     Everything it closes over is already stable — `notify` is a useCallback out of
+     useToasts, the setters are setState, and the filter is read through
+     statusRef rather than captured — so this has a constant identity and adding
+     it to a dependency array cannot start a reload loop. As a plain function it
+     was rebuilt every render, which is why the array below listed `statusFilter`
+     and quietly omitted the function it actually calls. */
+  const loadThreads = useCallback(async () => {
     const session = readSession();
     if (!session) return;
     try {
@@ -926,7 +856,7 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
     } finally {
       setLoadingThreads(false);
     }
-  };
+  }, [notify]);
 
   const refreshOpen = async () => {
     const id = selectedRef.current;
@@ -950,7 +880,10 @@ function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' | 'info
     }
   };
 
-  useEffect(() => { setLoadingThreads(true); void loadThreads(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [statusFilter]);
+  /* statusFilter stays in the list even though loadThreads reads statusRef: the
+     ref is what supplies the fresh value, but the filter changing is what has to
+     TRIGGER the refetch, and a ref never triggers anything. */
+  useEffect(() => { setLoadingThreads(true); void loadThreads(); }, [statusFilter, loadThreads]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [thread]);
 
   /* Pre-fill the composer from a new draft — once, and never over anything already
@@ -1363,7 +1296,6 @@ export function AdminDashboardPage() {
       return;
     }
 
-    const room = GALLERY_MAX_IMAGES - galleryImages.length;
     const problems: string[] = [];
     const queue: File[] = [];
     for (const file of picked) {
@@ -1371,8 +1303,6 @@ export function AdminDashboardPage() {
         problems.push(`${file.name} — only JPG, PNG or WebP.`);
       } else if (file.size > GALLERY_MAX_IMAGE_BYTES) {
         problems.push(`${file.name} — over 5 MB.`);
-      } else if (queue.length >= room) {
-        problems.push(`${file.name} — the gallery is full at ${GALLERY_MAX_IMAGES} images.`);
       } else {
         queue.push(file);
       }
@@ -3014,14 +2944,12 @@ export function AdminDashboardPage() {
      so it reloads on navigation as well as on tab entry. */
   useEffect(() => {
     if (tab === 'overview') void loadCalendar(calMonth);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, calMonth]);
 
   /* The bell is in the topbar, so its feed is loaded once for the whole session
      rather than per tab. */
   useEffect(() => {
     void loadNotifications();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* Live badge: the backend broadcasts "NotificationCreated" on /hubs/payment the
@@ -3124,7 +3052,6 @@ export function AdminDashboardPage() {
     return menuItems
       .filter((m) => menuCategory === 'all' || m.itemCategory === menuCategory)
       .filter((m) => matchesQuery(q, m.itemName, m.itemCategory, m.courseCategory, m.description, ...m.dietaryTags));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuItems, menuCategory, menuSearch]);
 
   /* Trays match on their own name or on any dish they contain, so searching a
@@ -3132,19 +3059,16 @@ export function AdminDashboardPage() {
   const visibleMenuTrays = useMemo(() => {
     const q = menuSearch.trim().toLowerCase();
     return menuTrays.filter((t) => matchesQuery(q, t.trayName, ...t.dishes.map((d) => d.itemName)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuTrays, menuSearch]);
 
   const visibleRentalItems = useMemo(() => {
     const q = rentalSearch.trim().toLowerCase();
     return rentalItems.filter((r) => matchesQuery(q, r.itemName, r.category));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rentalItems, rentalSearch]);
 
   const visibleServiceItems = useMemo(() => {
     const q = serviceSearch.trim().toLowerCase();
     return serviceItems.filter((s) => matchesQuery(q, s.serviceName));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serviceItems, serviceSearch]);
 
   /* calendar cells */
@@ -5204,7 +5128,9 @@ export function AdminDashboardPage() {
                       <div className="adm-card" style={{ padding: '1rem 1.15rem', display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <div style={{ flex: 1, minWidth: 220 }}>
                           <FieldLabel text={`Reason for cancelling ${target.bookingName}`} />
-                          <input className="adm-input square" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Required" />
+                          {/* FieldLabel renders a <span>, not a <label>, so it cannot name this field
+                              for a screen reader however clearly it reads on screen. */}
+                          <input aria-label="Reason for cancelling" className="adm-input square" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Required" />
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem' }}>
                           <button type="button" className="adm-btn danger" disabled={!cancelReason.trim()} onClick={() => cancelReservation(cancelResId)}>
@@ -5309,7 +5235,7 @@ export function AdminDashboardPage() {
                             <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '0.8rem' }}>
                               <div style={{ flex: 1, minWidth: 220 }}>
                                 <FieldLabel text="Reason shown to the customer" />
-                                <input className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
+                                <input aria-label="Reason shown to the customer" className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
                               </div>
                               <div style={{ display: 'flex', gap: '0.5rem' }}>
                                 <button
@@ -5354,7 +5280,7 @@ export function AdminDashboardPage() {
                   <div className="adm-card" style={{ padding: '1rem 1.15rem', display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div style={{ flex: 1, minWidth: 220 }}>
                       <FieldLabel text="Reason shown to the customer" />
-                      <input className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
+                      <input aria-label="Reason shown to the customer" className="adm-input square" value={denyReason} onChange={(e) => setDenyReason(e.target.value)} placeholder="Required" />
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <button
@@ -5584,6 +5510,7 @@ export function AdminDashboardPage() {
                   <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '16px' }}>
                     <div style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '10px' }}>Select a booking</div>
                     <input
+                      aria-label="Search bookings by name"
                       placeholder="Search by name…"
                       style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '10px', padding: '11px', marginBottom: '12px' }}
                       value={historySearch}
@@ -6790,7 +6717,7 @@ export function AdminDashboardPage() {
                         type="file"
                         multiple
                         accept="image/jpeg,image/png,image/webp"
-                        disabled={galUploading || galleryImages.length >= GALLERY_MAX_IMAGES}
+                        disabled={galUploading}
                         onChange={uploadGalleryImages}
                         style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '14px', fontWeight: 400, lineHeight: 1, color: 'var(--text-primary)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px 13px', marginBottom: '4px' }}
                       />
@@ -6800,7 +6727,7 @@ export function AdminDashboardPage() {
                         <span style={{ flex: 1, minWidth: '200px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
                           {galUploading
                             ? 'Uploading…'
-                            : `${galleryImages.length} of ${GALLERY_MAX_IMAGES} images in the gallery`}
+                            : `${galleryImages.length} ${galleryImages.length === 1 ? 'image' : 'images'} in the gallery`}
                         </span>
                         <button
                           type="button"

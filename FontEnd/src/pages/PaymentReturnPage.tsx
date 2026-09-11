@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  readPendingPayment,
+  clearPendingPayment,
+  type PendingPayment,
+} from '../lib/pendingPayment';
 import { Check, Clock, Info, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
@@ -23,33 +28,6 @@ import { API_BASE_URL, getPaymentsByInvoice } from '../api/bookingApi';
  *
  * Whichever wins, we then route into the dashboard with the Payments tab selected.
  */
-
-/** What the dashboard stashes before handing the browser to the gateway. */
-export interface PendingPayment {
-  invoiceId: string;
-  paymentId?: string | null;
-}
-
-export const PENDING_PAYMENT_KEY = 'kj_pending_payment';
-
-export function readPendingPayment(): PendingPayment | null {
-  try {
-    const raw = sessionStorage.getItem(PENDING_PAYMENT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as PendingPayment;
-    return parsed && typeof parsed.invoiceId === 'string' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function clearPendingPayment() {
-  try {
-    sessionStorage.removeItem(PENDING_PAYMENT_KEY);
-  } catch {
-    /* private-mode storage failure is not worth surfacing */
-  }
-}
 
 /** How long to keep checking before telling the customer it's still processing. */
 const CONFIRM_TIMEOUT_MS = 25_000;

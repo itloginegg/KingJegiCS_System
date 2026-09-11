@@ -2,10 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
 import { AmbientCanvas } from '../components/landing/AmbientCanvas';
-import { useAuth } from '../hooks/useAuth';
+import { useCart } from '../hooks/useCart';
 import { readSession } from '../lib/tokenStorage';
 import { fetchMenuItems, fetchMenuTrays, getFullImageUrl } from '../api/menuAdminApi';
-import { createBooking, addMenuItem, addMenuTray, submitBooking, BookingApiError } from '../api/bookingApi';
 import { SiteFooter } from '../components/landing/SiteFooter';
 
 /** Stock backdrop for the menu hero until a real asset is dropped in. */
@@ -16,7 +15,10 @@ const fmtPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Real catalog → build a Food-Delivery cart → create + submit the booking.
+   Real catalog → add to the shared cart. This page no longer books anything: it
+   used to create and submit a FoodDelivery booking from its own modal, which
+   silently left behind any rentals sitting in the same cart. Checkout is /cart
+   → /book now, the one path that can carry food and equipment together.
    Prices shown are catalog unit prices; the authoritative total is computed
    by the backend when the booking is created (golden rule).
 ───────────────────────────────────────────────────────────────────────── */
@@ -99,7 +101,6 @@ function QtyStepper({ value, onDelta, label }: { value: number; onDelta: (delta:
 export function MenuPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
 
   const [category, setCategory] = useState<'all' | string>('all');
   const [query, setQuery] = useState('');
@@ -115,7 +116,10 @@ export function MenuPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selected, setSelected] = useState<Product | null>(null);
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [cart, setCart] = useState<Record<string, CartLine>>({});
+  /* Moved to CartProvider, so trays picked here survive a walk to /rentals and
+     a refresh. The local CartLine shape below is derived from it, because
+     placeOrder and the summary sheet both already speak that shape. */
+  const { addItem, clearTypes, lines: sharedLines } = useCart();
   const [flashKey, setFlashKey] = useState<string | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -123,13 +127,6 @@ export function MenuPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   /* checkout */
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [deliveryTime, setDeliveryTime] = useState('');
-  const [address, setAddress] = useState('');
-  const [contact, setContact] = useState('');
-  const [placing, setPlacing] = useState(false);
-  const [checkoutError, setCheckoutError] = useState('');
 
   const loadCatalog = async () => {
     setLoading(true);
@@ -293,55 +290,36 @@ export function MenuPage() {
     return m;
   }, [products]);
 
-  const cartLines = useMemo(() => Object.values(cart), [cart]);
+  const cartLines = useMemo<CartLine[]>(
+    () =>
+      sharedLines
+        .filter((l) => l.type === 'MenuItem' || l.type === 'MenuTray')
+        .map((l) => ({
+          id: l.id,
+          type: l.type as ProductType,
+          name: l.snap.name,
+          price: l.snap.price,
+          qty: l.qty,
+        })),
+    [sharedLines],
+  );
   const cartCount = useMemo(() => cartLines.reduce((a, l) => a + l.qty, 0), [cartLines]);
   const cartTotal = useMemo(() => cartLines.reduce((a, l) => a + l.price * l.qty, 0), [cartLines]);
 
   const addToCart = (p: Product) => {
     const key = cartKey(p);
     const add = qtyOf(key);
-    setCart((prev) => ({
-      ...prev,
-      [key]: { id: p.id, type: p.type, name: p.name, price: p.price, qty: (prev[key]?.qty ?? 0) + add },
-    }));
+    addItem({
+      type: p.type,
+      id: p.id,
+      qty: add,
+      name: p.name,
+      price: p.price,
+      image: p.image ?? null,
+      meta: `Serves ${p.serves}`,
+    });
     setFlashKey(key);
     window.setTimeout(() => setFlashKey((prev) => (prev === key ? null : prev)), 1500);
-  };
-
-  const placeOrder = async () => {
-    const session = readSession();
-    if (!session) { navigate('/login'); return; }   // creating a booking requires login
-    if (cartLines.length === 0) { setCheckoutError('Your cart is empty.'); return; }
-    if (!deliveryDate || !deliveryTime || !address.trim()) {
-      setCheckoutError('Please provide a delivery date, time, and address.');
-      return;
-    }
-    setPlacing(true);
-    setCheckoutError('');
-    try {
-      const booking = await createBooking(session.token, {
-        customerId: session.user.id,
-        bookingType: 'FoodDelivery',
-        eventDate: deliveryDate,
-        startTime: `${deliveryTime}:00`,
-        endDate: null, endTime: null, eventType: null,
-        venueAddress: address.trim(),
-        guestCount: null, menuPackageId: null,
-        contactNumber: contact.trim() || null,
-      });
-      for (const line of cartLines) {
-        if (line.type === 'MenuItem') await addMenuItem(session.token, booking.id, line.id, line.qty);
-        else await addMenuTray(session.token, booking.id, line.id, line.qty);
-      }
-      await submitBooking(session.token, booking.id);
-      setCart({});
-      setCheckoutOpen(false);
-      navigate('/dashboard');
-    } catch (err) {
-      setCheckoutError(err instanceof BookingApiError ? err.message : 'Could not place your order. Please try again.');
-    } finally {
-      setPlacing(false);
-    }
   };
 
   /* ── detail drawer as a real dialog ──
@@ -370,11 +348,12 @@ export function MenuPage() {
     drawerRef.current?.querySelector<HTMLElement>('button, [href], input, select, textarea')?.focus();
   }, [selected]);
 
-  /* Escape closes the detail drawer / checkout; Tab is trapped inside the drawer. */
+  /* Escape closes the detail drawer; Tab is trapped inside it. The checkout
+     modal this also used to dismiss now lives on /cart. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (selected) closeDetail(); else setCheckoutOpen(false);
+        if (selected) closeDetail();
         return;
       }
       if (e.key !== 'Tab' || !selected || !drawerRef.current) return;
@@ -389,7 +368,6 @@ export function MenuPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
 
@@ -467,16 +445,6 @@ export function MenuPage() {
         .mnu-plan-cta { background: var(--accent); color: var(--accent-text); font-family: var(--font-body); font-size: 0.6rem; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; border: none; border-radius: var(--r-full); padding: 0.65rem 1.25rem; cursor: pointer; white-space: nowrap; transition: background 0.2s; }
         .mnu-plan-cta:hover { background: var(--accent-hover); }
 
-        /* ── checkout modal ── */
-        .mnu-co-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(22, 40, 26, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
-        .mnu-co-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); padding: 1.6rem 1.75rem; display: flex; flex-direction: column; gap: 1rem; }
-        .mnu-co-label { font-family: var(--font-body); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.5rem; }
-        .mnu-co-input { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; padding: 0.8rem 0.875rem; font-family: var(--font-body); font-size: 0.875rem; color: var(--text-primary); outline: none; transition: border-color 0.2s; }
-        .mnu-co-input:focus, .mnu-co-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
-        .mnu-co-line { display: flex; justify-content: space-between; gap: 0.8rem; font-family: var(--font-body); font-size: 0.8rem; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
-
-        .btn-primary { background: var(--primary); color: var(--primary-text); border: none; padding: 0.9rem 1.5rem; font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer; border-radius: var(--r-full); transition: background 0.25s, transform 0.2s, box-shadow 0.2s; text-decoration: none; display: inline-block; text-align: center; }
-        .btn-primary:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: var(--shadow-green); }
         .btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--border-accent); padding: 0.9rem 1.5rem; font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; cursor: pointer; border-radius: var(--r-full); transition: background 0.25s, border-color 0.25s, transform 0.2s; text-decoration: none; display: inline-block; text-align: center; }
         .btn-outline:hover { background: var(--primary-muted); border-color: var(--primary); transform: translateY(-2px); }
 
@@ -631,7 +599,7 @@ export function MenuPage() {
             />
           </div>
 
-          <Navbar activePage="menus" placement="sticky" cartCount={cartCount} onCartClick={() => { setCheckoutError(''); setCheckoutOpen(true); }} />
+          <Navbar activePage="menus" placement="sticky" />
           <div className="fade-up" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
             <p className="ui-kicker">Full menu</p>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.375rem, 5vw, 3.875rem)', fontWeight: 600, lineHeight: 0.98, letterSpacing: '-0.04em', color: 'var(--text-primary)', textWrap: 'balance', margin: '0 0 1rem' }}>
@@ -983,7 +951,7 @@ export function MenuPage() {
       )}
 
       {/* ═══════════════════════ FLOATING CART BAR ═══════════════════════ */}
-      {cartCount > 0 && !checkoutOpen && (
+      {cartCount > 0 && (
         <div className="mnu-plan" role="status" aria-label="Delivery cart summary">
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
             <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{cartCount}</strong>
@@ -993,52 +961,8 @@ export function MenuPage() {
                 on each tap, so the digits shifted width as it counted. */}
             <span style={{ fontFamily: 'var(--font-numeric)', fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: 'var(--text-primary)', fontSize: '0.8125rem' }}>{fmtPHP(cartTotal)}</span>
           </p>
-          <button type="button" className="mnu-plan-clear" onClick={() => setCart({})}>Clear</button>
-          <button type="button" className="mnu-plan-cta" onClick={() => { setCheckoutError(''); setCheckoutOpen(true); }}>Checkout →</button>
-        </div>
-      )}
-
-      {/* ═══════════════════════ CHECKOUT MODAL ═══════════════════════ */}
-      {checkoutOpen && (
-        <div className="mnu-co-overlay" onClick={() => !placing && setCheckoutOpen(false)}>
-          <div className="mnu-co-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Delivery checkout">
-            <div>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>Delivery Details</h2>
-              <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.25rem' }}>
-                {cartCount} item{cartCount === 1 ? '' : 's'} · estimated {fmtPHP(cartTotal)} (final total confirmed on booking)
-              </p>
-            </div>
-
-            <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-              {cartLines.map((l) => (
-                <div key={`${l.type}:${l.id}`} className="mnu-co-line">
-                  <span style={{ color: 'var(--text-muted)' }}>{l.name} × {l.qty}</span>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtPHP(l.price * l.qty)}</span>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.9rem' }}>
-              <label><span className="mnu-co-label">Delivery date</span><input className="mnu-co-input" type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} required /></label>
-              <label><span className="mnu-co-label">Delivery time</span><input className="mnu-co-input" type="time" value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} required /></label>
-            </div>
-            <label><span className="mnu-co-label">Delivery address</span><input className="mnu-co-input" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, Barangay, City" required /></label>
-            <label><span className="mnu-co-label">Contact number (optional)</span><input className="mnu-co-input" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="09xx xxx xxxx" /></label>
-
-            {!user && (
-              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                You'll be asked to sign in to place your order — your cart stays put.
-              </div>
-            )}
-            {checkoutError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem' }}>{checkoutError}</div>}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.2rem' }}>
-              <button type="button" className="btn-outline" style={{ padding: '0.7rem 1.2rem' }} onClick={() => setCheckoutOpen(false)} disabled={placing}>Cancel</button>
-              <button type="button" className="btn-primary" style={{ padding: '0.7rem 1.4rem' }} onClick={() => void placeOrder()} disabled={placing}>
-                {placing ? 'Placing…' : user ? 'Place Order' : 'Sign in to Order'}
-              </button>
-            </div>
-          </div>
+          <button type="button" className="mnu-plan-clear" onClick={() => clearTypes(['MenuItem', 'MenuTray'])}>Clear</button>
+          <button type="button" className="mnu-plan-cta" onClick={() => navigate('/cart')}>Checkout →</button>
         </div>
       )}
 

@@ -83,7 +83,11 @@ export function CollidingBlobsCanvas() {
       const tx = w * 0.3 + Math.random() * w * 0.4;
       const ty = h * 0.3 + Math.random() * h * 0.4;
  
-      let x = 0, y = 0;
+      /* Declared without a placeholder: the chain below is exhaustive (the final
+         branch is a bare `else`), so a dummy 0,0 only hid the fact from the
+         compiler — and would have silently shipped a blob at the origin if a
+         branch were ever added without assigning both. */
+      let x: number, y: number;
       if (side === 0) { x = Math.random() * w; y = -r; }
       else if (side === 1) { x = Math.random() * w; y = h + r; }
       else if (side === 2) { x = -r; y = Math.random() * h; }

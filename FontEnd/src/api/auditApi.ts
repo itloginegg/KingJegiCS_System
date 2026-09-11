@@ -5,6 +5,8 @@
  *   GET /api/Auditlogs?table=&page=&pageSize=  → newest-first audit entries, paged
  */
 
+import { notifyUnauthorized } from '../lib/authEvents';
+
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
 ).replace(/\/+$/, '');
@@ -57,6 +59,9 @@ export async function fetchAuditLogs(
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new AuditApiError(
       'Only the Owner account may view the audit trail. Sign in as the Owner to continue.',
       res.status,

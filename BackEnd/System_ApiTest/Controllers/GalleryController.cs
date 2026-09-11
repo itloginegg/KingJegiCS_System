@@ -29,8 +29,9 @@ namespace System_ApiTest.Controllers
     [Authorize]
     public class GalleryController : ControllerBase
     {
-        /// <summary>Upper bound on the gallery. Each file is separately capped at 5 MB by ImageUploadHelper.</summary>
-        private const int MaxGalleryImages = 60;
+        // The gallery is uncapped by count. Each file is still separately capped at
+        // 5 MB by ImageUploadHelper, which is the limit that actually protects the
+        // disk; a count ceiling only ever stopped the owner from posting more events.
 
         private readonly AppDbContext _db;
         private readonly Auditlogservice _audit;
@@ -86,9 +87,8 @@ namespace System_ApiTest.Controllers
             var (isValid, imageError) = ImageUploadHelper.ValidateImage(dto.ImageFile);
             if (!isValid) return BadRequest(new { message = imageError });
 
+            // Still needed as the DisplayOrder seed, so the new photo lands at the end.
             var count = await _db.GalleryImages.CountAsync(ct);
-            if (count >= MaxGalleryImages)
-                return BadRequest(new { message = $"The gallery is full at {MaxGalleryImages} images. Remove one first." });
 
             var url = await ImageUploadHelper.SaveImageAsync(dto.ImageFile, _env, "gallery");
 

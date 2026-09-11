@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, useCallback } from 'react';
+﻿import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertCircle, Check } from 'lucide-react';
 import { Navbar } from '../components/landing/Navbar';
@@ -9,6 +9,8 @@ import type {
   ServiceFlow as HeroServiceFlow,
 } from '../components/booking/heroTypes';
 import { useAuth } from '../hooks/useAuth';
+import { useCart } from '../hooks/useCart';
+import type { CartLine } from '../context/CartContext';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
@@ -89,6 +91,54 @@ const fmtLeadDate = (iso: string) => {
    share one definition. Same union, same name, same usages below. */
 type ServiceFlow = HeroServiceFlow;
 
+/* ── arriving from /cart ── */
+
+/** The cart, in the shape step 3 already keeps its à la carte quantities in. */
+type CartSeed = {
+  menuItemQty: Record<string, number>;
+  menuTrayQty: Record<string, number>;
+  rentalQty: Record<string, number>;
+  /** CartKeys that fed the seed, so submit clears exactly these and nothing added since. */
+  keys: string[];
+};
+
+/** Lines a booking can carry. 'unavailable' means delisted — /cart already blocks on those. */
+function bookableLines(lines: CartLine[]): CartLine[] {
+  return lines.filter((l) => l.status !== 'unavailable' && l.qty > 0);
+}
+
+function seedFromCart(lines: CartLine[]): CartSeed {
+  const seed: CartSeed = { menuItemQty: {}, menuTrayQty: {}, rentalQty: {}, keys: [] };
+  for (const l of bookableLines(lines)) {
+    if (l.type === 'MenuItem') seed.menuItemQty[l.id] = l.qty;
+    else if (l.type === 'MenuTray') seed.menuTrayQty[l.id] = l.qty;
+    else seed.rentalQty[l.id] = l.qty;
+    seed.keys.push(l.key);
+  }
+  return seed;
+}
+
+/**
+ * Which flow a cart opens in — and so which BookingType it is created as.
+ *
+ * This is a pricing decision, not a cosmetic one. BookingMath.ReservationFeeFor
+ * charges RentalService 5% of the grand total where FullService takes the flat
+ * SystemSettings fee, and ConfirmCoreAsync deliberately does NOT consume a
+ * calendar event slot for RentalService — lending out chairs doesn't occupy the
+ * venue. So any cart holding food has to open as an event: booking catering as
+ * RentalService would take a 5% deposit on it and reserve no slot for the event
+ * it is being cooked for.
+ *
+ * The backend does not object to either mix on its own — AddMenuItemAsync,
+ * AddMenuTrayAsync and AddRentalAsync gate on EnsureEditableAsync only, never on
+ * BookingType — which is exactly why the choice has to be made deliberately
+ * here, rather than left to whichever endpoint happens to reject first.
+ */
+function flowForCart(lines: CartLine[]): ServiceFlow {
+  const hasFood = bookableLines(lines).some((l) => l.type === 'MenuItem' || l.type === 'MenuTray');
+  return hasFood ? 'event' : 'rentals';
+}
+
 /* ── component ────────────────────────────────────────────────────────── */
 
 export function BookingPage() {
@@ -109,11 +159,35 @@ export function BookingPage() {
     presetFlow?: ServiceFlow | 'plan';
     /** Preselects a package, so /packages' "Book this package" lands on step 3 with it chosen. */
     presetPackageId?: string;
+    /** Set by /cart's "Proceed to Checkout": seed step 3 from the cart, skip the service picker. */
+    fromCart?: boolean;
   };
   const presetService = preset.presetFlow === 'plan' ? null : preset.presetFlow ?? null;
 
-  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService);
-  const [step, setStep] = useState(presetService ? 1 : 0);
+  /* The shared cart. `restored` is load-bearing: a hard reload of /book keeps
+     location.state (history.state survives it) but remounts CartProvider, whose
+     localStorage read lands an effect later — so on that path the seed is not
+     available during the first render and has to be filled in afterwards. */
+  const { lines: cartLines, restored: cartRestored, removeItem: removeCartLine } = useCart();
+  const cameFromCart = Boolean(preset.fromCart);
+
+  /* Null unless the cart is both present and non-empty: an empty cart must not
+     pick a flow, or a stale `fromCart` would open a rentals booking for nothing. */
+  const initialCartFlow =
+    cameFromCart && cartRestored && bookableLines(cartLines).length > 0
+      ? flowForCart(cartLines)
+      : null;
+
+  /* Seeded once. The wizard owns these quantities from here on — a later cart
+     edit (another tab, via the storage listener) must not reach in and rewrite
+     step 3 underneath a customer who is part-way through filling it in. */
+  const [cartSeed, setCartSeed] = useState<CartSeed>(() =>
+    initialCartFlow ? seedFromCart(cartLines) : seedFromCart([]),
+  );
+  const [cartSeeded, setCartSeeded] = useState(() => Boolean(initialCartFlow));
+
+  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService ?? initialCartFlow);
+  const [step, setStep] = useState(presetService || initialCartFlow ? 1 : 0);
   // Step-0 "Plan by Budget" card. Opens straight away when the landing page's
   // reserve modal sent us here with that path chosen.
   const [planMode, setPlanMode] = useState(preset.presetFlow === 'plan');
@@ -192,16 +266,46 @@ export function BookingPage() {
   // Package slot selections: slotId → Set of chosen itemIds
   const [slotSelections, setSlotSelections] = useState<Record<string, string[]>>({});
 
-  // À la carte quantity maps
-  const [menuItemQty, setMenuItemQty] = useState<Record<string, number>>({});
-  const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>({});
-  const [rentalQty, setRentalQty] = useState<Record<string, number>>({});
+  // À la carte quantity maps — pre-filled when the customer arrived from /cart.
+  const [menuItemQty, setMenuItemQty] = useState<Record<string, number>>(cartSeed.menuItemQty);
+  const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>(cartSeed.menuTrayQty);
+  const [rentalQty, setRentalQty] = useState<Record<string, number>>(cartSeed.rentalQty);
   const [serviceQty, setServiceQty] = useState<Record<string, number>>({});
-  const [alacarteTab, setAlacarteTab] = useState<'dishes' | 'trays' | 'rentals' | 'services'>('dishes');
+  const [alacarteTab, setAlacarteTab] = useState<'dishes' | 'trays' | 'rentals' | 'services'>(
+    /* A rentals booking has no Dishes tab to click, and the tab CONTENT is not
+       gated on the flow — so defaulting to 'dishes' there rendered the whole dish
+       catalog under a bar whose only button was "Rentals". */
+    (presetService ?? initialCartFlow) === 'rentals' ? 'rentals' : 'dishes',
+  );
+
+  /* The reload path: CartProvider restored after this component mounted, so the
+     seed was empty at first render. Fill it in once. Guarded on `cartSeeded`
+     rather than on emptiness, so a customer who deliberately empties step 3 does
+     not get the cart pushed back at them. */
+  useEffect(() => {
+    if (!cameFromCart || cartSeeded || !cartRestored) return;
+    setCartSeeded(true);
+    const seed = seedFromCart(cartLines);
+    if (seed.keys.length === 0) return;
+    setCartSeed(seed);
+    setMenuItemQty(seed.menuItemQty);
+    setMenuTrayQty(seed.menuTrayQty);
+    setRentalQty(seed.rentalQty);
+    const flow = flowForCart(cartLines);
+    setServiceFlow((current) => current ?? flow);
+    if (flow === 'rentals') setAlacarteTab('rentals');
+    setStep((s) => (s === 0 ? 1 : s));
+  }, [cameFromCart, cartSeeded, cartRestored, cartLines]);
   const [dishFilter, setDishFilter] = useState('all');
 
   // Step 3 → 4 saving
   const [savingSelections, setSavingSelections] = useState(false);
+  /* Lines this draft has already been sent, so a second pass through step 3 does
+     not re-POST them. Keyed by booking so a fresh draft starts clean. */
+  const savedLinesRef = useRef<{ bookingId: string | null; keys: Set<string> }>({
+    bookingId: null,
+    keys: new Set(),
+  });
 
   // Step 4
   const [submitting, setSubmitting] = useState(false);
@@ -488,6 +592,24 @@ export function BookingPage() {
     return [];
   }, [serviceFlow]);
 
+  /* Dishes and trays are an event-flow surface, but a rentals booking can still
+     be carrying food: the customer may have used "← Change Service" after the
+     cart seeded them, and the backend accepts menu lines on any BookingType.
+     Hiding the tabs then would leave those lines on the draft with nothing in the
+     UI that shows or removes them — and there is no endpoint to remove a line
+     once saved. So the tabs follow the selections, not the flow. */
+  const hasFoodSelections =
+    Object.keys(menuItemQty).length > 0 || Object.keys(menuTrayQty).length > 0;
+  const showFoodTabs = serviceFlow === 'event' || hasFoodSelections;
+
+  /* Keep the open tab reachable. The tab CONTENT below is not gated on the flow,
+     so a tab that stops being rendered would otherwise keep showing its catalog
+     under a bar that no longer contains its button. */
+  useEffect(() => {
+    if (!showFoodTabs && (alacarteTab === 'dishes' || alacarteTab === 'trays')) setAlacarteTab('rentals');
+    else if (serviceFlow !== 'event' && alacarteTab === 'services') setAlacarteTab('rentals');
+  }, [showFoodTabs, serviceFlow, alacarteTab]);
+
   const dishCategories = useMemo(() =>
     [...new Set(menuItems.map(m => m.itemCategory))].filter(Boolean),
   [menuItems]);
@@ -719,18 +841,39 @@ export function BookingPage() {
         }
       }
       
-      // Save à la carte items one by one
+      /* Save à la carte items one by one, skipping any this draft already has.
+
+         The line endpoints are add-only — there is no PUT or DELETE for a booking
+         line — and AddMenuItemAsync/AddMenuTrayAsync throw "already on the
+         booking; update its quantity instead" on a second call. So without this
+         guard, stepping 3 → 4 → Back → Next fails outright, which a cart-seeded
+         step 3 makes an ordinary thing to do rather than a rare one.
+
+         The gap this leaves: a quantity edited AFTER its first save cannot be
+         pushed, because no endpoint accepts one. The booking keeps the quantity
+         it was given first. Closing that needs a backend line-update endpoint. */
+      if (savedLinesRef.current.bookingId !== bookingId) {
+        savedLinesRef.current = { bookingId, keys: new Set() };
+      }
+      const alreadySaved = savedLinesRef.current.keys;
+      const saveLine = async (kind: string, id: string, run: () => Promise<unknown>) => {
+        const key = `${kind}:${id}`;
+        if (alreadySaved.has(key)) return;
+        await run();
+        alreadySaved.add(key);
+      };
+
       for (const [id, qty] of Object.entries(menuItemQty)) {
-        await addMenuItem(session.token, bookingId, id, qty);
+        await saveLine('MenuItem', id, () => addMenuItem(session.token, bookingId, id, qty));
       }
       for (const [id, qty] of Object.entries(menuTrayQty)) {
-        await addMenuTray(session.token, bookingId, id, qty);
+        await saveLine('MenuTray', id, () => addMenuTray(session.token, bookingId, id, qty));
       }
       for (const [id, qty] of Object.entries(rentalQty)) {
-        await addRental(session.token, bookingId, id, qty);
+        await saveLine('Rental', id, () => addRental(session.token, bookingId, id, qty));
       }
       for (const [id, qty] of Object.entries(serviceQty)) {
-        await addService(session.token, bookingId, id, qty);
+        await saveLine('Service', id, () => addService(session.token, bookingId, id, qty));
       }
       setStep(4);
     } catch (err) {
@@ -751,6 +894,10 @@ export function BookingPage() {
     try {
       await submitBooking(session.token, bookingId);
       setSubmitted(true);
+      /* Empty only the lines that actually became this booking. Clearing the whole
+         cart would also discard anything added in another tab while the wizard was
+         open, which the customer never submitted. */
+      for (const key of cartSeed.keys) removeCartLine(key);
     } catch (err) {
       setApiError(err instanceof BookingApiError ? err.message : 'Failed to submit booking.');
     } finally {
@@ -856,6 +1003,8 @@ export function BookingPage() {
         .bk-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r-xl);padding:2rem 2.25rem;box-shadow:var(--shadow-md)}
         .bk-heading{font-family:var(--font-display);font-size:1.5rem;font-weight:600;letter-spacing:-.02em;color:var(--text-primary);margin:0 0 .35rem}
         .bk-sub{font-family:var(--font-body);font-size:.875rem;font-weight:400;line-height:1.5;color:var(--text-muted);margin:0 0 1.6rem}
+        .bk-cart-note{display:flex;align-items:flex-start;gap:.55rem;font-family:var(--font-body);font-size:.8125rem;line-height:1.5;color:var(--text-secondary);background:var(--bg-subtle);border:1px solid var(--border);border-radius:var(--r-lg);padding:.7rem .85rem;margin:0 0 1.6rem}
+        .bk-cart-note svg{flex:none;margin-top:.1rem;color:var(--accent)}
 
         /* ── form ── */
         .bk-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem}
@@ -1184,16 +1333,16 @@ export function BookingPage() {
 
               <div className="bk-grid">
                 <div className="bk-field">
-                  <label className="bk-label">Full Name</label>
-                  <input className="bk-input" placeholder="Juan Dela Cruz" value={fullName} onChange={e => setFullName(e.target.value)} />
+                  <label htmlFor="booking-full-name" className="bk-label">Full Name</label>
+                  <input className="bk-input" placeholder="Juan Dela Cruz" value={fullName} onChange={e => setFullName(e.target.value)} id="booking-full-name"/>
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">Email Address</label>
-                  <input className="bk-input" type="email" placeholder="juan@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+                  <label htmlFor="booking-email-address" className="bk-label">Email Address</label>
+                  <input className="bk-input" type="email" placeholder="juan@example.com" value={email} onChange={e => setEmail(e.target.value)} id="booking-email-address"/>
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">Phone Number</label>
-                  <PhoneNumberInput className="bk-input" value={phone} onChange={setPhone} />
+                  <label htmlFor="booking-phone-number" className="bk-label">Phone Number</label>
+                  <PhoneNumberInput className="bk-input" value={phone} onChange={setPhone}  id="booking-phone-number"/>
                 </div>
               </div>
 
@@ -1249,12 +1398,12 @@ export function BookingPage() {
               {detailGroup === 'couple' && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
-                    <label className="bk-label">Groom's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
-                    <input className="bk-input" value={groomName} onChange={e => setGroomName(e.target.value)} placeholder="Full name" />
+                    <label htmlFor="booking-grooms-name" className="bk-label">Groom's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                    <input className="bk-input" value={groomName} onChange={e => setGroomName(e.target.value)} placeholder="Full name" id="booking-grooms-name"/>
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Bride's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
-                    <input className="bk-input" value={brideName} onChange={e => setBrideName(e.target.value)} placeholder="Full name" />
+                    <label htmlFor="booking-brides-name" className="bk-label">Bride's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                    <input className="bk-input" value={brideName} onChange={e => setBrideName(e.target.value)} placeholder="Full name" id="booking-brides-name"/>
                   </div>
                 </div>
               )}
@@ -1264,8 +1413,8 @@ export function BookingPage() {
               {detailGroup === 'celebrant' && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
-                    <label className="bk-label">Celebrant's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
-                    <input className="bk-input" value={celebrantName} onChange={e => setCelebrantName(e.target.value)} placeholder="Full name" />
+                    <label htmlFor="booking-celebrants-name" className="bk-label">Celebrant's Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                    <input className="bk-input" value={celebrantName} onChange={e => setCelebrantName(e.target.value)} placeholder="Full name" id="booking-celebrants-name"/>
                   </div>
                   <div className="bk-field">
                     <label className="bk-label">Celebrant's Sex{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
@@ -1277,7 +1426,7 @@ export function BookingPage() {
                     </select>
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Celebrant's Age{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                    <label htmlFor="booking-celebrants-age" className="bk-label">Celebrant's Age{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
                     <input
                       className="bk-input"
                       type="number"
@@ -1286,15 +1435,15 @@ export function BookingPage() {
                       value={celebrantAge}
                       onChange={e => setCelebrantAge(e.target.value)}
                       placeholder="e.g. 18"
-                    />
+                    id="booking-celebrants-age"/>
                   </div>
                 </div>
               )}
 
               {detailGroup === 'named' && (
                 <div className="bk-field full" style={{ marginBottom: '1.2rem' }}>
-                  <label className="bk-label">Event Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
-                  <input className="bk-input" value={eventName} onChange={e => setEventName(e.target.value)} placeholder="e.g. Annual Awards Night" />
+                  <label htmlFor="booking-event-name" className="bk-label">Event Name{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                  <input className="bk-input" value={eventName} onChange={e => setEventName(e.target.value)} placeholder="e.g. Annual Awards Night" id="booking-event-name"/>
                 </div>
               )}
 
@@ -1303,8 +1452,8 @@ export function BookingPage() {
               {detailGroup !== 'none' && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
-                    <label className="bk-label">Motif (optional)</label>
-                    <input className="bk-input" value={motif} onChange={e => setMotif(e.target.value)} placeholder="e.g. Sage green and blush" />
+                    <label htmlFor="booking-motif-optional" className="bk-label">Motif (optional)</label>
+                    <input className="bk-input" value={motif} onChange={e => setMotif(e.target.value)} placeholder="e.g. Sage green and blush" id="booking-motif-optional"/>
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
@@ -1321,8 +1470,8 @@ export function BookingPage() {
                     )}
                   </div>
                   <div className="bk-field">
-                    <label className="bk-label">Theme (optional)</label>
-                    <input className="bk-input" value={theme} onChange={e => setTheme(e.target.value)} placeholder="e.g. Rustic garden" />
+                    <label htmlFor="booking-theme-optional" className="bk-label">Theme (optional)</label>
+                    <input className="bk-input" value={theme} onChange={e => setTheme(e.target.value)} placeholder="e.g. Rustic garden" id="booking-theme-optional"/>
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
@@ -1349,12 +1498,12 @@ export function BookingPage() {
 
               <div className="bk-grid">
                 <div className="bk-field">
-                  <label className="bk-label">Expected Guests{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
-                  <input className="bk-input" type="number" min={1} value={guests} onChange={e => setGuests(Number(e.target.value) || 1)} />
+                  <label htmlFor="booking-expected-guests" className="bk-label">Expected Guests{serviceFlow === 'rentals' ? ' (optional)' : ''}</label>
+                  <input className="bk-input" type="number" min={1} value={guests} onChange={e => setGuests(Number(e.target.value) || 1)} id="booking-expected-guests"/>
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">Event Date</label>
-                  <input className="bk-input" type="date" min={earliestBookingDate} value={eventDate} onChange={e => setEventDate(e.target.value)} />
+                  <label htmlFor="booking-event-date" className="bk-label">Event Date</label>
+                  <input className="bk-input" type="date" min={earliestBookingDate} value={eventDate} onChange={e => setEventDate(e.target.value)} id="booking-event-date"/>
                   {/* The lead-time message wins over availability: a too-soon date will
                       be rejected regardless of how many slots that day has open. */}
                   {dateTooSoon ? (
@@ -1385,16 +1534,16 @@ export function BookingPage() {
                   )}
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">Start Time</label>
-                  <input className="bk-input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+                  <label htmlFor="booking-start-time" className="bk-label">Start Time</label>
+                  <input className="bk-input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} id="booking-start-time"/>
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">End Date</label>
-                  <input className="bk-input" type="date" min={eventDate || today} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                  <label htmlFor="booking-end-date" className="bk-label">End Date</label>
+                  <input className="bk-input" type="date" min={eventDate || today} value={endDate} onChange={e => setEndDate(e.target.value)} id="booking-end-date"/>
                 </div>
                 <div className="bk-field">
-                  <label className="bk-label">End Time</label>
-                  <input className="bk-input" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+                  <label htmlFor="booking-end-time" className="bk-label">End Time</label>
+                  <input className="bk-input" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} id="booking-end-time"/>
                 </div>
               </div>
 
@@ -1424,6 +1573,17 @@ export function BookingPage() {
                   ? 'Select the items you need for your event.'
                   : 'Pick dishes and trays for your delivery.'}
               </p>
+
+              {cartSeed.keys.length > 0 && (
+                <p className="bk-cart-note">
+                  <Check size={15} strokeWidth={2} aria-hidden="true" />
+                  <span>
+                    Your cart is already filled in below — {cartSeed.keys.length}{' '}
+                    {cartSeed.keys.length === 1 ? 'item' : 'items'}. Adjust anything you need to
+                    before continuing.
+                  </span>
+                </p>
+              )}
 
               {catalogLoading ? (
                 <div aria-live="polite" aria-busy="true">
@@ -1543,7 +1703,7 @@ export function BookingPage() {
 
                       {/* Tabs */}
                       <div className="bk-tabs">
-                        {serviceFlow === 'event' && (
+                        {showFoodTabs && (
                           <>
                             <button className={`bk-tab${alacarteTab === 'dishes' ? ' active' : ''}`} onClick={() => setAlacarteTab('dishes')}>Dishes</button>
                             <button className={`bk-tab${alacarteTab === 'trays' ? ' active' : ''}`} onClick={() => setAlacarteTab('trays')}>Trays</button>

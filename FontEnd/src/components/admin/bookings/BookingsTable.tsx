@@ -5,10 +5,9 @@ import {
   DEPOSIT_STATUS_ORDER,
   RES_STATUS,
   depositStatusMeta,
-  fmtDate,
-  fmtTime,
   type ResStatus,
-} from '../../../pages/AdminDashboardPage';
+} from '../shared/statusMeta';
+import { fmtDate, fmtTime } from '../../../lib/format';
 import { RowActionMenu } from '../shared/RowActionMenu';
 import {
   BOOKING_GROUPS,

@@ -12,7 +12,7 @@ export interface CartLine {
  * Bookingservice.ComputeTotal, which sums `Rental.Subtotal`
  * (`RentalItem.UnitPrice * Quantity`) and never consults the booking's
  * delivery/pickup window. Multiplying by the rental length here would show a
- * figure the backend will not bill; see the note in CheckoutModal.
+ * figure the backend will not bill.
  */
 export function cartSubtotal(lines: CartLine[]): number {
   return lines.reduce((sum, l) => sum + l.item.pricePerDay * l.quantity, 0);
@@ -76,7 +76,9 @@ export function CartBar({
             className="cursor-pointer rounded-full bg-accent px-5 py-2 text-[0.75rem] font-semibold text-accent-fg transition-colors hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-card focus-visible:outline-none"
             style={{ fontFamily: 'var(--font-body)' }}
           >
-            Book Rentals
+            {/* Not "Book Rentals" any more: this hands off to /cart, which reviews
+                the whole cart — food included — before the booking wizard. */}
+            View Cart
           </button>
         </div>
       </div>

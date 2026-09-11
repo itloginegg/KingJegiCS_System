@@ -12,6 +12,8 @@
  *   DELETE /api/Gallery/{id}   → remove one photo (Owner/Assistant)
  */
 
+import { notifyUnauthorized } from '../lib/authEvents';
+
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
 ).replace(/\/+$/, '');
@@ -31,8 +33,11 @@ export function getFullImageUrl(urlPath?: string | null): string | null {
   return `${API_BASE_URL}${relative}`;
 }
 
-/** Server-side limits, mirrored so the UI can reject before uploading. */
-export const GALLERY_MAX_IMAGES = 60;
+/** Server-side limits, mirrored so the UI can reject before uploading.
+
+    There is deliberately no image-count limit: the gallery is uncapped, and
+    GalleryController enforces no ceiling either. Per-file size is the only
+    bound, and it is the one that actually protects the disk. */
 export const GALLERY_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const GALLERY_ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -82,6 +87,9 @@ async function readErrorMessage(res: Response): Promise<string | null> {
 
 async function handle<T>(res: Response): Promise<T> {
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new GalleryApiError(
       'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
       res.status,

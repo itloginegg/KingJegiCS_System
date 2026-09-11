@@ -7,6 +7,8 @@
  * inactive rows; customers only see active ones.
  */
 
+import { notifyUnauthorized } from '../lib/authEvents';
+
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
 ).replace(/\/+$/, '');
@@ -87,6 +89,9 @@ async function getJson<T>(path: string, token: string): Promise<T> {
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new MenuApiError(
       'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
       res.status,
@@ -219,6 +224,9 @@ async function sendFormData<T>(path: string, method: string, token: string, form
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new MenuApiError(
       'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
       res.status,
@@ -254,6 +262,9 @@ async function sendJson<T>(path: string, method: string, token: string, body: un
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new MenuApiError(
       'Your session has expired or lacks admin access. Sign in with an Owner or Assistant account and try again.',
       res.status,

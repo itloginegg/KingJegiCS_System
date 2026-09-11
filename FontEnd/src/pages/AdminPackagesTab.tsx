@@ -21,7 +21,8 @@ import {
 } from '../api/packageAdminApi';
 import { fetchMenuItems, type AdminMenuItem } from '../api/menuAdminApi';
 import { readSession } from '../lib/tokenStorage';
-import { fmt, StatusBadge, FieldLabel } from './AdminDashboardPage';
+import { fmt } from '../lib/format';
+import { StatusBadge, FieldLabel } from '../components/admin/shared/StatusBadge';
 
 // -----------------------------------------------------------------------------
 // Component: AdminPackagesTab
@@ -102,7 +103,6 @@ export function AdminPackagesTab() {
 
   useEffect(() => {
     void loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedPackage = useMemo(() => {
@@ -746,12 +746,12 @@ export function AdminPackagesTab() {
 
             <div className="form-grid full" style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
               <div className="form-row">
-                <label>Package Name</label>
-                <input className="adm-input square" value={pkgFormItem.packageName} onChange={(e) => setPkgFormItem({ ...pkgFormItem, packageName: e.target.value })} />
+                <label htmlFor="admin-packages-package-name">Package Name</label>
+                <input className="adm-input square" value={pkgFormItem.packageName} onChange={(e) => setPkgFormItem({ ...pkgFormItem, packageName: e.target.value })} id="admin-packages-package-name"/>
               </div>
               <div className="form-row">
-                <label>Base Price (₱)</label>
-                <input className="adm-input square" type="number" min={0} value={pkgFormItem.basePrice} onChange={(e) => setPkgFormItem({ ...pkgFormItem, basePrice: Number(e.target.value) || 0 })} />
+                <label htmlFor="admin-packages-base-price">Base Price (₱)</label>
+                <input className="adm-input square" type="number" min={0} value={pkgFormItem.basePrice} onChange={(e) => setPkgFormItem({ ...pkgFormItem, basePrice: Number(e.target.value) || 0 })} id="admin-packages-base-price"/>
               </div>
               
               <div className="form-row full">
@@ -760,16 +760,16 @@ export function AdminPackagesTab() {
               </div>
 
               <div className="form-row">
-                <label>Min Pax</label>
-                <input className="adm-input square" type="number" min={1} value={pkgFormItem.minPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, minPax: Number(e.target.value) || 1 })} />
+                <label htmlFor="admin-packages-min-pax">Min Pax</label>
+                <input className="adm-input square" type="number" min={1} value={pkgFormItem.minPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, minPax: Number(e.target.value) || 1 })} id="admin-packages-min-pax"/>
               </div>
               <div className="form-row">
-                <label>Max Pax</label>
-                <input className="adm-input square" type="number" min={1} value={pkgFormItem.maxPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, maxPax: Number(e.target.value) || 1 })} />
+                <label htmlFor="admin-packages-max-pax">Max Pax</label>
+                <input className="adm-input square" type="number" min={1} value={pkgFormItem.maxPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, maxPax: Number(e.target.value) || 1 })} id="admin-packages-max-pax"/>
               </div>
               <div className="form-row">
-                <label>Price Per Extra Pax (₱)</label>
-                <input className="adm-input square" type="number" min={0} value={pkgFormItem.pricePerExtraPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, pricePerExtraPax: Number(e.target.value) || 0 })} />
+                <label htmlFor="admin-packages-price-per-extra-pax">Price Per Extra Pax (₱)</label>
+                <input className="adm-input square" type="number" min={0} value={pkgFormItem.pricePerExtraPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, pricePerExtraPax: Number(e.target.value) || 0 })} id="admin-packages-price-per-extra-pax"/>
               </div>
               <div className="form-row"></div>
 
@@ -777,7 +777,7 @@ export function AdminPackagesTab() {
               <div className="form-row full">
                 <label>Inclusions (Text items)</label>
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <input className="adm-input square" style={{ flex: 1 }} placeholder="e.g. 2 Waiters, Sound System" value={pkgInclusionInput} onChange={(e) => setPkgInclusionInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addInclusion()} />
+                  <input className="adm-input square" aria-label="Add an inclusion to this package" style={{ flex: 1 }} placeholder="e.g. 2 Waiters, Sound System" value={pkgInclusionInput} onChange={(e) => setPkgInclusionInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addInclusion()} />
                   <button type="button" className="adm-btn outline" onClick={addInclusion}>Add</button>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
@@ -827,16 +827,16 @@ export function AdminPackagesTab() {
 
             <div className="form-grid full">
               <div className="form-row">
-                <label>Label</label>
-                <input className="adm-input square" placeholder="e.g. Main Course, Dessert" value={slotFormItem.label} onChange={(e) => setSlotFormItem({ ...slotFormItem, label: e.target.value })} />
+                <label htmlFor="admin-packages-label">Label</label>
+                <input className="adm-input square" placeholder="e.g. Main Course, Dessert" value={slotFormItem.label} onChange={(e) => setSlotFormItem({ ...slotFormItem, label: e.target.value })} id="admin-packages-label"/>
               </div>
               <div className="form-row">
-                <label>Choose Count (How many dishes?)</label>
-                <input className="adm-input square" type="number" min={1} value={slotFormItem.chooseCount} onChange={(e) => setSlotFormItem({ ...slotFormItem, chooseCount: Number(e.target.value) || 1 })} />
+                <label htmlFor="admin-packages-choose-count-how-many-dishes">Choose Count (How many dishes?)</label>
+                <input className="adm-input square" type="number" min={1} value={slotFormItem.chooseCount} onChange={(e) => setSlotFormItem({ ...slotFormItem, chooseCount: Number(e.target.value) || 1 })} id="admin-packages-choose-count-how-many-dishes"/>
               </div>
               <div className="form-row">
-                <label>Display Order</label>
-                <input className="adm-input square" type="number" min={1} value={slotFormItem.displayOrder} onChange={(e) => setSlotFormItem({ ...slotFormItem, displayOrder: Number(e.target.value) || 1 })} />
+                <label htmlFor="admin-packages-display-order">Display Order</label>
+                <input className="adm-input square" type="number" min={1} value={slotFormItem.displayOrder} onChange={(e) => setSlotFormItem({ ...slotFormItem, displayOrder: Number(e.target.value) || 1 })} id="admin-packages-display-order"/>
               </div>
               <div className="form-row"></div>
 

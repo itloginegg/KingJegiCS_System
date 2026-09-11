@@ -9,6 +9,24 @@ import { LoginForm } from '../components/auth/LoginForm';
 import { OtpCodeInput } from '../components/auth/OtpCodeInput';
 import { dashboardPathFor } from '../routes/paths';
 
+/**
+ * Where to land after signing in, in priority order.
+ *
+ * 1. `?redirect=` — set by a page that sent the user here itself, e.g. the cart's
+ *    auth gate. Only same-origin PATHS are honoured: an absolute URL or a
+ *    protocol-relative `//evil.example` in a query param is an open-redirect, and
+ *    this one is reachable by anybody who can get a link clicked.
+ * 2. `state.from` — set by ProtectedRoute when it intercepted a guarded route.
+ * 3. The role's default dashboard.
+ */
+function safeRedirect(search: string): string | null {
+  const raw = new URLSearchParams(search).get('redirect');
+  if (!raw) return null;
+  // Must be a rooted path, and must not begin a scheme-relative URL.
+  if (!raw.startsWith('/') || raw.startsWith('//')) return null;
+  return raw;
+}
+
 interface RedirectState {
   /** ProtectedRoute stores the whole location, so this can carry a query string too. */
   from?: { pathname: string; search?: string };
@@ -34,7 +52,9 @@ export function LoginPage() {
 
   // Already signed in? Skip the form entirely.
   if (isAuthenticated && user) {
-    return <Navigate to={dashboardPathFor(user.role)} replace />;
+    // Honour ?redirect= here too: arriving already-signed-in from the cart gate
+    // should land on the cart, not bounce to the dashboard.
+    return <Navigate to={safeRedirect(location.search) ?? dashboardPathFor(user.role)} replace />;
   }
 
   const handleSubmit = async (credentials: AuthCredentials) => {
@@ -53,9 +73,11 @@ export function LoginPage() {
       const state = location.state as RedirectState | null;
       // Keep the query string as well — dropping it lost things like ?tab=payments,
       // landing the user on the right page but the wrong view.
-      const target = state?.from
-        ? `${state.from.pathname}${state.from.search ?? ''}`
-        : dashboardPathFor(signedInUser.user.role);
+      const target =
+        safeRedirect(location.search) ??
+        (state?.from
+          ? `${state.from.pathname}${state.from.search ?? ''}`
+          : dashboardPathFor(signedInUser.user.role));
       navigate(target, { replace: true });
     } catch {
       setOtpStep(false);
@@ -87,7 +109,10 @@ export function LoginPage() {
       });
 
       const state = location.state as RedirectState | null;
-      const target = state?.from?.pathname ?? dashboardPathFor(verifiedUser.role);
+      const target =
+        safeRedirect(location.search) ??
+        state?.from?.pathname ??
+        dashboardPathFor(verifiedUser.role);
       navigate(target, { replace: true });
     } catch {
       setOtpError('We could not verify the code. Please try again.');

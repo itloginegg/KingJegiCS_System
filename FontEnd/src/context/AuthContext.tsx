@@ -1,6 +1,7 @@
 import {
   createContext,
   useCallback,
+  useEffect,
   useMemo,
   useReducer,
   type ReactNode,
@@ -20,9 +21,11 @@ import {
 } from '../api/authApi';
 import {
   clearSession,
+  msUntilExpiry,
   persistSession,
   readSession,
 } from '../lib/tokenStorage';
+import { onUnauthorized } from '../lib/authEvents';
 
 interface AuthContextValue extends AuthState {
   login: (credentials: AuthCredentials) => Promise<LoginResult>;
@@ -110,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           token: res.token,
           user: res.user,
           rememberMe: credentials.rememberMe,
+          expiresIn: res.expiresIn,
         });
         dispatch({ type: 'AUTH_SUCCESS', user: res.user, token: res.token });
         return res;
@@ -130,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'AUTH_START' });
       try {
         const res = await apiVerifyLoginOtp(role, email, code);
-        persistSession({ token: res.token, user: res.user, rememberMe });
+        persistSession({ token: res.token, user: res.user, rememberMe, expiresIn: res.expiresIn });
         dispatch({ type: 'AUTH_SUCCESS', user: res.user, token: res.token });
         return res.user;
       } catch (err) {
@@ -152,6 +156,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearSession();
     dispatch({ type: 'LOGOUT' });
   }, [state.token, state.user]);
+
+  /**
+   * End the session without telling the server.
+   *
+   * Used for the two cases where the token is already worthless: it reached its
+   * own expiry, or a request came back 401. Calling apiLogout with a dead token
+   * would just be a second rejected request, and awaiting it would delay clearing
+   * the UI for no gain.
+   *
+   * No navigation here — AuthProvider sits OUTSIDE BrowserRouter (see AppRoutes),
+   * so it has no router to navigate with, and it doesn't need one: dropping
+   * `isAuthenticated` is enough for ProtectedRoute to bounce a guarded page to
+   * /login with `state.from` set, which is also what gets the visitor back where
+   * they were once they sign in again. Someone reading a public page just carries
+   * on reading it.
+   */
+  const endStaleSession = useCallback(() => {
+    clearSession();
+    dispatch({ type: 'LOGOUT' });
+  }, []);
+
+  /* The server rejected our token mid-session. */
+  useEffect(() => onUnauthorized(endStaleSession), [endStaleSession]);
+
+  /**
+   * Sign out the moment the token lapses, rather than waiting for the next
+   * request to fail.
+   *
+   * Re-armed whenever the token changes, which covers signing in, signing out,
+   * and the OTP path swapping one session for another. A tab asleep past the
+   * deadline fires late, which is fine: readSession is the real gate and has
+   * already been refusing the token since the moment it lapsed.
+   */
+  useEffect(() => {
+    if (state.status !== 'authenticated') return;
+    const ms = msUntilExpiry();
+    if (ms === null) return; // legacy session with no recorded expiry
+    // setTimeout overflows past ~24.8 days and would fire immediately; token
+    // lifetimes are hours, but clamping costs nothing and fails safe.
+    const timer = setTimeout(endStaleSession, Math.min(ms, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [state.status, state.token, endStaleSession]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

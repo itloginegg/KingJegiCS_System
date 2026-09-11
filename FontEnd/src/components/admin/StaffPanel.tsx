@@ -12,7 +12,7 @@ import {
 import { isCompletePhPhone, toE164 } from '../../lib/phone';
 import { readSession } from '../../lib/tokenStorage';
 import { PhoneNumberInput } from '../forms/PhoneNumberInput';
-import { fmtDate } from '../../pages/AdminDashboardPage';
+import { fmtDate } from '../../lib/format';
 
 /**
  * Staff Management — the Owner's view of every admin account.

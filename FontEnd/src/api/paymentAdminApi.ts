@@ -11,6 +11,7 @@
  */
 
 import type { PaymentRecord } from './bookingApi';
+import { notifyUnauthorized } from '../lib/authEvents';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
@@ -95,6 +96,9 @@ async function request<T>(
   }
 
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new PaymentApiError(
       'Your session has expired or you lack permission. Please sign in again.',
       res.status,

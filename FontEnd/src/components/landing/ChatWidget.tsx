@@ -11,7 +11,15 @@ import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from 
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
 import { useVoiceSession, voiceInputSupported } from '../../hooks/useVoiceSession';
-import type { VisemeCue, VoiceState } from '../../hooks/useVoiceSession';
+import type { VoiceState } from '../../hooks/useVoiceSession';
+import {
+  ttsSupported,
+  setTtsSpeaking,
+  stopSpeaking,
+  useTtsSpeaking,
+  setVoicePresence,
+  useVoicePresence,
+} from '../../lib/assistantVoice';
 import { AvatarStage } from '../avatar/AvatarStage';
 
 /*
@@ -25,84 +33,10 @@ type ChatMsg = { id: string; role: 'me' | 'assistant'; text: string; proposals?:
 
 /* Read-aloud for TYPED replies. Separate from voice mode below, which is a full spoken
    conversation over /hubs/voice — this is just the browser reading a message you typed. */
-const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
-
-/* ── Is the browser reading a reply aloud right now? ────────────────────
- *
- * Module-level rather than React state because the two halves sit in different
- * subtrees: the utterance is created inside ChatPanel, and the standing avatar that
- * has to react to it is a sibling of the panel, not a descendant. Lifting the flag to
- * ChatWidget would mean threading a setter down through the panel purely so a sibling
- * could watch it.
- *
- * Event-driven off the utterance rather than polling `speechSynthesis.speaking`, so the
- * mouth starts and stops on the same tick the audio does.
- */
-const ttsListeners = new Set<(speaking: boolean) => void>();
-let ttsSpeaking = false;
-
-function setTtsSpeaking(next: boolean) {
-  if (next === ttsSpeaking) return;
-  ttsSpeaking = next;
-  for (const listener of ttsListeners) listener(next);
-}
-
-/** Cancels any in-progress speech AND clears the flag. */
-function stopSpeaking() {
-  if (!ttsSupported) return;
-  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-  // Set explicitly: cancel() firing `end` on the current utterance is inconsistent
-  // across browsers, and a stuck `true` would leave the avatar talking to itself.
-  setTtsSpeaking(false);
-}
-
-function useTtsSpeaking(): boolean {
-  const [speaking, setSpeaking] = useState(ttsSpeaking);
-  useEffect(() => {
-    ttsListeners.add(setSpeaking);
-    setSpeaking(ttsSpeaking);
-    return () => { ttsListeners.delete(setSpeaking); };
-  }, []);
-  return speaking;
-}
-
-/* ── Live voice session, shared with the standing avatar ────────────────
- *
- * Same bridge as the TTS flag above and for the same reason: useVoiceSession runs
- * inside ChatPanel, and the avatar that should lip-sync to it is a sibling of the
- * panel rather than a child.
- *
- * This carries the real thing, not a boolean — the viseme cue stream and the audio
- * clock — so during a voice call the mouth is driven by actual phoneme timings instead
- * of the generic open/closed oscillation used for browser read-aloud.
- *
- * `visemesRef` is a useRef and `getPlaybackMs` a useCallback, so publishing them costs
- * one notification; only `state` changes with any frequency.
- */
-interface VoicePresence {
-  state: VoiceState;
-  visemesRef: React.MutableRefObject<VisemeCue[]>;
-  getPlaybackMs: () => number | null;
-}
-
-const voiceListeners = new Set<(p: VoicePresence | null) => void>();
-let voicePresence: VoicePresence | null = null;
-
-function setVoicePresence(next: VoicePresence | null) {
-  voicePresence = next;
-  for (const listener of voiceListeners) listener(next);
-}
-
-/** Null whenever no voice call is live — the avatar then falls back to the TTS flag. */
-function useVoicePresence(): VoicePresence | null {
-  const [presence, setPresence] = useState(voicePresence);
-  useEffect(() => {
-    voiceListeners.add(setPresence);
-    setPresence(voicePresence);
-    return () => { voiceListeners.delete(setPresence); };
-  }, []);
-  return presence;
-}
+/* The TTS flag and the live-voice presence bridge both moved to lib/assistantVoice
+   so AmbientAudio can duck the background music while the assistant has the audio
+   channel, without importing this file (and with it SignalR and the VRM avatar).
+   ChatWidget is still the only publisher; see that module for the reasoning. */
 
 /**
  * Fired to open the widget straight onto the support conversation — used when a

@@ -53,7 +53,6 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   /* Focus follows activeIndex while the menu is open. */

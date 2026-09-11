@@ -17,6 +17,7 @@
  */
 
 import type { AdminRole } from '../types/auth';
+import { notifyUnauthorized } from '../lib/authEvents';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
@@ -82,6 +83,9 @@ async function readErrorMessage(res: Response): Promise<string | null> {
 
 async function handle<T>(res: Response): Promise<T> {
   if (res.status === 401 || res.status === 403) {
+    /* 401 only: the token is dead, so AuthProvider ends the session. A 403 is a
+       live token without the rights for this call and must not sign anyone out. */
+    if (res.status === 401) notifyUnauthorized();
     throw new AdminsApiError(
       'Your session has expired or lacks Owner access. Staff management is restricted to the Owner account.',
       res.status,

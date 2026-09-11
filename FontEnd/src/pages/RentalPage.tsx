@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Navbar } from '../components/landing/Navbar';
+import { useCart } from '../hooks/useCart';
 import { readSession } from '../lib/tokenStorage';
 import { fetchRentalItems } from '../api/rentalAdminApi';
 import { RentalHero } from '../components/rentals/RentalHero';
@@ -20,8 +22,7 @@ import {
   RentalListRowSkeleton,
 } from '../components/rentals/RentalListRow';
 import { CatalogError, EmptyState } from '../components/rentals/EmptyState';
-import { CartBar, cartPieces, type CartLine } from '../components/rentals/CartBar';
-import { CheckoutModal } from '../components/rentals/CheckoutModal';
+import { CartBar, type CartLine } from '../components/rentals/CartBar';
 import {
   RENTAL_CATEGORIES,
   toRentalItem,
@@ -119,8 +120,20 @@ export function RentalPage() {
      and back, does not silently reset what the customer picked. */
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   /** itemId → quantity queued for booking. */
-  const [cart, setCart] = useState<Record<string, number>>({});
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const navigate = useNavigate();
+  /* The cart now lives in CartProvider, so a rental added here is still in the
+     list after the user walks to /menus and back — and after a refresh. This
+     page keeps its own `cart` shape (id → qty) so CartBar, which speaks
+     RentalItem, needs no changes. */
+  const { addItem, clearTypes, lines: sharedLines } = useCart();
+
+  const cart = useMemo<Record<string, number>>(
+    () =>
+      Object.fromEntries(
+        sharedLines.filter((l) => l.type === 'Rental').map((l) => [l.id, l.qty]),
+      ),
+    [sharedLines],
+  );
 
   /* Debounced, not throttled: filtering should settle on what was typed, and a
      250ms pause after the last keystroke is below the threshold where the list
@@ -199,16 +212,24 @@ export function RentalPage() {
   /* Capped at stock: the catalog says how many exist, and queueing more than
      that only defers the rejection to confirm time, where the backend
      re-validates availability anyway. */
+  /* The stock ceiling is enforced by the cart itself now (see the ADD case in
+     CartContext), so passing `stock` is what caps this rather than a Math.min
+     here that only this call site would honour. */
   const addToCart = (item: RentalItem) =>
-    setCart((prev) => ({
-      ...prev,
-      [item.id]: Math.min((prev[item.id] ?? 0) + quantityFor(item), item.stock),
-    }));
+    addItem({
+      type: 'Rental',
+      id: item.id,
+      qty: quantityFor(item),
+      name: item.name,
+      price: item.pricePerDay,
+      image: item.image,
+      meta: item.category,
+      stock: item.stock,
+    });
 
   /* Resolved against the live catalog rather than stored as a snapshot, so a
      price or stock change on refetch flows into the cart instead of booking at
-     a number the customer saw ten minutes ago. Lines whose item has since left
-     the catalog drop out here. */
+     a number the customer saw ten minutes ago. */
   const cartLines = useMemo<CartLine[]>(
     () =>
       Object.entries(cart)
@@ -217,7 +238,26 @@ export function RentalPage() {
     [cart, items],
   );
 
-  const cartCount = cartPieces(cartLines);
+  /**
+   * Rentals in the cart that this catalog no longer lists — delisted or
+   * deactivated since they were added.
+   *
+   * They fall out of `cartLines` above, and for a while that was the end of it:
+   * the bar simply showed a shorter list. But they are still in the shared cart
+   * and /cart blocks checkout on them, so the customer got a dead Checkout button
+   * one page later with the explanation sitting on a page they had left. Counted
+   * here so the bar can say so.
+   *
+   * Only once the catalog has actually loaded — before then every line is
+   * "missing" and the notice would be pure noise on every cold load.
+   */
+  const droppedCount = useMemo(
+    () =>
+      items.length === 0
+        ? 0
+        : Object.keys(cart).filter((id) => !items.some((i) => i.id === id)).length,
+    [cart, items],
+  );
 
   /* Two mounted instances, one per breakpoint, sharing this page's single filter
      object. They need distinct id namespaces because the desktop aside is hidden
@@ -238,12 +278,7 @@ export function RentalPage() {
   return (
     <main className="min-h-screen bg-bg">
       <RentalHero query={query} onQueryChange={setQuery}>
-        <Navbar
-          activePage="rentals"
-          placement="sticky"
-          cartCount={cartCount}
-          onCartClick={() => setCheckoutOpen(true)}
-        />
+        <Navbar activePage="rentals" placement="sticky" />
       </RentalHero>
 
       <div className="amb-host">
@@ -348,17 +383,33 @@ export function RentalPage() {
         {sidebarFor('rental-sheet')}
       </FilterSheet>
 
+      {/* Clear touches only the rental lines — a tray the user picked on /menus is
+          not this bar's to throw away. Checkout hands off to /cart, which is the
+          one place a mixed booking is reviewed and the only route into the booking
+          wizard; this bar used to open its own rentals-only modal, which silently
+          left any food behind. */}
+      {droppedCount > 0 && (
+        <p
+          role="status"
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-warning-muted px-4 py-2.5 text-center text-[0.76rem] text-warning-ink sm:inset-x-auto sm:right-6 sm:bottom-24 sm:rounded-full sm:border sm:px-5"
+          style={{ fontFamily: 'var(--font-body)' }}
+        >
+          {droppedCount} item{droppedCount === 1 ? '' : 's'} in your cart{' '}
+          {droppedCount === 1 ? 'is' : 'are'} no longer available.{' '}
+          <button
+            type="button"
+            onClick={() => navigate('/cart')}
+            className="cursor-pointer font-semibold underline underline-offset-2"
+          >
+            Review cart
+          </button>
+        </p>
+      )}
+
       <CartBar
         lines={cartLines}
-        onClear={() => setCart({})}
-        onCheckout={() => setCheckoutOpen(true)}
-      />
-
-      <CheckoutModal
-        open={checkoutOpen}
-        onClose={() => setCheckoutOpen(false)}
-        lines={cartLines}
-        onBooked={() => setCart({})}
+        onClear={() => clearTypes(['Rental'])}
+        onCheckout={() => navigate('/cart')}
       />
 
                     <SiteFooter />

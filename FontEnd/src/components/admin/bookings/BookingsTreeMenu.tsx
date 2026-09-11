@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, CalendarDays } from 'lucide-react';
-import type { ResStatus } from '../../../pages/AdminDashboardPage';
+import type { ResStatus } from '../shared/statusMeta';
 import { BOOKING_GROUPS, type BookingGroupKey } from './types';
 
 /** 'all' plus the five statuses — every value `resFilter` can hold. */
