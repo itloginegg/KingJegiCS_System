@@ -883,34 +883,6 @@
   display: block;
 }
 
-/* ══ Closing band ════════════════════════════════════════════════════
-   Uses the .dark-band tokens rather than --primary, so it stays a dark band
-   in dark mode instead of flipping to the light rose that --primary becomes.
-   ═════════════════════════════════════════════════════════════════════ */
-
-.lp-cta {
-  background: var(--band-bg);
-  padding: 88px 0;
-  text-align: center;
-}
-.lp-cta .ui-h2 { color: var(--band-text); max-width: 20ch; margin: 0 auto 16px; }
-.lp-cta-lead {
-  font-family: var(--font-body);
-  font-size: 1rem;
-  line-height: 1.6;
-  color: var(--band-muted);
-  max-width: 52ch;
-  margin: 0 auto 32px;
-}
-.lp-cta .ui-kicker { color: var(--band-accent); }
-.lp-cta-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-.lp-cta-fine {
-  font-family: var(--font-body);
-  font-size: 0.75rem;
-  color: var(--band-muted);
-  margin: 20px 0 0;
-}
-
 /* ══ Footer ══════════════════════════════════════════════════════════ */
 
 .lp-footer {
@@ -976,7 +948,6 @@
   .lp-gallery { grid-template-columns: 1fr; }
   .lp-gallery img { height: 200px; }
 
-  .lp-cta { padding: 64px 0; }
   .lp-footer-inner { flex-direction: column; align-items: flex-start; }
 }
 
