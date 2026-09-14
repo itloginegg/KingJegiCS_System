@@ -21,7 +21,6 @@ import {
   cancelBooking,
   submitBooking,
   generateInvoice,
-  setBookingAdminNote,
   getBookingDetail,
   getInvoiceByBooking,
   getOutstandingRentals,
@@ -72,8 +71,6 @@ import {
 } from '../api/notificationsApi';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { BookingsTreeMenu } from '../components/admin/bookings/BookingsTreeMenu';
-import { BookingsToolbar } from '../components/admin/bookings/BookingsToolbar';
-import { BookingsTable } from '../components/admin/bookings/BookingsTable';
 import type { BookingGroupKey, BookingRowActions } from '../components/admin/bookings/types';
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
 import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
@@ -163,15 +160,10 @@ const isResStatusParam = (v: string | null): v is ResStatus =>
    /api/Announcements. */
 const PLACEHOLDER_ITEMS = ['Chat Support'];
 
-/* ─────────────────────────────────────────────────────────────────────────
-   New Booking (item 4) — admin walk-in: find or create a customer, then create
-   a Draft booking for them via the existing createBooking (backend uses the
-   supplied CustomerId because the caller is an admin).
-───────────────────────────────────────────────────────────────────────── */
-import { NewBookingModal } from '../components/admin/bookings/NewBookingModal';
 import { PaymentsTab } from '../components/admin/payments/PaymentsTab';
 import { AnnouncementsTab } from '../components/admin/announcements/AnnouncementsTab';
 import { AuditLogTab } from '../components/admin/audit/AuditLogTab';
+import { BookingsTab } from '../components/admin/bookings/BookingsTab';
 import { MenusTab } from '../components/admin/menus/MenusTab';
 import { RentalsTab } from '../components/admin/rentals/RentalsTab';
 import { DELIVERY_ACTION_LABEL, DELIVERY_STATUS_STYLE } from '../components/admin/rentals/deliveryStatus';
@@ -198,7 +190,6 @@ export function AdminDashboardPage() {
   const lastBookingStatus = useRef<'all' | ResStatus>('all');
 
   const [reservations, setReservations] = useState<BookingResponse[]>([]);
-  const [newBookingOpen, setNewBookingOpen] = useState(false);
 
   const { toasts, notify, dismiss } = useToasts();
 
@@ -444,52 +435,15 @@ export function AdminDashboardPage() {
   /** Bumped after a rental line changes status, so RentalsTab reloads stock counts. */
   const [rentalCatalogRefresh, setRentalCatalogRefresh] = useState(0);
 
-  /* bookings tab state */
+  /* Which bookings rows show. Rendered by BookingsTab, owned here: the sidebar tree,
+     the URL, Overview and the notification feed all write these, and they outlive
+     a trip to another tab. */
   const [resFilter, setResFilter] = useState<'all' | ResStatus>('all');
   const [resTypeFilter, setResTypeFilter] = useState<'all' | BookingTypeName>('all');
-  /** Whether the toolbar's Filter panel (the booking-type axis) is expanded. */
-  const [resFilterOpen, setResFilterOpen] = useState(false);
   const [resSearch, setResSearch] = useState('');
-  const [cancelResId, setCancelResId] = useState<string | null>(null);
-  const [cancelReason, setCancelReason] = useState('');
 
-  /* internal staff notes — one open editor at a time, keyed by booking id */
-  const [noteResId, setNoteResId] = useState<string | null>(null);
-  /** Booking whose Event Resources modal is open, or null. Mirrors noteResId. */
+  /** Booking whose Event Resources modal is open, or null. */
   const [resourcesResId, setResourcesResId] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState('');
-  const [noteBusyId, setNoteBusyId] = useState<string | null>(null);
-
-  const openNoteEditor = (b: BookingResponse) => {
-    setNoteResId(b.id);
-    setNoteDraft(b.adminNote ?? '');
-  };
-
-  const saveAdminNote = async (bookingId: string) => {
-    const session = readSession();
-    if (!session?.token) {
-      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
-      return;
-    }
-    setNoteBusyId(bookingId);
-    try {
-      // Blank clears the note server-side, so "save an empty box" reads as "delete".
-      const updated = await setBookingAdminNote(session.token, bookingId, noteDraft.trim() || null);
-      setReservations((prev) => prev.map((r) => (r.id === bookingId ? updated : r)));
-      setNoteResId(null);
-      notify('success', updated.adminNote ? 'Note saved.' : 'Note cleared.');
-    } catch (err) {
-      notify('error', err instanceof BookingApiError ? err.message : 'Could not save the note.');
-    } finally {
-      setNoteBusyId(null);
-    }
-  };
-
-
-  /** Payment awaiting refund confirmation, or null. Nothing reaches the endpoint without it. */
-
-  /* packages tab state */
-
 
   /* The booking open in the Histories tab. Kept here, not in the tab, so it
      survives leaving the tab, and so the Bookings tab's "View history" row
@@ -580,30 +534,6 @@ export function AdminDashboardPage() {
     [calendarDays],
   );
 
-  const filteredRes = useMemo(() => {
-    const q = resSearch.trim().toLowerCase();
-    return reservations
-      .filter((r) => resFilter === 'all' || r.status === resFilter)
-      // Status and type are independent axes — both must match.
-      .filter((r) => resTypeFilter === 'all' || r.bookingType === resTypeFilter)
-      // Name / email / phone / event type. Email joined in from Customer on the list
-      // read — before that the placeholder claimed to search it and never could.
-      .filter(
-        (r) =>
-          q === '' ||
-          (r.bookingName && r.bookingName.toLowerCase().includes(q)) ||
-          (r.customerEmail && r.customerEmail.toLowerCase().includes(q)) ||
-          (r.contactNumber && r.contactNumber.toLowerCase().includes(q)) ||
-          (r.eventType && r.eventType.toLowerCase().includes(q)),
-      )
-      // Ordering belongs to BookingsTable now — it sorts per column, per group.
-  }, [reservations, resFilter, resTypeFilter, resSearch]);
-
-  /* Status / method / booking-type / free-text, over the day the server already
-     narrowed to. The date itself is NOT filtered here — doing that over a `take`-capped
-     page would report an empty day for any date older than the newest 50 payments. */
-
-
   /* ── local mutations ── */
   const setResStatus = async (id: string, st: 'Confirmed' | 'Completed' | 'Cancelled') => {
     const session = readSession();
@@ -636,20 +566,6 @@ export function AdminDashboardPage() {
       notify('error', err.message || 'Failed to submit this Draft.');
     } finally {
       setSubmitBusyId(null);
-    }
-  };
-
-  const cancelReservation = async (id: string) => {
-    const session = readSession();
-    if (!session?.token) return;
-    try {
-      const updated = await cancelBooking(session.token, id);
-      setReservations((prev) => prev.map((r) => (r.id === id ? updated : r)));
-      setCancelResId(null);
-      setCancelReason('');
-      notify('success', 'Booking cancelled.');
-    } catch (err: any) {
-      notify('error', err.message || 'Failed to cancel booking.');
     }
   };
 
@@ -1030,7 +946,8 @@ export function AdminDashboardPage() {
   };
 
   /* Row counts per status for the bookings tree-menu. Counted off `reservations`, not
-     `filteredRes`, so the numbers don't collapse to the group you already picked. */
+     BookingsTab's filtered rows, so the numbers don't collapse to the group you already
+     picked. */
   const resCounts = useMemo(() => {
     const out: Record<BookingGroupKey, number> = {
       Draft: 0, Pending: 0, Confirmed: 0, Completed: 0, Cancelled: 0,
@@ -1043,8 +960,9 @@ export function AdminDashboardPage() {
 
   /* The bookings table's action menu, wired to the handlers that already exist above.
      Every entry is a pass-through — the dropdown and the old button row drove the same
-     calls, so nothing here changes what a click does. */
-  const bookingActions: BookingRowActions = {
+     calls, so nothing here changes what a click does. Edit Note and Cancel are added by
+     BookingsTab, which owns the note editor and the reason prompt they open. */
+  const bookingActions: Omit<BookingRowActions, 'onEditNote' | 'onCancel'> = {
     onSubmitDraft: (b) => void submitDraftFor(b),
     onOpenDetail: (b) => void openBookingDetail(b),
     onLogCash: (b) => setCashTarget({ bookingId: b.id, bookingName: b.bookingName }),
@@ -1053,9 +971,7 @@ export function AdminDashboardPage() {
     onOpenInvoice: (b) => void openInvoiceFor(b),
     onGenerateContract: (b) => void openContract(b),
     onAllocateResources: (b) => setResourcesResId(b.id),
-    onEditNote: (b) => (noteResId === b.id ? setNoteResId(null) : openNoteEditor(b)),
     onViewHistory: (b) => { openTab('histories'); setHistoryBookingId(b.id); },
-    onCancel: (b) => { setCancelResId(b.id); setCancelReason(''); },
   };
 
   /* refetch every time the tab is opened so admin edits elsewhere show up */
@@ -3115,101 +3031,20 @@ export function AdminDashboardPage() {
 
             {/* ══════════ BOOKINGS ══════════ */}
             {tab === 'bookings' && (
-              <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                <h2 className="adm-title">Bookings</h2>
-
-                <BookingsToolbar
-                  search={resSearch}
-                  onSearchChange={setResSearch}
-                  typeFilter={resTypeFilter}
-                  onTypeFilterChange={setResTypeFilter}
-                  filterOpen={resFilterOpen}
-                  onToggleFilter={() => setResFilterOpen((o) => !o)}
-                  onAddBooking={() => setNewBookingOpen(true)}
-                />
-
-                {newBookingOpen && (
-                  <NewBookingModal
-                    onClose={() => setNewBookingOpen(false)}
-                    onCreated={() => { setNewBookingOpen(false); void loadBookings(); }}
-                    notify={notify}
-                  />
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', minWidth: 0 }}>
-                  {/* Cancellation requests are the one thing that has to be visible
-                      without opening a row — the customer is waiting on a decision. */}
-                  {filteredRes.some((r) => r.cancellationRequested) && (
-                    <div className="adm-card" style={{ padding: '0.9rem 1.1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                      <FieldLabel text="Cancellation requested" />
-                      {filteredRes.filter((r) => r.cancellationRequested).map((r) => (
-                        <p key={r.id} style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', margin: 0 }}>
-                          <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{r.bookingName}</strong>
-                          {' — '}{r.cancellationRequestReason || 'no reason given'}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Staff-note editor. Opened from the row menu; kept out of the table
-                      so a 2000-character textarea can't stretch a cell. */}
-                  {noteResId && (() => {
-                    const target = reservations.find((r) => r.id === noteResId);
-                    if (!target) return null;
-                    return (
-                      <div className="adm-card" style={{ padding: '1rem 1.15rem' }}>
-                        <FieldLabel text={`Internal staff note · ${target.bookingName} — not shown to the customer`} />
-                        <textarea
-                          className="adm-input"
-                          style={{ width: '100%', minHeight: 80, marginTop: '0.35rem', resize: 'vertical' }}
-                          value={noteDraft}
-                          onChange={(e) => setNoteDraft(e.target.value)}
-                          maxLength={2000}
-                          placeholder="Allergies, venue access, who to call on site…"
-                        />
-                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                          <button type="button" className="adm-btn primary" disabled={noteBusyId === noteResId} onClick={() => void saveAdminNote(noteResId)}>
-                            {noteBusyId === noteResId ? 'Saving…' : 'Save Note'}
-                          </button>
-                          <button type="button" className="adm-btn outline" onClick={() => setNoteResId(null)}>Cancel</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Cancel still routes through the existing reason prompt — the
-                      server requires one, so the menu item opens this rather than
-                      firing cancelReservation straight off a click. */}
-                  {cancelResId && (() => {
-                    const target = reservations.find((r) => r.id === cancelResId);
-                    if (!target) return null;
-                    return (
-                      <div className="adm-card" style={{ padding: '1rem 1.15rem', display: 'flex', gap: '0.7rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                        <div style={{ flex: 1, minWidth: 220 }}>
-                          <FieldLabel text={`Reason for cancelling ${target.bookingName}`} />
-                          {/* FieldLabel renders a <span>, not a <label>, so it cannot name this field
-                              for a screen reader however clearly it reads on screen. */}
-                          <input aria-label="Reason for cancelling" className="adm-input square" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Required" />
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
-                          <button type="button" className="adm-btn danger" disabled={!cancelReason.trim()} onClick={() => cancelReservation(cancelResId)}>
-                            Confirm Cancel
-                          </button>
-                          <button type="button" className="adm-btn outline" onClick={() => setCancelResId(null)}>Back</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  <BookingsTable
-                    rows={filteredRes}
-                    activeGroup={resFilter}
-                    actions={bookingActions}
-                    busy={{ submitBusyId, detailBusyId, invoiceBusyId, contractBusyId }}
-                    onViewAll={(g) => selectBookingStatus(g)}
-                  />
-                </div>
-              </div>
+              <BookingsTab
+                reservations={reservations}
+                statusFilter={resFilter}
+                typeFilter={resTypeFilter}
+                onTypeFilterChange={setResTypeFilter}
+                search={resSearch}
+                onSearchChange={setResSearch}
+                rowActions={bookingActions}
+                busy={{ submitBusyId, detailBusyId, invoiceBusyId, contractBusyId }}
+                onViewAll={(g) => selectBookingStatus(g)}
+                onBookingUpdated={(updated) => setReservations((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))}
+                onBookingCreated={() => void loadBookings()}
+                notify={notify}
+              />
             )}
 
             {/* ══════════ PAYMENTS (live backend data) ══════════ */}
