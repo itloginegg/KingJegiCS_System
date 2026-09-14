@@ -43,7 +43,6 @@
   font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
   color: var(--accent);
 }
-.adm-drawer-close { display: none; }
 .adm-nav { flex: 1; padding: 1rem 0.8rem; display: flex; flex-direction: column; gap: 0.25rem; overflow-y: auto; }
 .adm-nav-caption {
   padding: 0.4rem 0.9rem 0.3rem;
@@ -165,6 +164,11 @@
 }
 .adm-iconbtn:hover { color: var(--primary); border-color: var(--border-accent); }
 .adm-burger { display: none; }
+/* After .adm-iconbtn, like .adm-burger above: both buttons also carry that class,
+   whose display: flex has the same specificity, so a hide rule declared earlier
+   loses to it and the drawer's close button showed on desktop, where the sidebar
+   is permanent and there is nothing to close. The 900px block re-shows it. */
+.adm-drawer-close { display: none; }
 .adm-avatar {
   width: 32px; height: 32px; flex-shrink: 0;
   border-radius: 50%;
