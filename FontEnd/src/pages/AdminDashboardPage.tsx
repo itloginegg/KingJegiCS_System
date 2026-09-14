@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { fmt, fmtDate, fmtDateTime, fmtTime } from '../lib/format';
-import { StatusBadge, FieldLabel } from '../components/admin/shared/StatusBadge';
-import { RES_STATUS, type ResStatus } from '../components/admin/shared/statusMeta';
+import { fmtDate, fmtDateTime } from '../lib/format';
+import { FieldLabel } from '../components/admin/shared/StatusBadge';
+import type { ResStatus } from '../components/admin/shared/statusMeta';
 
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
@@ -26,8 +25,6 @@ import {
   getOutstandingRentals,
   updateRentalDeliveryStatus,
   BookingApiError,
-  BOOKING_TYPE_LABELS,
-  DELIVERY_NEXT_STATUSES,
   type OutstandingRentalLine,
   type DeliveryStatusName,
   type CashPaymentResult,
@@ -59,7 +56,6 @@ import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { BookingsTreeMenu } from '../components/admin/bookings/BookingsTreeMenu';
 import type { BookingGroupKey, BookingRowActions } from '../components/admin/bookings/types';
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
-import { DraftItemsEditor } from '../components/admin/DraftItemsEditor';
 import EventResourcesModal from '../components/admin/EventResourcesModal';
 import { StaffPanel } from '../components/admin/StaffPanel';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
@@ -119,9 +115,11 @@ import { AuditLogTab } from '../components/admin/audit/AuditLogTab';
 import { BookingsTab } from '../components/admin/bookings/BookingsTab';
 import { MenusTab } from '../components/admin/menus/MenusTab';
 import { InvoiceModal, type InvoiceView } from '../components/admin/bookings/InvoiceModal';
+import { BookingDetailModal } from '../components/admin/bookings/BookingDetailModal';
+import { ContractModal } from '../components/admin/bookings/ContractModal';
+import { DamageNoteModal } from '../components/admin/rentals/DamageNoteModal';
 import { OverviewTab } from '../components/admin/overview/OverviewTab';
 import { RentalsTab } from '../components/admin/rentals/RentalsTab';
-import { DELIVERY_ACTION_LABEL, DELIVERY_STATUS_STYLE } from '../components/admin/rentals/deliveryStatus';
 import { ServiceItemsTab } from '../components/admin/services/ServiceItemsTab';
 import { BookingHistoriesTab } from '../components/admin/histories/BookingHistoriesTab';
 import { TestimonialsTab } from '../components/admin/testimonials/TestimonialsTab';
@@ -1612,408 +1610,57 @@ export function AdminDashboardPage() {
         />
       )}
 
-      {/* ══════════ BOOKING DETAIL VIEW (phase 4) ══════════
-          Read-only. Everything the admin needs at a glance without leaving the
-          Bookings tab; editing still happens through the existing actions. */}
       {/* Top level, not inside the Rentals tab: the same modal is reachable from a
           booking's detail view, which renders over any tab. The damage note is required
           by the backend, so the confirm button stays disabled until there is one. */}
-      {damageTarget && createPortal(
-        <div className="adm-modal-overlay" onClick={() => setDamageTarget(null)}>
-          <div className="adm-modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Mark rental line damaged">
-            <h3>Mark as Damaged</h3>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.2rem' }}>
-              {damageTarget.quantity} × {damageTarget.itemName} — {damageTarget.customerName}, {fmtDate(damageTarget.eventDate)}.
-              This keeps the stock held out of inventory until the line is resolved.
-            </p>
-            <label style={{ display: 'block', marginTop: '1rem' }}>
-              <FieldLabel text="What's wrong? (required)" />
-              <textarea
-                className="adm-input"
-                rows={3}
-                maxLength={500}
-                value={damageNote}
-                autoFocus
-                onChange={(e) => setDamageNote(e.target.value)}
-                placeholder="e.g. 3 chairs with cracked legs"
-                style={{ width: '100%', resize: 'vertical' }}
-              />
-            </label>
-            <div style={{ display: 'flex', gap: '0.6rem', justifyContent: 'flex-end', marginTop: '1.1rem' }}>
-              <button type="button" className="adm-btn outline" onClick={() => setDamageTarget(null)}>Cancel</button>
-              <button type="button" className="adm-btn danger" disabled={!damageNote.trim()} onClick={() => void confirmDamage()}>
-                Mark Damaged
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
+      {damageTarget && (
+        <DamageNoteModal
+          target={damageTarget}
+          note={damageNote}
+          onNoteChange={setDamageNote}
+          onCancel={() => setDamageTarget(null)}
+          onConfirm={() => void confirmDamage()}
+        />
       )}
 
-      {detailBooking && (() => {
-        const b = detailBooking.booking;
-        const isDelivery = b.bookingType === 'FoodDelivery';
-        const lineTotal =
-          detailBooking.rentals.reduce((s, r) => s + r.subtotal, 0) +
-          detailBooking.services.reduce((s, sv) => s + sv.totalCost, 0) +
-          detailBooking.menuItems.reduce((s, m) => s + m.lineTotal, 0) +
-          detailBooking.menuTrays.reduce((s, t) => s + t.lineTotal, 0);
-        const hasLines =
-          detailBooking.rentals.length + detailBooking.services.length +
-          detailBooking.menuItems.length + detailBooking.menuTrays.length > 0;
-
-        const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-          <div>
-            <FieldLabel text={label} />
-            <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.15rem' }}>
-              {value}
-            </div>
-          </div>
-        );
-
-        return (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Booking details"
-            style={{
-              position: 'fixed', inset: 0, zIndex: 120,
-              background: 'rgba(20, 14, 8, 0.55)', backdropFilter: 'blur(6px)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
-            }}
-            onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}
-          >
-            <div
-              className="adm-card"
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(720px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.8rem', padding: '1.2rem 1.5rem', borderBottom: '1px solid var(--border)' }}>
-                <div>
-                  <FieldLabel text={`Reference ${b.id.slice(0, 8).toUpperCase()}`} />
-                  <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', fontWeight: 500, color: 'var(--text-primary)', margin: '0.15rem 0 0' }}>
-                    {b.bookingName}
-                  </h3>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <StatusBadge label={RES_STATUS[b.status as ResStatus]?.label ?? b.status} color={RES_STATUS[b.status as ResStatus]?.color ?? 'var(--text-secondary)'} />
-                  <button type="button" className="adm-iconbtn" aria-label="Close" onClick={() => { setDetailBooking(null); setDetailInvoice(null); }}>✕</button>
-                </div>
-              </div>
-
-              <div style={{ overflowY: 'auto', padding: '1.4rem 1.5rem 1.8rem', display: 'flex', flexDirection: 'column', gap: '1.4rem' }}>
-                <div>
-                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Event</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.9rem' }}>
-                    <Row label="Booking type" value={BOOKING_TYPE_LABELS[b.bookingType as BookingTypeName] ?? b.bookingType} />
-                    <Row label="Event type" value={b.eventType ?? '—'} />
-                    <Row label={isDelivery ? 'Delivery date' : 'Start date'} value={fmtDate(b.eventDate)} />
-                    <Row label={isDelivery ? 'Delivery time' : 'Start time'} value={fmtTime(b.startTime)} />
-                    {!isDelivery && <Row label="End date" value={b.endDate ? fmtDate(b.endDate) : '—'} />}
-                    {!isDelivery && <Row label="End time" value={fmtTime(b.endTime)} />}
-                    <Row label="Guests" value={b.guestCount ?? '—'} />
-                    <Row label="Deposit" value={b.depositStatus} />
-                  </div>
-                  <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.9rem' }}>
-                    <Row label={isDelivery ? 'Delivery address' : 'Venue'} value={b.venueAddress} />
-                    <Row label="Contact number" value={b.contactNumber || '—'} />
-                  </div>
-                </div>
-
-                {b.cancellationRequested && (
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.6rem 0.85rem', borderLeft: '2px solid var(--accent)', margin: 0 }}>
-                    ⚠ <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Cancellation requested:</strong> {b.cancellationRequestReason || 'No reason given.'}
-                  </p>
-                )}
-
-                {b.adminNote && (
-                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.6rem 0.85rem', borderLeft: '2px solid var(--border-accent)', margin: 0, whiteSpace: 'pre-wrap' }}>
-                    <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Staff note:</strong> {b.adminNote}
-                  </p>
-                )}
-
-                <div>
-                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Items</h4>
-                  {!hasLines && !detailBooking.package ? (
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
-                      Nothing has been added to this booking yet.
-                    </p>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300 }}>
-                      <tbody>
-                        {detailBooking.package && (
-                          <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '0.45rem 0' }}>
-                              <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package — {detailBooking.package.packageName}</strong>
-                            </td>
-                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(detailBooking.package.basePrice)}</td>
-                          </tr>
-                        )}
-                        {detailBooking.menuItems.map((m) => (
-                          <tr key={m.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '0.45rem 0' }}>{m.itemName} × {m.quantity}</td>
-                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(m.lineTotal)}</td>
-                          </tr>
-                        ))}
-                        {detailBooking.menuTrays.map((t) => (
-                          <tr key={t.trayId} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '0.45rem 0' }}>{t.trayName} × {t.quantity}</td>
-                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(t.lineTotal)}</td>
-                          </tr>
-                        ))}
-                        {detailBooking.rentals.map((r) => (
-                          <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '0.45rem 0' }}>
-                              Rental — {r.itemName} × {r.quantity}
-                              <span style={{ color: DELIVERY_STATUS_STYLE[r.deliveryStatus].color }}>
-                                {' '}· {DELIVERY_STATUS_STYLE[r.deliveryStatus].label}
-                              </span>
-                              {r.damageNote && (
-                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, color: 'var(--danger)' }}>
-                                  ⚠ {r.damageNote}
-                                </div>
-                              )}
-                              {/* Same actions as the returns desk, for an admin already
-                                  looking at this one event. */}
-                              {DELIVERY_NEXT_STATUSES[r.deliveryStatus].length > 0 && (
-                                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
-                                  {DELIVERY_NEXT_STATUSES[r.deliveryStatus].map((next) => (
-                                    <button
-                                      key={next}
-                                      type="button"
-                                      className={`adm-btn ${next === 'Returned' ? 'success' : next === 'Damaged' ? 'danger' : 'info'}`}
-                                      disabled={returnsBusyId === r.lineId}
-                                      onClick={() => {
-                                        const line = detailLineToOutstanding(r);
-                                        if (!line) return;
-                                        if (next === 'Damaged') {
-                                          setDamageNote('');
-                                          setDamageTarget(line);
-                                        } else {
-                                          void applyDeliveryStatus(line, next);
-                                        }
-                                      }}
-                                    >
-                                      {DELIVERY_ACTION_LABEL[next]}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </td>
-                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
-                          </tr>
-                        ))}
-                        {detailBooking.services.map((sv) => (
-                          <tr key={sv.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '0.45rem 0' }}>Service — {sv.serviceName} × {sv.quantity}</td>
-                            <td style={{ padding: '0.45rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(sv.totalCost)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-
-                {/* Editing is Draft-only server-side (Bookingservice.EnsureEditableAsync),
-                    so the panel appears exactly where the API would accept it. */}
-                {b.status === 'Draft' && (
-                  <div>
-                    <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.2rem' }}>Add items</h4>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', margin: '0 0 0.9rem' }}>
-                      Same catalog and rules the customer wizard uses. Submit freezes the
-                      total and issues the invoice, so add everything first.
-                    </p>
-                    <DraftItemsEditor
-                      detail={detailBooking}
-                      notify={notify}
-                      onChanged={async () => {
-                        // Refetch so the Items table and Money block above reflect the
-                        // server's recomputed total rather than a local guess.
-                        await refreshBookingDetail(b.id);
-                        await loadBookings();
-                      }}
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '0 0 0.7rem' }}>Money</h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.9rem' }}>
-                    <Row label="Line items" value={fmt(lineTotal)} />
-                    <Row label="Booking total" value={fmt(b.totalAmount)} />
-                    {detailInvoice ? (
-                      <>
-                        {detailInvoice.taxAmount > 0 && <Row label="Tax" value={fmt(detailInvoice.taxAmount)} />}
-                        <Row label="Grand total" value={<span style={{ color: 'var(--primary)' }}>{fmt(detailInvoice.grandTotal)}</span>} />
-                        <Row label="Paid" value={fmt(detailInvoice.paidTotal)} />
-                        <Row label="Balance" value={fmt(detailInvoice.grandTotal - detailInvoice.paidTotal)} />
-                        <Row label="Invoice status" value={detailInvoice.status} />
-                        <Row label="Due date" value={fmtDate(detailInvoice.dueDate)} />
-                      </>
-                    ) : (
-                      <Row label="Invoice" value={<span style={{ color: 'var(--text-dim)', fontWeight: 300 }}>Not generated yet</span>} />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* ══════════ BOOKING DETAIL VIEW (phase 4) ══════════
+          Read-only. Everything the admin needs at a glance without leaving the
+          Bookings tab; editing still happens through the existing actions. */}
+      {detailBooking && (
+        <BookingDetailModal
+          detail={detailBooking}
+          invoice={detailInvoice}
+          busyLineId={returnsBusyId}
+          onClose={() => { setDetailBooking(null); setDetailInvoice(null); }}
+          onRentalAction={(r, next) => {
+            // Same actions as the returns desk, through the same path and prompt.
+            const line = detailLineToOutstanding(r);
+            if (!line) return;
+            if (next === 'Damaged') {
+              setDamageNote('');
+              setDamageTarget(line);
+            } else {
+              void applyDeliveryStatus(line, next);
+            }
+          }}
+          onItemsChanged={async () => {
+            // Refetch so the Items table and Money block reflect the server's
+            // recomputed total rather than a local guess.
+            await refreshBookingDetail(detailBooking.booking.id);
+            await loadBookings();
+          }}
+          notify={notify}
+        />
+      )}
 
       {/* ══════════ CONTRACT (item 2) — printable service agreement ══════════ */}
-      {contractBooking && (() => {
-        const b = contractBooking.booking;
-        const lineTotal =
-          contractBooking.rentals.reduce((s, r) => s + r.subtotal, 0) +
-          contractBooking.services.reduce((s, sv) => s + sv.totalCost, 0) +
-          contractBooking.menuItems.reduce((s, m) => s + m.lineTotal, 0) +
-          contractBooking.menuTrays.reduce((s, t) => s + t.lineTotal, 0);
-
-        return (
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Service contract"
-            style={{
-              position: 'fixed', inset: 0, zIndex: 120,
-              background: 'rgba(20, 14, 8, 0.55)', backdropFilter: 'blur(6px)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
-            }}
-            onClick={() => { setContractBooking(null); setContractInvoice(null); }}
-          >
-            <div
-              className="adm-card"
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: 'min(760px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
-            >
-              <div className="adm-contract-noprint" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.7rem', padding: '1rem 1.4rem', borderBottom: '1px solid var(--border)' }}>
-                <FieldLabel text="Service Contract" />
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button type="button" className="adm-btn primary" onClick={() => window.print()}>Print / Save as PDF</button>
-                  <button type="button" className="adm-btn outline" onClick={() => { setContractBooking(null); setContractInvoice(null); }}>Close</button>
-                </div>
-              </div>
-
-              <div id="adm-contract" style={{ overflowY: 'auto', padding: '1.8rem 2rem 2.2rem' }}>
-                <div style={{ textAlign: 'center', marginBottom: '1.6rem' }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 600 }}>King Jegi Catering Services</div>
-                  <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.62rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                    Catering Service Agreement
-                  </div>
-                </div>
-
-                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
-                  This agreement is entered into between <strong style={{ color: 'var(--text-primary)' }}>King Jegi Catering Services</strong> (the
-                  “Caterer”) and the Client named below, for the event described in this contract. It reflects the booking
-                  as confirmed on the Caterer’s system.
-                </p>
-
-                {/* ── event details ── */}
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>1. Event Details</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '0.35rem 1.5rem', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                  <span>Reference: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.id.slice(0, 8).toUpperCase()}</strong></span>
-                  <span>Booking: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.bookingName}</strong></span>
-                  <span>Type: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.eventType || b.bookingType}</strong></span>
-                  <span>Date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(b.eventDate)}</strong></span>
-                  <span>Time: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.startTime?.substring(0, 5)}{b.endTime ? ` – ${b.endTime.substring(0, 5)}` : ''}</strong></span>
-                  <span>Guests: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.guestCount ?? 'N/A'}</strong></span>
-                  <span style={{ gridColumn: '1 / -1' }}>Venue: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.venueAddress}</strong></span>
-                  <span>Contact: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{b.contactNumber || 'N/A'}</strong></span>
-                </div>
-
-                {/* ── inclusions ── */}
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>2. Services &amp; Inclusions</h4>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300 }}>
-                  <tbody>
-                    {contractBooking.package && (
-                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '0.4rem 0' }}>
-                          <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Package — {contractBooking.package.packageName}</strong>
-                          {contractBooking.package.inclusions.length > 0 && (
-                            <div style={{ color: 'var(--text-dim)', fontSize: '0.68rem' }}>{contractBooking.package.inclusions.join(' · ')}</div>
-                          )}
-                        </td>
-                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(contractBooking.package.basePrice)}</td>
-                      </tr>
-                    )}
-                    {contractBooking.menuItems.map((m) => (
-                      <tr key={m.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '0.4rem 0' }}>{m.itemName} × {m.quantity}</td>
-                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(m.lineTotal)}</td>
-                      </tr>
-                    ))}
-                    {contractBooking.menuTrays.map((t) => (
-                      <tr key={t.trayId} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '0.4rem 0' }}>{t.trayName} × {t.quantity}</td>
-                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(t.lineTotal)}</td>
-                      </tr>
-                    ))}
-                    {contractBooking.rentals.map((r) => (
-                      <tr key={r.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '0.4rem 0' }}>Rental — {r.itemName} × {r.quantity}</td>
-                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(r.subtotal)}</td>
-                      </tr>
-                    ))}
-                    {contractBooking.services.map((sv) => (
-                      <tr key={sv.lineId} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '0.4rem 0' }}>Service — {sv.serviceName} × {sv.quantity}</td>
-                        <td style={{ padding: '0.4rem 0', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmt(sv.totalCost)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {/* ── money ── */}
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>3. Fees &amp; Payment</h4>
-                <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', display: 'grid', gap: '0.25rem' }}>
-                  <span>Line items subtotal: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(lineTotal)}</strong></span>
-                  {contractInvoice ? (
-                    <>
-                      {contractInvoice.taxAmount > 0 && (
-                        <span>Tax: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.taxAmount)}</strong></span>
-                      )}
-                      <span style={{ fontSize: '0.9rem' }}>
-                        Total contract price:{' '}
-                        <strong style={{ color: 'var(--primary)', fontWeight: 600 }}>{fmt(contractInvoice.grandTotal)}</strong>
-                      </span>
-                      <span>Paid to date: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.paidTotal)}</strong> · Balance: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmt(contractInvoice.grandTotal - contractInvoice.paidTotal)}</strong></span>
-                      <span>Invoice due: <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{fmtDate(contractInvoice.dueDate)}</strong></span>
-                    </>
-                  ) : (
-                    <span style={{ color: 'var(--text-dim)' }}>
-                      No invoice has been issued for this booking yet — tax and the final contract price will be confirmed on the invoice.
-                    </span>
-                  )}
-                </div>
-
-                {/* ── terms ── */}
-                <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>4. Terms</h4>
-                <ol style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, lineHeight: 1.75, color: 'var(--text-muted)', paddingLeft: '1.1rem', margin: 0 }}>
-                  <li>The reservation fee secures the event date and is applied against the total contract price.</li>
-                  <li>Payment follows the schedule on the issued invoice. The date is only secured once the reservation fee is verified.</li>
-                  <li>Final guest count and menu changes must be confirmed with the Caterer before the event date; changes may adjust the price.</li>
-                  <li>Cancellations are subject to the Caterer’s cancellation and refund policy in force at the time of the request.</li>
-                  <li>Rental items remain the property of the Caterer and must be returned in the condition supplied.</li>
-                </ol>
-
-                {/* ── signatures ── */}
-                {/* auto-fit rather than 1fr 1fr: the two signature lines stack on a
-                    phone but stay side by side on the printed sheet, which is wide. */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '2.5rem', marginTop: '2.4rem' }}>
-                  {['Client', 'For King Jegi Catering Services'].map((who) => (
-                    <div key={who}>
-                      <div style={{ borderTop: '1px solid var(--text-primary)', paddingTop: '0.4rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 400, color: 'var(--text-muted)' }}>
-                        {who} — signature over printed name / date
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {contractBooking && (
+        <ContractModal
+          detail={contractBooking}
+          invoice={contractInvoice}
+          onClose={() => { setContractBooking(null); setContractInvoice(null); }}
+        />
+      )}
 
       <div className="adm-shell">
 
