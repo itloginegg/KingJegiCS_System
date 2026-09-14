@@ -137,6 +137,13 @@ export function AdminDashboardPage() {
   const [bookingsNavOpen, setBookingsNavOpen] = useState(false);
   /** Last status the admin chose, so returning to Bookings resumes where they left off. */
   const lastBookingStatus = useRef<'all' | ResStatus>('all');
+  /* Set by openTab when it moves to the placeholder panel. 'placeholder' has no ?tab=
+     spelling, so that URL write leaves no tab param, and the URL-sync effect below
+     would read the bare URL as "Overview" and undo the click one render later. The
+     effect consumes this once and keeps the in-memory tab instead. Only ever set when
+     the write really changes the URL: otherwise the effect never runs to consume it,
+     and a stale flag would swallow the next genuine navigation to a bare /admin. */
+  const keepPlaceholderOnSync = useRef(false);
 
   const [reservations, setReservations] = useState<BookingResponse[]>([]);
 
@@ -498,7 +505,10 @@ export function AdminDashboardPage() {
 
     // Booking Histories owns a URL of its own; leaving it must drop that URL, or the
     // address bar would keep claiming we're on a page we've navigated away from.
-    if (t !== 'histories' && location.pathname === HISTORIES_PATH) {
+    const leavingHistories = t !== 'histories' && location.pathname === HISTORIES_PATH;
+    keepPlaceholderOnSync.current =
+      t === 'placeholder' && (leavingHistories || params.toString() !== searchParams.toString());
+    if (leavingHistories) {
       navigate({ pathname: '/admin', search: params.toString() });
       return;
     }
@@ -856,7 +866,9 @@ export function AdminDashboardPage() {
       return;
     }
     const t = searchParams.get('tab');
-    setTab(isUrlTab(t) ? t : 'overview');
+    const keepPlaceholder = keepPlaceholderOnSync.current && t === null;
+    keepPlaceholderOnSync.current = false;
+    if (!keepPlaceholder) setTab(isUrlTab(t) ? t : 'overview');
 
     const s = searchParams.get('status');
     setResFilter(isResStatusParam(s) ? s : 'all');
