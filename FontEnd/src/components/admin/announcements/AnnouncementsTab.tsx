@@ -193,7 +193,6 @@ export function AnnouncementsTab({ notify }: AnnouncementsTabProps) {
   useEffect(() => {
     void loadAnnouncements();
     void loadGallery();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

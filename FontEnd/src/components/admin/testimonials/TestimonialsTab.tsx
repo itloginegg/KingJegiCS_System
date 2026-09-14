@@ -93,7 +93,6 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
 
   useEffect(() => {
     void loadTestimonials();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pendingTesti = testimonials.filter((t) => t.status === 'Pending').length;
