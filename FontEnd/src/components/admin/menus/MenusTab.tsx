@@ -43,6 +43,7 @@ export function MenusTab() {
   const [menuAuthError, setMenuAuthError] = useState(false);
   const [menuCategory, setMenuCategory] = useState<'all' | string>('all');
   const [menuSearch, setMenuSearch] = useState('');
+
   const [menuFormOpen, setMenuFormOpen] = useState(false);
   const [menuFormMode, setMenuFormMode] = useState<'item' | 'tray'>('item');
   const [menuFormAction, setMenuFormAction] = useState<'create' | 'edit'>('create');
@@ -130,6 +131,7 @@ export function MenusTab() {
     setMenuSuccess(null);
     setMenuImagePreview(null);
   };
+
   const loadMenuCatalog = async () => {
     const session = readSession();
     if (!session) {
@@ -158,6 +160,7 @@ export function MenusTab() {
       setMenuLoading(false);
     }
   };
+
   const applyMenuItemToState = (item: AdminMenuItem) => {
     setMenuItems((prev) => {
       const exists = prev.some((m) => m.id === item.id);
