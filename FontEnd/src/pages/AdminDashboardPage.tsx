@@ -1,15 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { fmtDate, fmtDateTime } from '../lib/format';
-import { FieldLabel } from '../components/admin/shared/StatusBadge';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fmtDate } from '../lib/format';
 import type { ResStatus } from '../components/admin/shared/statusMeta';
 
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
-import {
-  LayoutGrid, CalendarDays, Wallet, Package, Star,
-  UtensilsCrossed, Tent, Wrench, ScrollText, Megaphone, Circle, CalendarClock,
-  X, LogOut, Users,
-} from 'lucide-react';
+import { LayoutGrid, CalendarDays, Wallet, Package, Star, Circle } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { readSession } from '../lib/tokenStorage';
 import { AdminPackagesTab } from './AdminPackagesTab';
@@ -52,9 +47,10 @@ import {
   notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
-import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { AdminSidebar } from '../components/admin/shell/AdminSidebar';
+import { AdminTopbar } from '../components/admin/shell/AdminTopbar';
+import type { AdminTab as Tab, AdminNavItem } from '../components/admin/shell/types';
 import '../components/admin/admin.css';
-import { BookingsTreeMenu } from '../components/admin/bookings/BookingsTreeMenu';
 import type { BookingGroupKey, BookingRowActions } from '../components/admin/bookings/types';
 import { CashPaymentModal } from '../components/admin/CashPaymentModal';
 import EventResourcesModal from '../components/admin/EventResourcesModal';
@@ -79,7 +75,6 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
    Main component
 ───────────────────────────────────────────────────────────────────────── */
 
-type Tab = 'overview' | 'bookings' | 'payments' | 'packages' | 'menus' | 'rentals' | 'services' | 'testimonials' | 'histories' | 'audit' | 'announcements' | 'staff' | 'placeholder';
 
 /** The sidebar's "Booking Histories" link routes here rather than switching tabs in place. */
 const HISTORIES_PATH = '/admin/booking-histories';
@@ -167,7 +162,6 @@ export function AdminDashboardPage() {
   /* notifications — the in-app feed over the worker's send ledger */
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [bellOpen, setBellOpen] = useState(false);
 
   /* payments — live data from /api/Payments/recent + /api/Payments/refund-requests */
   const [payments, setPayments] = useState<AdminPaymentRecord[]>([]);
@@ -687,7 +681,6 @@ export function AdminDashboardPage() {
    */
   const openNotification = (n: AppNotification) => {
     void readNotification(n);
-    setBellOpen(false);
 
     switch (notificationTarget(n)) {
       case 'booking':
@@ -877,7 +870,7 @@ export function AdminDashboardPage() {
   /* Lucide at 1.75 stroke, not emoji. The old glyphs (▦ 🗓 ₱ 📦 ★ …) rendered as
      colour emoji on Windows and Android — they could not take currentColor, so the
      active nav item's icon stayed multicoloured against the active fill. */
-  const NAV: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const NAV: AdminNavItem[] = [
     { id: 'overview', label: 'Overview', icon: <LayoutGrid size={18} strokeWidth={1.75} /> },
     { id: 'bookings', label: 'Bookings', icon: <CalendarDays size={18} strokeWidth={1.75} />, badge: pendingRes.length },
     { id: 'payments', label: 'Payments', icon: <Wallet size={18} strokeWidth={1.75} />, badge: pendingPayments.length },
@@ -1051,258 +1044,48 @@ export function AdminDashboardPage() {
       <div className="adm-shell">
 
         {/* ═══════════════════════ SIDEBAR ═══════════════════════ */}
-        <div className={`adm-scrim${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
-        <aside className={`adm-sidebar${sidebarOpen ? ' open' : ''}`}>
-          <div className="adm-brand">
-            <div className="adm-brand-mark">K</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.1 }}>
-                King Jegi
-              </div>
-              <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.5rem', letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 500 }}>
-                Admin Panel
-              </div>
-            </div>
-            {/* Drawer close, per artboard 8b. Below 900px the sidebar is a drawer and
-                had no visible dismiss — only the scrim, which is not discoverable and
-                is easy to miss on a narrow screen. Hidden at desktop, where the
-                sidebar is permanent and there is nothing to close. */}
-            <button
-              type="button"
-              className="adm-iconbtn adm-drawer-close"
-              aria-label="Close navigation"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <X size={18} strokeWidth={1.75} aria-hidden="true" />
-            </button>
-          </div>
-
-          <nav className="adm-nav" aria-label="Admin navigation">
-            <span className="adm-nav-caption">Operations</span>
-            {NAV.map((item) => (
-              /* Bookings is an accordion over its status filters rather than a flat
-                 entry; the rest of NAV renders as it always has. */
-              item.id === 'bookings' ? (
-                <BookingsTreeMenu
-                  key={item.id}
-                  expanded={bookingsNavOpen}
-                  onToggleExpanded={() => {
-                    // Expand AND select, so one click always puts something on screen.
-                    // Collapsing while already on Bookings leaves the tab selected.
-                    if (tab === 'bookings') setBookingsNavOpen((o) => !o);
-                    else selectBookingStatus(lastBookingStatus.current);
-                  }}
-                  active={tab === 'bookings'}
-                  value={resFilter}
-                  onSelect={selectBookingStatus}
-                  counts={resCounts}
-                  totalCount={reservations.length}
-                  badge={item.badge}
-                />
-              ) : (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`adm-nav-item${tab === item.id ? ' active' : ''}`}
-                  onClick={() => openTab(item.id)}
-                >
-                  <span className="adm-nav-icon">{item.icon}</span>
-                  {item.label}
-                  {item.badge != null && item.badge > 0 && <span className="adm-badge">{item.badge}</span>}
-                </button>
-              )
-            ))}
-
-            <span className="adm-nav-caption" style={{ marginTop: '0.9rem' }}>Management</span>
-            <button
-              type="button"
-              className={`adm-nav-item${tab === 'menus' ? ' active' : ''}`}
-              onClick={() => openTab('menus')}
-            >
-              <span className="adm-nav-icon"><UtensilsCrossed size={18} strokeWidth={1.75} /></span>
-              Menus &amp; Dishes
-            </button>
-            <button
-              type="button"
-              className={`adm-nav-item${tab === 'rentals' ? ' active' : ''}`}
-              onClick={() => openTab('rentals')}
-            >
-              <span className="adm-nav-icon"><Tent size={18} strokeWidth={1.75} /></span>
-              Rentals
-            </button>
-            <button
-              type="button"
-              className={`adm-nav-item${tab === 'services' ? ' active' : ''}`}
-              onClick={() => openTab('services')}
-            >
-              <span className="adm-nav-icon"><Wrench size={18} strokeWidth={1.75} /></span>
-              Service Items
-            </button>
-            <Link
-              to="/admin/booking-histories"
-              className={`adm-nav-item${isRouteActive('/admin/booking-histories') ? ' active' : ''}`}
-            >
-              <span className="adm-nav-icon" aria-hidden="true"><CalendarClock size={18} strokeWidth={1.75} /></span>
-              Booking Histories
-            </Link>
-            <button
-              type="button"
-              className={`adm-nav-item${tab === 'audit' ? ' active' : ''}`}
-              onClick={() => openTab('audit')}
-            >
-              <span className="adm-nav-icon"><ScrollText size={18} strokeWidth={1.75} /></span>
-              Audit Log
-            </button>
-            <button
-              type="button"
-              className={`adm-nav-item${tab === 'announcements' ? ' active' : ''}`}
-              onClick={() => openTab('announcements')}
-            >
-              <span className="adm-nav-icon"><Megaphone size={18} strokeWidth={1.75} /></span>
-              Announcements
-            </button>
-            {/* Owner-only. This is NOT the security boundary — the server's
-                [Authorize(Roles = "Owner")] is. Hiding the item just spares an
-                Assistant a tab that would only 403 at them. An undefined adminRole
-                (a session persisted before that field existed) fails closed. */}
-            {authUser?.adminRole === 'Owner' && (
-              <button
-                type="button"
-                className={`adm-nav-item${tab === 'staff' ? ' active' : ''}`}
-                onClick={() => openTab('staff')}
-              >
-                <span className="adm-nav-icon"><Users size={18} strokeWidth={1.75} /></span>
-                Staff Management
-              </button>
-            )}
-            {PLACEHOLDER_ITEMS.map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={`adm-nav-item${tab === 'placeholder' && placeholderName === name ? ' active' : ''}`}
-                onClick={() => { setPlaceholderName(name); openTab('placeholder'); }}
-              >
-                <span className="adm-nav-icon"><Circle size={18} strokeWidth={1.75} /></span>
-                {name}
-              </button>
-            ))}
-          </nav>
-
-          <div className="adm-sidebar-foot">
-            {/* The admin dashboard had a full `.dark` styling path but no way to reach
-                it — an admin had to visit the landing page to change theme. */}
-            <ThemeToggle className="adm-foot-btn" showLabel size={14} />
-            <button type="button" className="adm-foot-btn danger" onClick={() => void logout()}>
-              <LogOut size={15} strokeWidth={1.75} aria-hidden="true" /> Sign out
-            </button>
-          </div>
-        </aside>
+        <AdminSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          nav={NAV}
+          tab={tab}
+          placeholderName={placeholderName}
+          placeholderItems={PLACEHOLDER_ITEMS}
+          bookingsNav={{
+            expanded: bookingsNavOpen,
+            onToggleExpanded: () => {
+              // Expand AND select, so one click always puts something on screen.
+              // Collapsing while already on Bookings leaves the tab selected.
+              if (tab === 'bookings') setBookingsNavOpen((o) => !o);
+              else selectBookingStatus(lastBookingStatus.current);
+            },
+            value: resFilter,
+            onSelect: selectBookingStatus,
+            counts: resCounts,
+            totalCount: reservations.length,
+          }}
+          onOpenTab={openTab}
+          onOpenPlaceholder={(name) => { setPlaceholderName(name); openTab('placeholder'); }}
+          historiesActive={isRouteActive('/admin/booking-histories')}
+          isOwner={authUser?.adminRole === 'Owner'}
+          onLogout={() => void logout()}
+        />
 
         {/* ═══════════════════════ MAIN ═══════════════════════ */}
         <div className="adm-main">
 
           {/* topbar */}
-          <div className="adm-topbar">
-            <button type="button" className="adm-iconbtn adm-burger" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="16" height="16" aria-hidden="true">
-                <path d="M4 7h16M4 12h16M4 17h16" />
-              </svg>
-            </button>
-            <span className="adm-topbar-title" style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: 500, color: 'var(--text-dim)' }}>
-              {tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : tab === 'staff' ? 'Staff Management' : NAV.find((n) => n.id === tab)?.label}
-            </span>
-            <div style={{ flex: 1 }} />
-
-            {/* notification bell — the in-app view of what the NotificationWorker sent */}
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                className="adm-iconbtn"
-                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications'}
-                aria-expanded={bellOpen}
-                onClick={() => { setBellOpen((o) => !o); if (!bellOpen) void loadNotifications(); }}
-              >
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-                {unreadCount > 0 && (
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: 'absolute', top: 2, right: 2, minWidth: 15, height: 15,
-                      padding: '0 3px', borderRadius: 'var(--r-full)', background: 'var(--danger)',
-                      color: 'var(--accent-text)', fontFamily: 'var(--font-body)', fontSize: '0.55rem', fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
-                    }}
-                  >
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </button>
-
-              {bellOpen && (
-                <>
-                  {/* click-away layer, below the panel but above the page */}
-                  <div style={{ position: 'fixed', inset: 0, zIndex: 130 }} onClick={() => setBellOpen(false)} />
-                  <div
-                    className="adm-card"
-                    style={{
-                      position: 'absolute', top: 'calc(100% + 0.5rem)', right: 0, zIndex: 131,
-                      width: 340, maxWidth: '90vw', maxHeight: 420, overflowY: 'auto', padding: 0,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', padding: '0.85rem 1rem', borderBottom: '1px solid var(--border)' }}>
-                      <FieldLabel text="Notifications" />
-                      {unreadCount > 0 && (
-                        <button type="button" className="adm-btn outline" onClick={() => void readAllNotifications()}>
-                          Mark all read
-                        </button>
-                      )}
-                    </div>
-
-                    {notifications.length === 0 ? (
-                      <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-muted)', padding: '1.6rem 1rem', textAlign: 'center', margin: 0 }}>
-                        Nothing yet. Overdue-payment digests and low-stock alerts show up here.
-                      </p>
-                    ) : (
-                      notifications.map((n) => (
-                        <button
-                          key={n.id}
-                          type="button"
-                          onClick={() => openNotification(n)}
-                          style={{
-                            display: 'block', width: '100%', textAlign: 'left', border: 'none',
-                            // Read rows stay clickable now that clicking navigates.
-                            cursor: notificationTarget(n) === 'none' && n.readAt ? 'default' : 'pointer',
-                            borderBottom: '1px solid var(--border)',
-                            padding: '0.8rem 1rem',
-                            background: n.readAt ? 'transparent' : 'var(--primary-muted)',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.2rem' }}>
-                            {!n.readAt && <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary)', flexShrink: 0 }} />}
-                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-primary)' }}>{n.title}</span>
-                          </div>
-                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                            {n.body}
-                          </div>
-                          <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.6rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.25rem' }}>
-                            {fmtDateTime(n.sentAt)}
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-
-            <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }} className="adm-hide-sm">
-              {adminName} · {FALLBACK_ADMIN.role}
-            </span>
-            <div className="adm-avatar" title={adminName}>{adminName.charAt(0)}</div>
-          </div>
+          <AdminTopbar
+            title={tab === 'placeholder' ? placeholderName : tab === 'menus' ? 'Menus & Dishes' : tab === 'services' ? 'Service Items' : tab === 'rentals' ? 'Rentals' : tab === 'audit' ? 'Audit Log' : tab === 'histories' ? 'Booking Histories' : tab === 'announcements' ? 'Announcements' : tab === 'staff' ? 'Staff Management' : NAV.find((n) => n.id === tab)?.label ?? ''}
+            adminName={adminName}
+            roleLabel={FALLBACK_ADMIN.role}
+            onOpenNav={() => setSidebarOpen(true)}
+            notifications={notifications}
+            unreadCount={unreadCount}
+            onRefreshNotifications={() => void loadNotifications()}
+            onReadAll={() => void readAllNotifications()}
+            onOpenNotification={openNotification}
+          />
 
           {/* content */}
           <div className="adm-content" style={{ padding: '2rem 2.25rem 4rem', flex: 1, maxWidth: 1240, width: '100%', margin: '0 auto' }}>
