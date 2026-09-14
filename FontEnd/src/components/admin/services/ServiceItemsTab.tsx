@@ -322,7 +322,7 @@ export function ServiceItemsTab() {
             )}
 
             {/* Field grid only — see the menu form modal in
-                AdminDashboardPage for why `adm-modal-panel` doesn't belong here. */}
+                MenusTab for why `adm-modal-panel` doesn't belong here. */}
             <div className="form-grid full">
               <div className="form-row">
                 <label htmlFor="service-item-name">Service Name</label>
