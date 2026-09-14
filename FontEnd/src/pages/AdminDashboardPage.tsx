@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { fmt, fmtDate, fmtTime } from '../lib/format';
+import { fmt, fmtDate, fmtDateTime, fmtTime } from '../lib/format';
 import { StatusBadge, FieldLabel } from '../components/admin/shared/StatusBadge';
 import { RES_STATUS, type ResStatus } from '../components/admin/shared/statusMeta';
 
@@ -87,7 +87,6 @@ import {
   type AdminPaymentRecord,
   type RefundRequestQueueItem,
 } from '../api/paymentAdminApi';
-import { fetchAuditLogs, AuditApiError, type AuditLogEntry } from '../api/auditApi';
 import {
   getCalendarDays,
   setDayLock,
@@ -109,13 +108,6 @@ import {
   notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
-import {
-  getTestimonials,
-  moderateTestimonial,
-  TestimonialApiError,
-  type Testimonial,
-  type TestimonialStatus,
-} from '../api/testimonialsApi';
 import {
   getAnnouncements,
   postAnnouncement,
@@ -264,11 +256,6 @@ function bookingAsSnapshot(b: BookingResponse): Snapshot {
 ───────────────────────────────────────────────────────────────────────── */
 
 
-const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> = {
-  Pending: { label: 'Pending', color: 'var(--warning-ink)' },
-  Approved: { label: 'Approved', color: 'var(--status-paid)' },
-  Rejected: { label: 'Rejected', color: 'var(--danger-ink)' },
-};
 
 
 /** Zero-pads a month/day for building a local "YYYY-MM-DD" without UTC drift. */
@@ -295,27 +282,7 @@ const fmtCompact = (n: number) => {
   return `₱${Math.round(n)}`;
 };
 
-/** Minimal line icons for the overview KPI cards. */
-/**
- * The one error card for every admin tab.
- *
- * Section 11 of the design direction asks for exactly this: the eight tabs each
- * carried a near-identical block — same padding, same 30%-danger border, same
- * ⚠️ glyph, same heading weight, same retry — differing only in their title and
- * message. Five copies meant five places to fix whenever the treatment moved,
- * and they had already drifted apart in the danger tint they used.
- */
 import { AdmErrorCard, AdminTabHeader, OvIcon } from '../components/admin/shared/AdminChrome';
-
-const fmtDateTime = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleString('en-PH', {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  } catch {
-    return iso;
-  }
-};
 
 /* ─────────────────────────────────────────────────────────────────────────
    Main component
@@ -359,6 +326,8 @@ const PLACEHOLDER_ITEMS = ['Chat Support'];
 ───────────────────────────────────────────────────────────────────────── */
 import { NewBookingModal } from '../components/admin/bookings/NewBookingModal';
 import { PaymentsTab } from '../components/admin/payments/PaymentsTab';
+import { AuditLogTab } from '../components/admin/audit/AuditLogTab';
+import { TestimonialsTab } from '../components/admin/testimonials/TestimonialsTab';
 import { AdminSupportPanel } from '../components/admin/support/AdminSupportPanel';
 
 export function AdminDashboardPage() {
@@ -396,32 +365,9 @@ export function AdminDashboardPage() {
     }
   };
 
-  /* testimonials — live from /api/Testimonials (Owner/Assistant moderation queue) */
-  const [testimonials, setTestimonials] = useState<Testimonial[]>([]);
-  const [testiLoading, setTestiLoading] = useState(false);
-  const [testiError, setTestiError] = useState<string | null>(null);
-  const [testiBusyId, setTestiBusyId] = useState<string | null>(null);
-
-  const loadTestimonials = async () => {
-    const session = readSession();
-    if (!session?.token) {
-      setTestiError('You are not signed in. Sign in with an Owner or Assistant account to moderate testimonials.');
-      return;
-    }
-    setTestiLoading(true);
-    setTestiError(null);
-    try {
-      // Always fetch every status: the filter pills show per-status counts, which
-      // would be wrong if the server had already filtered the list for us.
-      setTestimonials(await getTestimonials(session.token));
-    } catch (err) {
-      setTestiError(
-        err instanceof TestimonialApiError ? err.message : 'Could not load testimonials. Please try again.',
-      );
-    } finally {
-      setTestiLoading(false);
-    }
-  };
+  /* Pending-review count for the nav badge. The Testimonials tab owns the list and
+     reports the count up; this stays 0 until the tab has loaded once, as before. */
+  const [pendingTesti, setPendingTesti] = useState(0);
 
   /* announcements — admin broadcasts, delivered through the customer notification feed */
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -692,33 +638,6 @@ export function AdminDashboardPage() {
       );
     } finally {
       setPaymentActionBusy(null);
-    }
-  };
-
-  /* audit log — live data from /api/Auditlogs (Owner-only endpoint) */
-  const AUDIT_PAGE_SIZE = 25;
-  const [auditRows, setAuditRows] = useState<AuditLogEntry[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
-  const [auditPage, setAuditPage] = useState(1);
-
-  const loadAuditLogs = async (page: number) => {
-    const session = readSession();
-    if (!session) {
-      setAuditError('You are not signed in. Sign in as the Owner to view the audit trail.');
-      return;
-    }
-    setAuditLoading(true);
-    setAuditError(null);
-    try {
-      setAuditRows(await fetchAuditLogs(session.token, { page, pageSize: AUDIT_PAGE_SIZE }));
-      setAuditPage(page);
-    } catch (err) {
-      setAuditError(
-        err instanceof AuditApiError ? err.message : 'Unable to load the audit trail. Please try again.',
-      );
-    } finally {
-      setAuditLoading(false);
     }
   };
 
@@ -1024,9 +943,6 @@ export function AdminDashboardPage() {
   /* packages tab state */
 
 
-  /* testimonials tab state */
-  const [testiFilter, setTestiFilter] = useState<'all' | TestimonialStatus>('Pending');
-
   /* booking-history tab state (item 3a) */
   const [historyBookingId, setHistoryBookingId] = useState<string | null>(null);
   const [historyRows, setHistoryRows] = useState<BookingHistoryEntry[]>([]);
@@ -1108,7 +1024,6 @@ export function AdminDashboardPage() {
     const d = new Date(r.eventDate);
     return d >= now && d <= in30;
   }).length;
-  const pendingTesti = testimonials.filter((t) => t.status === 'Pending').length;
 
   /* Dates the BACKEND considers locked — isLocked is derived server-side as
      (isManuallyLocked || confirmedCount >= maxCapacity), counting Confirmed bookings
@@ -1144,7 +1059,6 @@ export function AdminDashboardPage() {
 
 
 
-  const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
 
   /* ── local mutations ── */
   const setResStatus = async (id: string, st: 'Confirmed' | 'Completed' | 'Cancelled') => {
@@ -1192,32 +1106,6 @@ export function AdminDashboardPage() {
       notify('success', 'Booking cancelled.');
     } catch (err: any) {
       notify('error', err.message || 'Failed to cancel booking.');
-    }
-  };
-
-  /* Approve/reject writes through to the backend; only Approved rows reach the
-     landing page, so this is what actually publishes or pulls a review. */
-  const setTestiStatus = async (id: string, status: 'Approved' | 'Rejected') => {
-    const session = readSession();
-    if (!session?.token) {
-      notify('error', 'You are not signed in. Sign in with an Owner or Assistant account first.');
-      return;
-    }
-    setTestiBusyId(id);
-    try {
-      const updated = await moderateTestimonial(session.token, id, status);
-      setTestimonials((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, status: updated.status, moderatedAt: updated.moderatedAt, moderationNote: updated.moderationNote }
-            : t,
-        ),
-      );
-      notify('success', status === 'Approved' ? 'Testimonial published to the landing page.' : 'Testimonial rejected.');
-    } catch (err) {
-      notify('error', err instanceof TestimonialApiError ? err.message : 'Could not update the testimonial.');
-    } finally {
-      setTestiBusyId(null);
     }
   };
 
@@ -2085,7 +1973,6 @@ export function AdminDashboardPage() {
   useEffect(() => {
     if (tab === 'overview' || tab === 'payments') void loadPayments();
     if (tab === 'overview') void loadSalesReport();
-    if (tab === 'audit') void loadAuditLogs(1);
     // Overview needs them too: the calendar cells, the day-detail modal and the
     // pending queue all read `reservations`, which used to stay empty until the
     // admin had visited the Bookings tab at least once.
@@ -2096,7 +1983,6 @@ export function AdminDashboardPage() {
       void loadOutstandingRentals();
     }
     if (tab === 'services') void loadServiceCatalog();
-    if (tab === 'testimonials') void loadTestimonials();
     if (tab === 'announcements') { void loadAnnouncements(); void loadGallery(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -4334,83 +4220,7 @@ export function AdminDashboardPage() {
 
             {/* ══════════ AUDIT LOG (live backend data, Owner-only) ══════════ */}
             {tab === 'audit' && (
-              <div className="fade-up" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-md)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
-                  <div>
-                    <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Audit Log</h2>
-                    <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
-                      Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--text-muted)' }}>/api/Auditlogs</span> · Owner only
-                    </p>
-                  </div>
-                  <span onClick={() => void loadAuditLogs(auditPage)} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                    {auditLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--text-secondary)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--text-secondary)' }} />}
-                  </span>
-                </div>
-
-                {auditError && !auditLoading && (
-                  <div style={{ padding: '1.4rem 1.6rem', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius: '14px', background: 'var(--surface)' }}>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
-                      {auditError}
-                    </p>
-                  </div>
-                )}
-
-                {auditLoading && (
-                  <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '1.4rem 1.6rem' }} aria-hidden="true">
-                    <div className="adm-skel" style={{ height: '0.8rem', width: 140, marginBottom: '1.2rem' }} />
-                    {[0, 1, 2, 3, 4].map((i) => (
-                      <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '0.75rem 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
-                        <div style={{ flex: 1 }}>
-                          <div className="adm-skel" style={{ height: '0.9rem', width: '35%', marginBottom: '0.45rem' }} />
-                          <div className="adm-skel" style={{ height: '0.6rem', width: '60%' }} />
-                        </div>
-                        <div className="adm-skel" style={{ height: '1.4rem', width: 84, borderRadius: 'var(--r-full)' }} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!auditLoading && !auditError && (
-                  <>
-                    {auditRows.length === 0 ? (
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                        {auditPage === 1 ? 'No audit entries recorded yet.' : 'No more entries.'}
-                      </div>
-                    ) : (
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '4px 18px' }}>
-                        {auditRows.map((row, idx) => {
-                          const actionColor = row.action === 'CREATE' ? 'var(--primary)' : row.action === 'DELETE' ? 'var(--danger)' : 'var(--warning)';
-                          const actionBg = row.action === 'CREATE' ? 'rgba(34, 67, 38,.12)' : row.action === 'DELETE' ? 'rgba(220,38,38,.12)' : 'rgba(154, 100, 18,.14)';
-                          return (
-                            <div key={row.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 0', borderBottom: idx < auditRows.length - 1 ? '1px solid var(--border)' : 'none', flexWrap: 'wrap' }}>
-                              <div style={{ flex: 1, minWidth: '220px' }}>
-                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '13px', fontWeight: 500, lineHeight: 1.3, color: 'var(--text-primary)' }}>
-                                  {row.targetTable}<span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)' }}> · {row.targetId.substring(0, 8)}</span>
-                                </div>
-                                <div style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)', marginTop: '4px' }}>
-                                  {fmtDateTime(row.changedAt)} · admin {row.adminId.substring(0, 8)}
-                                </div>
-                              </div>
-                              <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: actionBg, color: actionColor }}>
-                                {row.action}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <button type="button" disabled={auditPage <= 1} onClick={() => void loadAuditLogs(auditPage - 1)} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border-strong)', padding: '11px 18px', borderRadius: '999px', opacity: auditPage <= 1 ? 0.45 : 1, cursor: auditPage <= 1 ? 'not-allowed' : 'pointer' }}>
-                        ‹ Newer
-                      </button>
-                      <span style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 400, lineHeight: 1, color: 'var(--text-muted)' }}>Page {auditPage}</span>
-                      <button type="button" disabled={auditRows.length < AUDIT_PAGE_SIZE} onClick={() => void loadAuditLogs(auditPage + 1)} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border-strong)', padding: '11px 18px', borderRadius: '999px', opacity: auditRows.length < AUDIT_PAGE_SIZE ? 0.45 : 1, cursor: auditRows.length < AUDIT_PAGE_SIZE ? 'not-allowed' : 'pointer' }}>
-                        Older ›
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+              <AuditLogTab />
             )}
 
             {/* ══════════ PACKAGES ══════════ */}
@@ -4420,98 +4230,7 @@ export function AdminDashboardPage() {
 
             {/* ══════════ TESTIMONIALS ══════════ */}
             {tab === 'testimonials' && (
-              <div className="fade-up" style={{ background: 'var(--band-bg)', border: '1px solid var(--band-glass-border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
-                  <div>
-                    <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', lineHeight: 1.1, color: 'var(--band-text)' }}>Testimonial Moderation</h2>
-                    <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--band-muted)' }}>
-                      Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--band-muted)' }}>/api/Testimonials</span> · approved reviews appear on the landing page
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--band-muted)' }}>
-                      {pendingTesti} pending review
-                    </span>
-                    <span onClick={() => void loadTestimonials()} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'rgba(238, 243, 234,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                      {testiLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)' }} />}
-                    </span>
-                  </div>
-                </div>
-
-                {testiError && (
-                  <div style={{ padding: '1.4rem 1.6rem', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', borderRadius: '16px' }}>
-                    <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 300, color: 'var(--danger)', margin: 0 }}>
-                      {testiError}
-                    </p>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
-                  {(['Pending', 'Approved', 'Rejected', 'all'] as const).map((k) => {
-                    const count = k === 'all' ? testimonials.length : testimonials.filter((t) => t.status === k).length;
-                    const isActive = testiFilter === k;
-                    return (
-                      <span
-                        key={k}
-                        onClick={() => setTestiFilter(k)}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: isActive ? 600 : 500, lineHeight: 1, padding: '10px 15px', borderRadius: '999px', background: isActive ? 'var(--accent)' : 'rgba(238, 243, 234,.07)', color: isActive ? 'var(--band-bg)' : 'var(--band-muted)', cursor: 'pointer' }}
-                      >
-                        {k === 'all' ? 'All' : TESTI_STATUS[k].label}
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: isActive ? 'var(--band-bg)' : 'var(--band-muted)' }}>{count}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-
-                {filteredTesti.length === 0 ? (
-                  <div style={{ padding: '3rem 2rem', textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--band-muted)', background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '18px' }}>
-                    No testimonials in this view.
-                  </div>
-                ) : (
-                  filteredTesti.map((t) => {
-                    return (
-                      <div key={t.id} style={{ background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '18px', padding: '20px 22px' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flexWrap: 'wrap' }}>
-                          <span style={{ flex: 'none', width: '42px', height: '42px', borderRadius: '999px', background: 'rgba(109, 196, 137,.16)', border: '1px solid rgba(109, 196, 137,.34)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-display)', fontSize: '17px', fontWeight: 600, lineHeight: 1, color: 'var(--accent)' }}>
-                            {t.authorName.charAt(0)}
-                          </span>
-                          <div style={{ flex: 1, minWidth: '220px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                              <span style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, lineHeight: 1.15, letterSpacing: '-0.02em', color: 'var(--band-text)' }}>{t.authorName}</span>
-                              <span style={{ display: 'flex', gap: '2px' }} aria-label={`${t.rating} out of 5`}>
-                                {Array.from({ length: 5 }).map((_, i) => (
-                                  <Star key={i} size={13} strokeWidth={1.75} fill={i < t.rating ? 'var(--band-accent)' : 'var(--band-border)'} color={i < t.rating ? 'var(--band-accent)' : 'var(--band-border)'} />
-                                ))}
-                              </span>
-                            </div>
-                            <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-body)', fontSize: '15px', fontWeight: 400, lineHeight: 1.6, fontStyle: 'italic', color: 'var(--band-muted)' }}>
-                              "{t.body}"
-                            </p>
-                            <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--band-muted)' }}>
-                              Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing "{t.bookingName}" ({fmtDate(t.eventDate)})
-                            </span>
-                          </div>
-                          <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(186, 181, 105,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#BAB569' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
-                            {t.status}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', marginTop: '16px' }}>
-                          {t.status !== 'Approved' && (
-                            <button type="button" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Approved')} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: '#1F7A33', color: '#fff', border: 'none', padding: '12px 18px', borderRadius: '999px', cursor: 'pointer' }}>
-                              {testiBusyId === t.id ? 'Saving...' : <><Check size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> Approve — publish to landing page</>}
-                            </button>
-                          )}
-                          {t.status !== 'Rejected' && (
-                            <button type="button" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Rejected')} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: '#DC2626', color: '#fff', border: 'none', padding: '12px 18px', borderRadius: '999px', cursor: 'pointer' }}>
-                              {testiBusyId === t.id ? 'Saving...' : <><X size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> {t.status === 'Approved' ? 'Remove from landing page' : 'Reject'}</>}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
+              <TestimonialsTab notify={notify} onPendingCountChange={setPendingTesti} />
             )}
 
             {/* ══════════ BOOKING HISTORIES (live backend data) ══════════ */}

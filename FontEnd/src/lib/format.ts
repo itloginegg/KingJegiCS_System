@@ -18,6 +18,17 @@ export const fmtDate = (iso: string) => {
   }
 };
 
+/** Date plus clock time, for audit rows and anything else stamped to the minute. */
+export const fmtDateTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleString('en-PH', {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+};
+
 /**
  * "14:30:00" → "2:30 PM". TimeOnly arrives as HH:mm:ss, which isn't a date, so it's
  * parsed positionally. Null/absent renders as an em dash.
