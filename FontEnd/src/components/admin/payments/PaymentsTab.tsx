@@ -138,7 +138,6 @@ export function PaymentsTab({
      does not poll while another one is showing. */
   useEffect(() => {
     if (active) void loadDatedPayments(paymentDate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, paymentDate, refreshToken]);
 
   /* A notification asked for a particular payment. Clearing the other filters is
