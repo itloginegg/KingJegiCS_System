@@ -1,0 +1,635 @@
+/*
+ * Admin dashboard styles, lifted out of the <style> element AdminDashboardPage used
+ * to render inline.
+ *
+ * Every rule here is scoped to an adm- class or id, which is what makes it safe to
+ * load as an ordinary stylesheet: once the dashboard chunk has loaded, this file
+ * stays in the document for the rest of the session, including on pages that are
+ * not the dashboard.
+ *
+ * Three rules were deliberately NOT moved and still render inline from the page,
+ * so they exist only while the dashboard is mounted:
+ *   - @keyframes fadeUp and .fade-up — BookingPage and CustomerDashboardPage define
+ *     the same two names with different timings, and a global copy would override
+ *     whichever loaded first.
+ *   - the contract's print block, whose `body * { visibility: hidden }` would blank
+ *     every other page's printout after one visit to the dashboard.
+ *   - the invoice's print block, which sets a page-wide `@page` margin.
+ */
+
+.adm-shell { min-height: 100vh; background: var(--bg-subtle); transition: background 0.4s; }
+.adm-main { margin-left: 250px; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ── sidebar ── */
+.adm-sidebar {
+  position: fixed; top: 0; left: 0; z-index: 60;
+  width: 250px; height: 100vh;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: transform 0.3s ease;
+}
+.adm-brand {
+  padding: 1.5rem 1.4rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.65rem;
+}
+.adm-brand-mark {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: var(--r-lg);
+  background: var(--accent-muted);
+  border: 1px solid var(--border-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
+  color: var(--accent);
+}
+.adm-drawer-close { display: none; }
+.adm-nav { flex: 1; padding: 1rem 0.8rem; display: flex; flex-direction: column; gap: 0.25rem; overflow-y: auto; }
+.adm-nav-caption {
+  padding: 0.4rem 0.9rem 0.3rem;
+  font-family: var(--font-body); font-size: 0.5rem;
+  letter-spacing: 0.3em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-dim);
+}
+.adm-nav-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  width: 100%; text-align: left;
+  padding: 0.66rem 0.9rem;
+  border: 1px solid transparent; border-radius: var(--r-lg);
+  background: transparent; cursor: pointer;
+  font-family: var(--font-body); font-size: 0.68rem;
+  letter-spacing: 0.1em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-muted); text-decoration: none;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.adm-nav-item:hover:not(.active) { background: var(--bg-subtle); color: var(--text-primary); }
+.adm-nav-item.active {
+  background: var(--primary-muted);
+  border-color: var(--border-accent);
+  color: var(--primary);
+}
+.adm-nav-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* ── bookings accordion in the sidebar ──
+   Children reuse .adm-nav-item wholesale, so the active treatment is the same
+   rule every other nav entry uses rather than a lookalike that drifts. Only
+   the indent, the tree lines and the type scale are new. */
+.adm-nav-tree { display: flex; flex-direction: column; }
+.adm-nav-label { flex: 1; }
+.adm-nav-caret { flex-shrink: 0; color: var(--text-dim); }
+.adm-nav-item.active .adm-nav-caret { color: var(--primary); }
+
+.adm-nav-children {
+  list-style: none; margin: 0.2rem 0 0; padding: 0 0 0 1.25rem;
+  display: flex; flex-direction: column; gap: 0.12rem;
+}
+.adm-nav-children > li { position: relative; padding-left: 0.95rem; }
+/* Elbow: down from the trunk, then curving right into the child. */
+.adm-nav-children > li::before {
+  content: ''; position: absolute; left: 0; top: 0;
+  width: 0.62rem; height: calc(50% + 1px);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 9px;
+  pointer-events: none;
+}
+/* Trunk continuation — unbroken between children, stops at the last one. */
+.adm-nav-children > li:not(:last-child)::after {
+  content: ''; position: absolute; left: 0; top: 50%; bottom: 0;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+.adm-nav-child { padding: 0.46rem 0.7rem; font-size: 0.62rem; gap: 0.5rem; }
+.adm-nav-child-label { flex: 1; }
+.adm-nav-count {
+  font-size: 0.58rem; font-weight: 600;
+  color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.adm-nav-item.active .adm-nav-count { color: var(--primary); }
+/* No tile behind the glyph: that box existed to give an emoji a consistent
+   footprint. A Lucide icon on currentColor needs no container, and dropping
+   it lets eleven nav rows sit closer together in a 250px rail. */
+.adm-nav-icon {
+  width: 20px; height: 20px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: currentColor;
+}
+.adm-nav-icon svg { width: 18px; height: 18px; }
+.adm-badge {
+  margin-left: auto;
+  background: var(--accent-muted); color: var(--accent);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--r-full);
+  font-size: 0.54rem; font-weight: 600; letter-spacing: 0.04em;
+  padding: 0.08rem 0.45rem; min-width: 18px; text-align: center;
+}
+.adm-sidebar-foot { padding: 0.9rem 0.8rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.45rem; }
+.adm-foot-btn {
+  width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  padding: 0.58rem;
+  border: 1px solid var(--border); border-radius: var(--r-full);
+  background: transparent; cursor: pointer;
+  font-family: var(--font-body); font-size: 0.58rem;
+  letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-muted); text-decoration: none;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.adm-foot-btn:hover { color: var(--primary); border-color: var(--border-accent); background: var(--primary-muted); }
+/* Sign out reads danger at rest, not only on hover — artboard 8b colours it
+   #F2828C in the drawer. A destructive action that looks identical to the
+   theme toggle until you are already pointing at it announces itself too late. */
+.adm-foot-btn.danger { color: var(--danger); }
+.adm-foot-btn.danger:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-muted); }
+
+.adm-scrim { position: fixed; inset: 0; z-index: 55; background: rgba(22, 40, 26, 0.32); display: none; }
+
+/* ── topbar ── */
+.adm-topbar {
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 0.9rem;
+  padding: 0.85rem 2rem;
+  background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.adm-iconbtn {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-secondary);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.2s, border-color 0.2s;
+}
+.adm-iconbtn:hover { color: var(--primary); border-color: var(--border-accent); }
+.adm-burger { display: none; }
+.adm-avatar {
+  width: 32px; height: 32px; flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-muted);
+  border: 1px solid var(--border-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 0.8rem; font-weight: 600;
+  color: var(--accent);
+}
+
+/* ── cards & shared pieces ── */
+.adm-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
+.adm-card:hover { border-color: var(--border-accent); box-shadow: var(--shadow-md); }
+
+/* skeleton shimmer (loading states) */
+@keyframes admShimmer { 0% { background-position: -450px 0; } 100% { background-position: 450px 0; } }
+.adm-skel {
+  background: linear-gradient(90deg, var(--border) 0%, var(--bg-subtle) 40%, var(--border) 80%);
+  background-size: 450px 100%;
+  animation: admShimmer 1.4s ease-in-out infinite;
+  border-radius: var(--r-sm);
+}
+
+.adm-title { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; letter-spacing: -0.028em; line-height: 1.1; color: var(--text-primary); }
+
+.adm-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.1rem; }
+@media (max-width: 1200px) { .adm-metrics { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 620px)  { .adm-metrics { grid-template-columns: 1fr; } }
+.adm-metric { padding: 1.25rem 1.4rem; }
+.adm-metric .head { display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.8rem; }
+.adm-metric .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.adm-metric .lbl {
+  font-family: var(--font-body); font-size: 0.55rem;
+  letter-spacing: 0.22em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-dim);
+}
+.adm-metric .num { font-family: var(--font-display); font-size: 1.9rem; font-weight: 600; line-height: 1; color: var(--text-primary); }
+.adm-metric .sub { font-family: var(--font-body); font-size: 0.66rem; font-weight: 300; color: var(--text-muted); margin-top: 0.35rem; }
+
+/* pills */
+.adm-pill {
+  font-family: var(--font-body); font-size: 0.6rem;
+  letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500;
+  padding: 0.45rem 0.95rem; border-radius: var(--r-full);
+  background: var(--surface); color: var(--text-muted);
+  border: 1px solid var(--border);
+  cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.adm-pill:hover { border-color: var(--border-accent); color: var(--text-primary); }
+.adm-pill.active { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+.adm-pill .count {
+  font-size: 0.54rem; letter-spacing: 0.04em;
+  background: var(--bg-subtle); color: var(--text-dim);
+  border-radius: var(--r-full); padding: 0.05rem 0.42rem; min-width: 17px; text-align: center;
+}
+.adm-pill.active .count { background: color-mix(in srgb, var(--primary-text) 22%, transparent); color: var(--primary-text); }
+
+/* buttons */
+.adm-btn {
+  font-family: var(--font-body); font-size: 0.6rem;
+  letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500;
+  padding: 0.55rem 1.05rem; border-radius: var(--r-full);
+  border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s;
+}
+.adm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.adm-btn.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+.adm-btn.primary:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
+.adm-btn.success { background: var(--primary-muted); color: var(--primary); border-color: var(--border-accent); }
+.adm-btn.success:hover:not(:disabled) { background: var(--primary); color: var(--primary-text); }
+.adm-btn.outline { background: transparent; color: var(--text-muted); border-color: var(--border); }
+.adm-btn.outline:hover:not(:disabled) { color: var(--primary); border-color: var(--border-accent); background: var(--primary-muted); }
+.adm-btn.danger { background: var(--danger-muted); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+.adm-btn.danger:hover:not(:disabled) { background: var(--danger); color: var(--danger-text); }
+.adm-btn.info { background: color-mix(in srgb, var(--status-info) 12%, transparent); color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 30%, transparent); }
+.adm-btn.info:hover:not(:disabled) { background: var(--status-info); color: var(--primary-text); }
+
+/* inputs */
+.adm-input {
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-full);
+  padding: 0.6rem 1.05rem;
+  font-family: var(--font-body); font-size: 0.8rem; font-weight: 300;
+  color: var(--text-primary); outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.adm-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted); }
+.adm-input.square { border-radius: var(--r-lg); background: var(--bg-subtle); width: 100%; }
+select.adm-input { cursor: pointer; font-weight: 400; }
+
+.adm-modal-overlay {
+  position: fixed; inset: 0; z-index: 120;
+  background: rgba(20, 14, 8, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.adm-modal-panel {
+  width: min(100%, 720px);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 1.4rem 1.5rem;
+}
+.adm-modal-panel h3 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.adm-modal-panel .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.adm-modal-panel .form-grid.full { grid-template-columns: 1fr; }
+.adm-modal-panel .form-row {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+.adm-modal-panel .form-row label {
+  font-family: var(--font-body); font-size: 0.66rem;
+  letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-dim);
+}
+.adm-modal-panel .form-actions {
+  display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: flex-end; margin-top: 1rem;
+}
+
+/* chart */
+.adm-chart { display: flex; align-items: flex-end; gap: 0.9rem; height: 160px; padding-top: 0.5rem; }
+.adm-chart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.45rem; height: 100%; justify-content: flex-end; }
+.adm-chart .bar {
+  width: 100%; max-width: 46px;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: linear-gradient(180deg, var(--primary), color-mix(in srgb, var(--primary) 55%, transparent));
+  transition: height 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.adm-chart .val { font-family: var(--font-body); font-size: 0.56rem; font-weight: 500; color: var(--text-muted); }
+.adm-chart .mon { font-family: var(--font-body); font-size: 0.56rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-dim); }
+
+/* calendar */
+.adm-cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.9rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+}
+.adm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; padding: 0.5rem; }
+.adm-cal-dow {
+  text-align: center; padding: 0.45rem 0;
+  font-family: var(--font-body); font-size: 0.52rem;
+  letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500;
+  color: var(--text-dim);
+}
+.adm-cal-cell { min-height: 62px; padding: 0.35rem 0.4rem; border-radius: var(--r-sm); }
+.adm-cal-cell .d { font-family: var(--font-body); font-size: 0.68rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.2rem; }
+.adm-cal-ev {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-body); font-size: 0.5rem; font-weight: 500;
+  padding: 0.08rem 0.3rem; border-radius: 3px; margin-bottom: 1px;
+}
+
+/* ── overview ──
+   These --ov-* names are kept because ~80 rules below read them, but every
+   one now forwards to a house token instead of carrying its own literal.
+   The tab used to run a self-contained lime-on-charcoal skin (#C0FF00 on
+   #1C1C1C, Inter/Jost) — a third design language sitting between the plum
+   site and the plum admin chrome, and one that needed its own hand-written
+   dark path. Forwarding deletes that path: .dark rebinds --surface,
+   --text-primary and the rest, and everything here follows. Layout values
+   (--ov-r, the grid gap) are unchanged. */
+.adm-ov {
+  --ov-lime: var(--accent);
+  --ov-lime-2: var(--accent-hover);
+  --ov-lime-soft: var(--accent-muted);
+  --ov-lime-ink: var(--accent);
+  --ov-lime-on: var(--accent-text);
+  --ov-charcoal: var(--primary);
+  --ov-ink: var(--text-primary);
+  --ov-muted: var(--text-muted);
+  --ov-card: var(--surface);
+  --ov-chip: var(--bg-subtle);
+  --ov-line: var(--border);
+  --ov-dash: var(--border-strong);
+  --ov-neg: var(--danger-muted);
+  --ov-neg-ink: var(--danger);
+  --ov-r: 22px;
+  --ov-font: var(--font-body);
+  font-family: var(--ov-font);
+  gap: 1.15rem !important;
+}
+.adm-ov .adm-title {
+  font-family: var(--ov-font); font-weight: 600;
+  letter-spacing: -0.03em; color: var(--ov-ink);
+}
+.adm-ov .adm-title em { color: var(--ov-lime-ink) !important; font-style: normal !important; }
+.adm-ov .adm-greet { font-family: var(--ov-font); font-size: 0.8rem; font-weight: 400; color: var(--ov-muted); margin-top: 0.3rem; }
+.adm-ov .adm-iconbtn {
+  border-radius: 50%; background: var(--ov-chip);
+  border-color: transparent; color: var(--ov-muted);
+}
+.adm-ov .adm-iconbtn:hover { background: var(--ov-lime); border-color: transparent; color: var(--ov-lime-on); }
+
+/* top region — 2x2 KPI grid on the left, sales panel on the right */
+.adm-ov-top {
+  display: grid;
+  grid-template-columns: minmax(280px, 4.4fr) minmax(340px, 5.6fr);
+  gap: 1.15rem; align-items: stretch;
+}
+.adm-ov-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 1.15rem; }
+@media (max-width: 1080px) { .adm-ov-top { grid-template-columns: 1fr; } }
+@media (max-width: 560px)  { .adm-ov-kpis { grid-template-columns: 1fr; } }
+
+.adm-ov-surface {
+  background: var(--ov-card);
+  border: 1px solid var(--ov-line);
+  border-radius: var(--ov-r);
+}
+
+.adm-ov-kpi {
+  position: relative; overflow: hidden;
+  padding: 1.15rem 1.2rem 1.2rem;
+  min-height: 152px;
+  display: flex; flex-direction: column;
+  transition: transform 0.28s ease, box-shadow 0.28s ease;
+}
+.adm-ov-kpi:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(20, 20, 20, 0.09); }
+.adm-ov-kpi .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.6rem; }
+.adm-ov-kpi .lbl { font-size: 0.775rem; font-weight: 500; letter-spacing: -0.01em; color: var(--ov-muted); }
+.adm-ov-kpi .ico {
+  width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+  background: var(--ov-chip); color: var(--ov-muted);
+  display: flex; align-items: center; justify-content: center;
+}
+.adm-ov-kpi .num {
+  margin-top: auto;
+  font-size: clamp(1.55rem, 2.5vw, 2.05rem);
+  font-weight: 700; letter-spacing: -0.035em; line-height: 1.05;
+  color: var(--ov-ink);
+}
+.adm-ov-kpi .foot {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  margin-top: 0.5rem; font-size: 0.685rem; font-weight: 400; color: var(--ov-muted);
+}
+
+/* the single accent card — rich green with a lime bloom in the corner */
+/* The featured KPI card is a dark fill in BOTH themes, so its values are
+   pinned literals rather than tokens — the same contract .dark-band has.
+   It was a green gradient under a lime highlight, which belonged to neither
+   the old palette nor this one. */
+.adm-ov-kpi.accent {
+  border-color: transparent;
+  background:
+    radial-gradient(120% 95% at 92% 4%, rgba(168, 186, 156, 0.38) 0%, rgba(168, 186, 156, 0) 58%),
+    linear-gradient(142deg, #3E6B43 0%, #224326 52%, #16281A 100%);
+  box-shadow: 0 10px 30px rgba(22, 40, 26, 0.28);
+}
+.adm-ov-kpi.accent .lbl { color: rgba(238, 243, 234, 0.9); }
+.adm-ov-kpi.accent .num { color: #EEF3EA; }
+.adm-ov-kpi.accent .foot { color: rgba(238, 243, 234, 0.84); }
+.adm-ov-kpi.accent .ico { background: rgba(238, 243, 234, 0.16); color: #EEF3EA; }
+
+.adm-ov-badge {
+  display: inline-flex; align-items: center; gap: 0.15rem;
+  padding: 0.16rem 0.44rem; border-radius: 999px;
+  font-size: 0.655rem; font-weight: 600; letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.adm-ov-badge.up   { background: var(--ov-lime-soft); color: var(--ov-lime-ink); }
+.adm-ov-badge.down { background: var(--ov-neg); color: var(--ov-neg-ink); }
+.adm-ov-kpi.accent .adm-ov-badge { background: rgba(168, 186, 156, 0.20); color: #A8BA9C; }
+
+/* sales panel */
+.adm-ov-panel { padding: 1.3rem 1.4rem 1.2rem; display: flex; flex-direction: column; }
+.adm-ov-panel h3 {
+  font-family: var(--ov-font); font-size: 1.06rem; font-weight: 600;
+  letter-spacing: -0.025em; color: var(--ov-ink); margin: 0;
+}
+.adm-ov-panel .sub { font-size: 0.71rem; font-weight: 400; color: var(--ov-muted); margin: 0.25rem 0 0; }
+.adm-ov-panel .sub b { font-weight: 600; color: var(--ov-ink); }
+.adm-ov-legend { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.adm-ov-legend span {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.66rem; font-weight: 500; color: var(--ov-muted);
+}
+.adm-ov-legend i { width: 9px; height: 9px; border-radius: 3px; display: block; }
+
+.adm-ov-chart { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 0.7rem; margin-top: 1.15rem; }
+.adm-ov-chart .ax {
+  display: flex; flex-direction: column; justify-content: space-between;
+  height: 178px; min-width: 30px; text-align: right;
+  font-size: 0.6rem; font-weight: 500; color: var(--ov-muted);
+}
+.adm-ov-chart .ax span { transform: translateY(-0.35em); line-height: 1; }
+.adm-ov-plot { position: relative; height: 178px; }
+.adm-ov-plot .grid { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; }
+.adm-ov-plot .grid i { display: block; border-top: 1px dashed var(--ov-dash); }
+.adm-ov-plot .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; }
+.adm-ov-grp { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; }
+.adm-ov-bar {
+  width: clamp(9px, 26%, 19px); min-height: 3px;
+  border-radius: 5px 5px 2px 2px;
+  transition: height 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.adm-ov-bar.net { background: repeating-linear-gradient(135deg, var(--ov-lime) 0 5px, var(--ov-lime-2) 5px 10px); }
+.adm-ov-bar.ref { background: var(--ov-charcoal); }
+.adm-ov-months { grid-column: 2; display: flex; margin-top: 0.55rem; }
+.adm-ov-months span {
+  flex: 1; text-align: center;
+  font-size: 0.585rem; font-weight: 500; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ov-muted);
+}
+
+.adm-ov-ai { margin-top: auto; padding-top: 0.95rem; border-top: 1px solid var(--ov-line); }
+.adm-ov-ai .cap {
+  font-size: 0.55rem; font-weight: 600; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--ov-muted);
+}
+.adm-ov-ai p { font-size: 0.745rem; font-weight: 400; line-height: 1.65; color: var(--ov-ink); margin: 0.35rem 0 0.7rem; }
+.adm-ov-btn {
+  font-family: var(--ov-font); font-size: 0.7rem; font-weight: 500;
+  padding: 0.5rem 0.95rem; border-radius: 999px;
+  border: 1px solid var(--ov-line); background: var(--ov-chip);
+  color: var(--ov-ink); cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.adm-ov-btn:hover:not(:disabled) { background: var(--ov-lime); border-color: var(--ov-lime); color: var(--ov-lime-on); }
+.adm-ov-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* full-width calendar, anchored below both */
+.adm-ov-cal { overflow: hidden; }
+.adm-ov-cal .adm-cal-head {
+  background: var(--ov-chip); border-bottom: 1px solid var(--ov-line);
+  border-radius: 0; padding: 0.95rem 1.25rem;
+}
+.adm-ov-cal .adm-cal-title {
+  font-family: var(--ov-font); font-size: 0.94rem; font-weight: 600;
+  letter-spacing: -0.02em; color: var(--ov-ink);
+}
+.adm-ov-cal .adm-cal-grid { gap: 6px; padding: 0.5rem 1rem 0.9rem; }
+.adm-ov-cal .adm-cal-grid:first-of-type { padding-bottom: 0; }
+.adm-ov-cal .adm-cal-dow {
+  font-family: var(--ov-font); font-size: 0.575rem; font-weight: 600;
+  letter-spacing: 0.16em; color: var(--ov-muted);
+}
+.adm-ov-cal .adm-cal-cell {
+  min-height: 78px; padding: 0.45rem 0.5rem;
+  border-radius: 14px; border: 1px solid transparent;
+  transition: background 0.18s, border-color 0.18s, transform 0.18s;
+}
+.adm-ov-cal .adm-cal-cell:hover { transform: translateY(-1px); border-color: var(--ov-dash); }
+.adm-ov-cal .adm-cal-cell .d {
+  font-family: var(--ov-font); font-size: 0.75rem; font-weight: 600;
+  color: var(--ov-ink); margin-bottom: 0.25rem;
+}
+.adm-ov-cal .adm-cal-ev {
+  font-family: var(--ov-font); font-size: 0.55rem; font-weight: 500;
+  border-radius: 5px; padding: 0.1rem 0.32rem;
+}
+.adm-ov-cal .adm-cal-foot {
+  border-top: 1px solid var(--ov-line); padding: 0.9rem 1.25rem;
+  display: flex; gap: 0.7rem; align-items: center; flex-wrap: wrap;
+  font-family: var(--ov-font); font-size: 0.73rem; color: var(--ov-muted);
+}
+
+/* bookings tab — tree-menu column beside the grouped table */
+/* rows */
+.adm-row { border-bottom: 1px solid var(--border); }
+.adm-row:last-child { border-bottom: none; }
+
+/* Clickable data rows. The tint is drawn as a full-bleed inset shadow so it
+   layers over whatever the row's own background is — the menu/rental/service
+   rows sit on --surface, the tray rows on a --primary fill, and one rule
+   covers both by picking the tint from the matching foreground token. */
+.adm-datarow { transition: box-shadow 0.2s ease; }
+.adm-datarow:hover {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+.adm-datarow--onfill:hover {
+  box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--primary-text) 10%, transparent);
+}
+
+/* responsive */
+@media (max-width: 900px) {
+  .adm-main { margin-left: 0; }
+  .adm-sidebar { transform: translateX(-100%); }
+  .adm-sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
+  .adm-scrim.open { display: block; }
+  .adm-burger { display: flex; }
+  .adm-drawer-close { display: flex; }
+  .adm-topbar { padding: 0.8rem 1.25rem; }
+  .adm-content { padding: 1.5rem 1.25rem 4rem !important; }
+  .adm-overview-cols { grid-template-columns: 1fr !important; }
+}
+
+/* ── master/detail panes (support threads, booking history) ──
+   Both columns carry a hard min width, so below ~860px the pair overflows
+   the content box instead of shrinking. The detail side is minmax(0, 1fr)
+   rather than 1fr so a wide table inside can't blow the column out either. */
+.adm-split {
+  display: grid; gap: 1rem; align-items: start;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+}
+.adm-split--history {
+  gap: 14px;
+  grid-template-columns: minmax(190px, 4fr) minmax(240px, 8fr);
+}
+@media (max-width: 860px) {
+  .adm-split, .adm-split--history { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  /* Two form columns leave ~130px a field once the overlay and panel padding
+     are taken out — narrower than the inputs' own text. */
+  .adm-modal-panel .form-grid { grid-template-columns: 1fr; }
+  /* Top-aligned so a tall form scrolls from its heading rather than being
+     centred with both ends clipped. */
+  .adm-modal-overlay { padding: 0.75rem; align-items: flex-start; }
+  .adm-modal-panel { max-height: calc(100dvh - 1.5rem); padding: 1.1rem 1rem; }
+  .adm-modal-panel .form-actions > * { flex: 1 1 auto; }
+  /* Seven columns leave ~44px a cell here, so the reserved row height is
+     what makes an empty month fill the screen. */
+  .adm-cal-cell { min-height: 46px; padding: 0.25rem 0.2rem; }
+  .adm-title { font-size: 1.25rem; }
+}
+
+/* The tab label is the only elastic thing in the topbar; without this it
+   pushes the bell, theme toggle and avatar off the right edge on a phone. */
+.adm-topbar-title {
+  min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .adm-topbar { padding: 0.7rem 1rem; }
+  .adm-content { padding: 1.25rem 1rem 3.5rem !important; }
+  .adm-cal-head { padding: 0.75rem 0.9rem; }
+  .adm-chart { gap: 0.4rem; }
+}
+
+/* ── printable invoice ──
+   The letterhead is paper-only: on screen the modal sits inside the dashboard,
+   but a printed page arrives with no context and has to identify itself. */
+.adm-invoice-printonly { display: none; }
+.adm-invoice-letterhead {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 1.5rem; padding: 0 0 0.9rem; margin-bottom: 1.2rem;
+  border-bottom: 2px solid #000;
+}
+.adm-invoice-brand { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+.adm-invoice-word {
+  font-family: var(--font-display); font-size: 1.5rem; font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.adm-invoice-sub { font-family: var(--font-body); font-size: 0.72rem; font-weight: 300; }
