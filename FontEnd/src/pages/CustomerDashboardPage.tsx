@@ -1389,7 +1389,7 @@ export function CustomerDashboardPage() {
                             {b?.bookingName || 'Event'}
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)' }}>
-                            #{o.id} ┬╖ {o.issueDate}
+                            #{o.id} · {o.issueDate}
                           </div>
                         </div>
                         <StatusBadge label={st.label} color={st.color} />

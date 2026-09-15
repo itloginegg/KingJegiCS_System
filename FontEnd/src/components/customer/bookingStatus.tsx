@@ -16,10 +16,17 @@
  */
 import React from 'react';
 import {
-  HeartHandshake, Truck,
+  HeartHandshake, Truck, Package, CalendarDays,
   Cake, PartyPopper, Building2, } from 'lucide-react';
 import type { BookingResponse as BookingResponseDto } from '../../api/bookingApi';
 
+/**
+ * An event type string → an EVENT_META key.
+ *
+ * The 'wedding' default is for an UNRECOGNISED event type, not for a missing one.
+ * Callers must not hand it null and trust the answer — see bookingMeta, which
+ * resolves event-less booking types before it ever gets here.
+ */
 export const normalizeType = (ty: string | null) => {
   if (!ty) return 'wedding';
   const l = ty.toLowerCase();
@@ -27,6 +34,10 @@ export const normalizeType = (ty: string | null) => {
   if (l.includes('birth')) return 'birthday';
   if (l.includes('debut')) return 'debut';
   if (l.includes('corp')) return 'corporate';
+  /* EventType.Others is a real, selectable enum member, not an unknown value.
+     Without this branch it fell to the default below and a customer who booked
+     "Other" was told on their own dashboard that they had a wedding. */
+  if (l.includes('other')) return 'others';
   return 'wedding';
 };
 
@@ -37,19 +48,39 @@ export const EVENT_META: Record<string, { label: string; icon: React.ReactNode }
   debut: { label: 'Debut Celebration', icon: <PartyPopper size={16} /> },
   corporate: { label: 'Corporate Event', icon: <Building2 size={16} /> },
   delivery: { label: 'Food Delivery', icon: <Truck size={16} /> },
+  rental: { label: 'Equipment Rental', icon: <Package size={16} /> },
+  others: { label: 'Special Event', icon: <CalendarDays size={16} /> },
+};
+
+/**
+ * Booking types that carry NO eventType at all, and what to show in its place.
+ *
+ * A table rather than a chain of ternaries because this bug has now been found
+ * twice. FoodDelivery fell through to normalizeType(null) → 'wedding' and every
+ * delivery rendered as "Wedding Event"; that was patched with a single branch on
+ * FoodDelivery. RentalService then gained a null eventType of its own — the
+ * backend had been wrongly demanding one — and walked straight into the same
+ * hole, because the branch named one type instead of describing the category.
+ *
+ * A new event-less booking type now needs a row here, and nothing can quietly
+ * inherit a wedding by omission.
+ */
+const EVENTLESS_TYPE_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  FoodDelivery: EVENT_META.delivery,
+  RentalService: EVENT_META.rental,
 };
 
 /**
  * The right EVENT_META entry for a booking.
  *
- * A FoodDelivery order has no eventType at all (null, by backend design), so it must
- * be branched on FIRST — otherwise normalizeType(null) returns its 'wedding' default
- * and every delivery renders as "Wedding Event".
+ * Event-less types resolve FIRST, by table. Only a booking that genuinely has an
+ * eventType reaches normalizeType, whose 'wedding' default is then a sane answer
+ * to "unrecognised event type" rather than a wrong answer to "no event type".
  */
 export const bookingMeta = (booking: { bookingType: string; eventType: string | null }) =>
-  booking.bookingType === 'FoodDelivery'
-    ? EVENT_META.delivery
-    : EVENT_META[normalizeType(booking.eventType)] ?? EVENT_META.wedding;
+  EVENTLESS_TYPE_META[booking.bookingType] ??
+  EVENT_META[normalizeType(booking.eventType)] ??
+  EVENT_META.wedding;
 
 /**
  * The statuses a customer actually sees, keyed so the filter dropdown can match on

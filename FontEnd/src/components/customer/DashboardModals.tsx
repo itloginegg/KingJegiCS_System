@@ -196,7 +196,7 @@ export function BookingDetailModal({ booking, onClose, statusBadge, notify, onSu
               #{booking.id}
             </p>
           </div>
-          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">├ù</button>
+          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">×</button>
         </div>
 
         <div className="cds-modal-body" style={{ overflowY: 'auto', padding: '1.6rem' }}>
@@ -213,7 +213,12 @@ export function BookingDetailModal({ booking, onClose, statusBadge, notify, onSu
             )}
             <div><FieldLabel text="Status" /><strong className="cds-value" style={{ color: st.color }}>{st.label}</strong></div>
             <div><FieldLabel text="Venue" /><strong className="cds-value">{booking.venueAddress}</strong></div>
-            <div><FieldLabel text="Guests" /><strong className="cds-value">{booking.guestCount}</strong></div>
+            {/* Same reason the end date/time row is conditional: a delivery and a
+                rental both have a null guestCount by backend design, and this row
+                was rendering the label over an empty value for both. */}
+            {booking.guestCount != null && (
+              <div><FieldLabel text="Guests" /><strong className="cds-value">{booking.guestCount}</strong></div>
+            )}
           </div>
 
           {loading ? (
@@ -273,13 +278,13 @@ export function BookingDetailModal({ booking, onClose, statusBadge, notify, onSu
                   <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
                     {detail?.menuItems.map(mi => (
                       <div key={mi.itemId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mi.itemName} ├ù {mi.quantity}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mi.itemName} × {mi.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(mi.lineTotal)}</span>
                       </div>
                     ))}
                     {detail?.menuTrays.map(mt => (
                       <div key={mt.trayId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mt.trayName} ├ù {mt.quantity}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{mt.trayName} × {mt.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(mt.lineTotal)}</span>
                       </div>
                     ))}
@@ -294,7 +299,7 @@ export function BookingDetailModal({ booking, onClose, statusBadge, notify, onSu
                   <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
                     {detail.rentals.map(r => (
                       <div key={r.lineId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{r.itemName} ├ù {r.quantity}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{r.itemName} × {r.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(r.subtotal)}</span>
                       </div>
                     ))}
@@ -309,7 +314,7 @@ export function BookingDetailModal({ booking, onClose, statusBadge, notify, onSu
                   <div style={{ border: '1px solid var(--border)', borderRadius: '0.4rem', padding: '0.5rem 1rem', background: 'var(--bg-card)' }}>
                     {detail.services.map(s => (
                       <div key={s.lineId} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{s.serviceName} ├ù {s.quantity}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{s.serviceName} × {s.quantity}</span>
                         <span style={{ color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 500 }}>{fmt(s.totalCost)}</span>
                       </div>
                     ))}
@@ -401,7 +406,7 @@ export function InvoiceModal({ order, customer, onClose }: { order: InvoiceRespo
             Events & Catering
           </span>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.8rem' }}>
-            Invoice ┬╖ #{invoice.id.substring(0,8)}
+            Invoice · #{invoice.id.substring(0,8)}
           </span>
         </div>
 
@@ -496,6 +501,11 @@ export function PaymentScheduleModal({ order, invoice, onClose }: { order: Booki
 
   const remaining = invoice ? (invoice.grandTotal - invoice.paidTotal) : 0;
   const [amount, setAmount] = useState<number>(remaining);
+  /* Which schedule row the amount came from, or null when it was typed by hand.
+     Tracked rather than derived by comparing `amount` to each row's figure: two
+     rows can legitimately owe the same sum, and the highlight would then land on
+     both. */
+  const [selectedStage, setSelectedStage] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
 
@@ -611,7 +621,7 @@ export function PaymentScheduleModal({ order, invoice, onClose }: { order: Booki
               Booking #{order.id.substring(0, 8)}
             </p>
           </div>
-          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">├ù</button>
+          <button className="cds-modal-close" onClick={onClose} aria-label="Close details">×</button>
         </div>
 
         <form onSubmit={handleCheckout} className="cds-modal-body" style={{ overflowY: 'auto', padding: '1.6rem' }}>
@@ -626,78 +636,95 @@ export function PaymentScheduleModal({ order, invoice, onClose }: { order: Booki
             </div>
           </div>
 
+          {/* The schedule IS the stage picker.
+              These rows used to be read-only, with a duplicate row of "Pay a stage"
+              buttons underneath — the same three stages listed twice, and listed with
+              DIFFERENT figures, because a row showed m.amountDue (that stage alone)
+              while its button charged the cumulative catch-up. Merging them removes
+              the duplication, but only works if the row is honest about which of the
+              two numbers the click actually charges; hence the "Pays …" line below. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', margin: '1.5rem 0' }}>
             {milestones.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-dim)' }}>
                 No active schedule yet.
               </div>
-            ) : milestones.map((m, i) => (
-              <div key={i} style={{
-                background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-                borderRadius: 'var(--r-md)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-              }}>
-                <div>
-                  <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{m.label}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Due: {m.dueDate}</div>
-                </div>
-                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(m.amountDue)}</div>
-                  {m.status === 'Paid' ? (
-                    <StatusBadge label="Paid" color="var(--status-paid)" />
-                  ) : (
-                    <StatusBadge label={m.status} color="var(--status-unpaid)" />
-                  )}
-                </div>
-              </div>
-            ))}
+            ) : milestones.map((m, i) => {
+              // Milestones are CUMULATIVE targets, not independent invoices: once
+              // something has been paid, m.amountDue is no longer what is owed for
+              // that stage. What settles it is the cumulative target minus everything
+              // paid so far, capped at the remaining balance.
+              const owed = Math.min(remaining, Math.max(0, m.cumulativeDue - schedule.paidTotal));
+              const done = m.status === 'Paid' || owed <= 0;
+              const payable = Boolean(invoice) && remaining > 0 && !done;
+              const selected = selectedStage === i;
+              // Only worth spelling out when the two figures differ — on the first
+              // unpaid stage they are the same and the extra line would be noise.
+              const catchUp = payable && Math.abs(owed - m.amountDue) > 0.005;
+
+              return (
+                <button
+                  key={i}
+                  type="button"          /* inside a <form>: without this it submits */
+                  onClick={() => {
+                    if (!payable) return;
+                    setSelectedStage(i);
+                    setAmount(owed);
+                    setCheckoutError('');
+                  }}
+                  disabled={!payable || isSubmitting}
+                  aria-pressed={selected}
+                  style={{
+                    all: 'unset',
+                    boxSizing: 'border-box',
+                    width: '100%',
+                    background: selected ? 'var(--accent-muted)' : 'var(--bg-subtle)',
+                    border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 'var(--r-md)',
+                    padding: '1rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    fontFamily: 'var(--font-body)',
+                    cursor: payable ? 'pointer' : 'default',
+                    opacity: done ? 0.6 : 1,
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }}
+                >
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{m.label}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Due: {m.dueDate}</div>
+                    {catchUp && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                        Pays {fmt(owed)} — settles everything through this stage
+                      </div>
+                    )}
+                    {payable && !catchUp && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                        {selected ? 'Selected' : 'Tap to pay this stage'}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{fmt(m.amountDue)}</div>
+                    {m.status === 'Paid' ? (
+                      <StatusBadge label="Paid" color="var(--status-paid)" />
+                    ) : (
+                      <StatusBadge label={m.status} color="var(--status-unpaid)" />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {invoice && remaining > 0 && (
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '1rem', marginTop: 0 }}>Checkout</h3>
               
-              {/* One-click stage payments.
-                  Rendered FROM the milestone array, never from a fixed three-button
-                  list: a FoodDelivery booking has exactly one milestone ("Balance due
-                  (delivery)"), and the deposit stage's label carries the admin-editable
-                  DepositPercentage, so hardcoding "50% Payment" would go stale the
-                  moment that setting changes. */}
-              {milestones.length > 0 && (
-                <div style={{ marginBottom: '1.1rem' }}>
-                  <label style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-                    Pay a stage
-                  </label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                    {milestones.map((m, i) => {
-                      // Milestones are CUMULATIVE targets, not independent invoices:
-                      // once something has been paid, m.amountDue is no longer what is
-                      // owed for that stage. What's outstanding is the cumulative target
-                      // minus everything paid so far, capped at the remaining balance.
-                      const owed = Math.min(
-                        remaining,
-                        Math.max(0, m.cumulativeDue - schedule.paidTotal),
-                      );
-                      const done = m.status === 'Paid' || owed <= 0;
-                      return (
-                        <button
-                          key={i}
-                          type="button"
-                          className="cds-btn outline"
-                          disabled={done || isSubmitting}
-                          onClick={() => { setAmount(owed); setCheckoutError(''); }}
-                          style={{
-                            fontSize: '0.78rem',
-                            opacity: done ? 0.5 : 1,
-                            cursor: done ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          {m.label}{done ? ' · Paid' : ` · ${fmt(owed)}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              {/* The stage buttons that used to sit here are gone: the schedule rows
+                  above are the picker now, so listing every stage a second time was
+                  pure duplication — and the two lists disagreed on the amount. */}
 
               <div style={{ marginBottom: '1.5rem' }}>
                 <label htmlFor="customer-dashboard-payment-amount" style={{ display: 'block', fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
@@ -709,7 +736,7 @@ export function PaymentScheduleModal({ order, invoice, onClose }: { order: Booki
                   min="1"
                   max={remaining}
                   value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
+                  onChange={(e) => { setAmount(Number(e.target.value)); setSelectedStage(null); }}
                   style={{
                     width: '100%',
                     padding: '0.6rem 0.8rem',
@@ -724,7 +751,7 @@ export function PaymentScheduleModal({ order, invoice, onClose }: { order: Booki
                   disabled={isSubmitting}
                 id="customer-dashboard-payment-amount"/>
                 <p style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: '0.4rem' }}>
-                  Pick a stage above, or enter any partial amount.
+                  Tap a stage above, or enter any partial amount.
                 </p>
               </div>
 
