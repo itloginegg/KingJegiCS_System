@@ -1,12 +1,19 @@
 {
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/avatar/*", "/audio/*", "/gallery/*"]
+    "exclude": [
+      "/assets/*",
+      "/avatar/*",
+      "/audio/*",
+      "/gallery/*",
+      "/hero/*"
+    ]
   },
   "mimeTypes": {
     ".vrm": "application/octet-stream",
     ".vrma": "application/octet-stream",
-    ".glb": "model/gltf-binary"
+    ".glb": "model/gltf-binary",
+    ".mp4": "video/mp4"
   },
   "globalHeaders": {
     "Cache-Control": "no-cache"
