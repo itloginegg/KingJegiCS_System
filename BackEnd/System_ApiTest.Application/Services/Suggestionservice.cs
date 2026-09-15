@@ -648,10 +648,17 @@ namespace System_ApiTest.Application.Services
                 .Where(m => chosenIds.Contains(m.Id))
                 .ToDictionaryAsync(m => m.Id, m => m.ItemName);
 
+            // Checkout applies every entry in order (each through SetSlotSelectionAsync), so
+            // a course listed twice would be judged here on one entry and refused there on
+            // another. One entry per course is the only shape both sides read the same way.
+            var listedTwice = chosen.GroupBy(s => s.SlotId).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+
             foreach (var slot in slots)
             {
                 IReadOnlyList<Guid> ids = chosen.LastOrDefault(s => s.SlotId == slot.Id)?.ItemIds ?? new List<Guid>();
-                var problem = await _packages.SlotChoiceProblemAsync(slot, ids);
+                var problem = listedTwice.Contains(slot.Id)
+                    ? $"The dishes for '{slot.Label}' were chosen more than once; pick them again."
+                    : await _packages.SlotChoiceProblemAsync(slot, ids);
                 if (problem is not null) problems.Add(problem);
 
                 result.Add(new QuoteSlotDto(
