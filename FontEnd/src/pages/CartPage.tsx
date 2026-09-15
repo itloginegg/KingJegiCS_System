@@ -273,10 +273,16 @@ export function CartPage() {
   const everything = tickState([...plans.map((p) => p.key), ...lines.map((l) => l.key)]);
 
   return (
-    <div className="min-h-screen bg-bg">
+    /* A column, so <main> can take the spare height and the footer sits at the bottom of
+       a short page (an empty cart) instead of mid-screen with bare page below it. */
+    <div className="flex min-h-screen flex-col bg-bg">
       <Navbar activePage="cart" placement="sticky" />
 
-      <main className="mx-auto w-full max-w-[var(--page-max)] px-4 pt-10 pb-20 sm:px-6 lg:px-8">
+      {/* The sticky bar is position: fixed, so it takes no room: the page starts below it
+          by the height it publishes (--nav-h). The column matches the bar's own —
+          1200px with the same side padding — as RentalPage's does, so the cart's edges
+          line up with the logo and the account actions above them. */}
+      <main className="mx-auto w-full max-w-[1200px] flex-1 px-6 pt-[calc(var(--nav-h,74px)+2rem)] pb-20 sm:px-10">
         <Link
           to="/rentals"
           className="mb-6 inline-flex items-center gap-2 rounded text-[0.8rem] text-text-muted transition-colors hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
@@ -387,7 +393,7 @@ export function CartPage() {
             {/* ── Right: the summary ──────────────────────────────────── */}
             <aside
               aria-labelledby="summary-heading"
-              className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8 lg:sticky lg:top-24"
+              className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8 lg:sticky lg:top-[calc(var(--nav-h,74px)+1.5rem)]"
             >
               <h2
                 id="summary-heading"
@@ -760,7 +766,7 @@ function CartRow({
           onChange={onToggle}
         />
       </div>
-      <div className="h-20 w-28 shrink-0 overflow-hidden rounded-xl border border-border bg-bg-subtle sm:h-24 sm:w-32">
+      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-border bg-bg-subtle sm:h-24 sm:w-32">
         {line.snap.image ? (
           <img
             src={line.snap.image}
@@ -789,7 +795,7 @@ function CartRow({
         >
           <Link
             to={TYPE_HREF[line.type]}
-            className="rounded-full border border-border px-2 py-0.5 transition-colors hover:border-border-strong hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+            className="rounded-full border border-border px-2 py-0.5 whitespace-nowrap transition-colors hover:border-border-strong hover:text-text-secondary focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
           >
             {TYPE_LABEL[line.type]}
           </Link>
@@ -855,6 +861,10 @@ function CartRow({
             )}
           </>
         )}
+
+        {/* Phones: the total goes under the stepper. Beside it, in the right-hand
+            column, it ran into the stepper and squeezed the name to a few letters. */}
+        <LinePrice line={line} dead={dead} className="mt-3 sm:hidden" />
       </div>
 
       <div className="flex h-full flex-col items-end justify-between gap-6">
@@ -867,24 +877,31 @@ function CartRow({
           <Trash2 size={17} aria-hidden="true" />
         </button>
 
-        <div className="text-right">
-          <p
-            className={`text-[0.95rem] font-bold whitespace-nowrap ${dead ? 'text-text-dim line-through' : 'text-text-primary'}`}
-            style={{ fontFamily: 'var(--font-numeric)' }}
-          >
-            {formatPeso(line.snap.price * line.qty)}
-          </p>
-          {line.qty > 1 && !dead && (
-            <p
-              className="mt-0.5 text-[0.72rem] whitespace-nowrap text-text-muted"
-              style={{ fontFamily: 'var(--font-body)' }}
-            >
-              {formatPeso(line.snap.price)} each
-            </p>
-          )}
-        </div>
+        <LinePrice line={line} dead={dead} className="hidden text-right sm:block" />
       </div>
     </li>
+  );
+}
+
+/** A line's total, and the unit price when there is more than one. */
+function LinePrice({ line, dead, className }: { line: CartLine; dead: boolean; className: string }) {
+  return (
+    <div className={className}>
+      <p
+        className={`text-[0.95rem] font-bold whitespace-nowrap ${dead ? 'text-text-dim line-through' : 'text-text-primary'}`}
+        style={{ fontFamily: 'var(--font-numeric)' }}
+      >
+        {formatPeso(line.snap.price * line.qty)}
+      </p>
+      {line.qty > 1 && !dead && (
+        <p
+          className="mt-0.5 text-[0.72rem] whitespace-nowrap text-text-muted"
+          style={{ fontFamily: 'var(--font-body)' }}
+        >
+          {formatPeso(line.snap.price)} each
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -568,7 +568,7 @@ export function CheckoutPage() {
           <PlansIntro count={selectedPlans.length} isAdmin={isAdmin} />
         )}
 
-        <aside className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8 lg:sticky lg:top-24">
+        <aside className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8 lg:sticky lg:top-[calc(var(--nav-h,74px)+1.5rem)]">
           <h2
             className="mb-5 text-[1.35rem] font-bold text-text-primary sm:text-[1.6rem]"
             style={{ fontFamily: 'var(--font-display)' }}
@@ -704,11 +704,18 @@ export function CheckoutPage() {
 const inputCls =
   'w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-[0.85rem] text-text-primary placeholder:text-text-dim focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none';
 
+/**
+ * The page frame, laid out as CartPage's is. The sticky bar is position: fixed and takes
+ * no room, so the page starts below it by the height it publishes (--nav-h); the column
+ * matches the bar's own 1200px with the same side padding, so the edges line up with
+ * the logo and account actions; and the frame is a column so <main> takes the spare
+ * height and the footer sits at the bottom of a short page, such as the outcome.
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="flex min-h-screen flex-col bg-bg">
       <Navbar activePage="Checkout" placement="sticky" />
-      <main className="mx-auto w-full max-w-[var(--page-max)] px-4 pt-10 pb-20 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-[1200px] flex-1 px-6 pt-[calc(var(--nav-h,74px)+2rem)] pb-20 sm:px-10">
         {children}
       </main>
       <SiteFooter />
