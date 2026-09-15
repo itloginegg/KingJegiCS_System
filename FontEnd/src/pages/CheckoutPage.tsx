@@ -69,6 +69,10 @@ import type { CartItemType, CartLine, CartPlan } from '../context/CartContext';
  * which comes back here through ?redirect=. Admin accounts can see it but not place
  * it — customer bookings are made by customers, and the checkout endpoint refuses
  * an admin token anyway.
+ *
+ * WHAT IS PLACED. Only what is ticked in the cart (see SELECTION in CartContext). The
+ * form, the summary and the bookings all follow the selection, and afterwards exactly
+ * the entries that became bookings are removed. Everything else stays in the cart.
  */
 
 type Mode = 'food' | 'rental' | 'both';
@@ -91,8 +95,12 @@ interface Placed {
   ok: boolean;
   reference?: string;
   error?: string;
-  types: CartItemType[];
-  /** Set for a planned booking, so a placed plan can be removed from the cart. */
+  /**
+   * The cart entries this booking was made from. On success exactly these are removed —
+   * never "every rental", which would also take the unticked ones nobody ordered.
+   */
+  keys: string[];
+  /** Set for a planned booking, so a refused plan can be re-checked. */
   planKey?: string;
   /** Every reason a plan was refused, when the server listed more than one. */
   problems?: string[];
@@ -129,16 +137,32 @@ async function attachPlanImages(token: string, bookingId: string, plan: CartPlan
 export function CheckoutPage() {
   const navigate = useNavigate();
   const { isAuthenticated, user } = useAuth();
-  const { lines, hasBlockingIssue, restored, clearTypes, plans, plansTotal, removePlan, recheckPlans } = useCart();
+  const {
+    lines,
+    plans,
+    restored,
+    selectedKeys,
+    selectedLines,
+    selectedPlans,
+    selectedPlansTotal,
+    removeKeys,
+    recheckPlans,
+  } = useCart();
   const isAdmin = user?.role === 'admin';
   /* Plans are re-checked here as well as on /cart: a direct visit, or a tab left open
      for days, must not place a plan nobody has looked at since the catalog changed. A
-     plan found stale makes hasBlockingIssue true, which sends the customer back to
-     /cart, where the plan says what changed and can be edited. */
+     plan found stale unticks itself (CartContext), so it drops out of this order and
+     the summary says so; /cart shows what changed and lets it be edited. */
   const planCheck = usePlanRecheck();
 
-  const foodLines = useMemo(() => lines.filter((l) => FOOD_TYPES.includes(l.type)), [lines]);
-  const rentalLines = useMemo(() => lines.filter((l) => l.type === 'Rental'), [lines]);
+  /* The ticked lines only. Tick just trays and it is one delivery, not two bookings. */
+  const foodLines = useMemo(() => selectedLines.filter((l) => FOOD_TYPES.includes(l.type)), [selectedLines]);
+  const rentalLines = useMemo(() => selectedLines.filter((l) => l.type === 'Rental'), [selectedLines]);
+
+  /* What this order leaves behind. Stale plans are named on their own, so the count of
+     "other items" excludes them rather than mentioning them twice. */
+  const stalePlans = plans.filter((p) => p.status === 'stale');
+  const leftInCart = lines.length + plans.length - selectedKeys.size - stalePlans.length;
 
   const mode: Mode | null =
     foodLines.length > 0 && rentalLines.length > 0
@@ -248,7 +272,8 @@ export function CheckoutPage() {
      to place; a cart of plans alone has no product lines and no form. */
   const productFormOk =
     !mode || (date !== '' && time !== '' && addressComplete && contactOk && windowOk && !dateProblem);
-  const canSubmit = !placing && productFormOk && !isAdmin && !planCheck.checking && !planCheck.failed;
+  const canSubmit =
+    !placing && selectedKeys.size > 0 && productFormOk && !isAdmin && !planCheck.checking && !planCheck.failed;
 
   /* ── Place the order ──
      Sequential, not Promise.all: each booking is created, filled and submitted
@@ -300,12 +325,12 @@ export function CheckoutPage() {
           else await addMenuTray(session.token, booking.id, l.id, l.qty);
         }
         await submitBooking(session.token, booking.id);
-        placed.push({ label: 'Food delivery', ok: true, reference: booking.id, types: FOOD_TYPES });
+        placed.push({ label: 'Food delivery', ok: true, reference: booking.id, keys: foodLines.map((l) => l.key) });
       } catch (err) {
         placed.push({
           label: 'Food delivery',
           ok: false,
-          types: FOOD_TYPES,
+          keys: foodLines.map((l) => l.key),
           error: err instanceof BookingApiError || err instanceof Error
             ? err.message
             : 'Could not place the food order.',
@@ -328,12 +353,12 @@ export function CheckoutPage() {
           await addRental(session.token, booking.id, l.id, l.qty);
         }
         await submitBooking(session.token, booking.id);
-        placed.push({ label: 'Equipment rental', ok: true, reference: booking.id, types: ['Rental'] });
+        placed.push({ label: 'Equipment rental', ok: true, reference: booking.id, keys: rentalLines.map((l) => l.key) });
       } catch (err) {
         placed.push({
           label: 'Equipment rental',
           ok: false,
-          types: ['Rental'],
+          keys: rentalLines.map((l) => l.key),
           error: err instanceof BookingApiError || err instanceof Error
             ? err.message
             : 'Could not place the rental order.',
@@ -343,16 +368,16 @@ export function CheckoutPage() {
 
     /* Plans last, one booking each. The server places a plan all or nothing, so a
        refusal leaves nothing behind and the plan stays in the cart to be fixed. */
-    for (const plan of plans) {
+    for (const plan of selectedPlans) {
       try {
         const res = await checkoutPlan(session.token, plan.recipe);
         const note = await attachPlanImages(session.token, res.bookingId, plan);
-        placed.push({ label: plan.title, ok: true, reference: res.bookingId, types: [], planKey: plan.key, note });
+        placed.push({ label: plan.title, ok: true, reference: res.bookingId, keys: [plan.key], planKey: plan.key, note });
       } catch (err) {
         placed.push({
           label: plan.title,
           ok: false,
-          types: [],
+          keys: [plan.key],
           planKey: plan.key,
           error: err instanceof Error ? err.message : 'Could not place this plan.',
           problems: err instanceof SuggestionsApiError ? err.problems : undefined,
@@ -360,32 +385,31 @@ export function CheckoutPage() {
       }
     }
 
-    /* Clear only what actually became a booking. */
-    const done = placed.filter((p) => p.ok).flatMap((p) => p.types);
-    if (done.length > 0) clearTypes(done);
-    for (const p of placed) {
-      if (p.ok && p.planKey) removePlan(p.planKey);
-    }
+    /* Remove exactly what became a booking: the keys it was made from, lines and plans
+       alike. Unticked entries, and anything refused, stay in the cart. */
+    const done = placed.filter((p) => p.ok).flatMap((p) => p.keys);
+    if (done.length > 0) removeKeys(done);
     /* A refused plan stays in the cart; re-check it so /cart shows why straight away. */
     const refused = placed.filter((p) => !p.ok && p.planKey).map((p) => p.planKey as string);
     if (refused.length > 0) recheckPlans(refused);
 
     setResults(placed);
     setPlacing(false);
-  }, [user, venue, date, time, returnDate, returnTime, contact, foodLines, rentalLines, plans, clearTypes, removePlan, recheckPlans, navigate]);
+  }, [user, venue, date, time, returnDate, returnTime, contact, foodLines, rentalLines, selectedPlans, removeKeys, recheckPlans, navigate]);
 
   /* ── Guards ── */
   useEffect(() => {
     if (!restored) return;
     if (results) return;
-    /* Guests stay: they sign in at "Place order". Only an empty cart, or one holding a
-       delisted product line, goes back to /cart. */
-    if (lines.length === 0 && plans.length === 0) navigate('/cart', { replace: true });
-    else if (hasBlockingIssue) navigate('/cart', { replace: true });
-  }, [restored, lines.length, plans.length, hasBlockingIssue, results, navigate]);
+    /* Guests stay: they sign in at "Place order". Nothing ticked — an empty cart, or one
+       with everything unticked — goes back to /cart, which asks for a tick. A delisted
+       line or a stale plan no longer bounces anyone: it can't be ticked, so it simply
+       isn't part of this order. */
+    if (selectedKeys.size === 0) navigate('/cart', { replace: true });
+  }, [restored, selectedKeys.size, results, navigate]);
 
   if (results) return <Outcome results={results} />;
-  if (!restored || (!mode && plans.length === 0)) return <Shell><p className="text-text-muted">Loading…</p></Shell>;
+  if (!restored || (!mode && selectedPlans.length === 0)) return <Shell><p className="text-text-muted">Loading…</p></Shell>;
 
   const foodTotal = sumOf(foodLines);
   const rentalTotal = sumOf(rentalLines);
@@ -541,7 +565,7 @@ export function CheckoutPage() {
           </div>
         </section>
         ) : (
-          <PlansIntro count={plans.length} isAdmin={isAdmin} />
+          <PlansIntro count={selectedPlans.length} isAdmin={isAdmin} />
         )}
 
         <aside className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8 lg:sticky lg:top-24">
@@ -551,6 +575,30 @@ export function CheckoutPage() {
           >
             Your order
           </h2>
+
+          {/* What stays behind is said, not left to be noticed. */}
+          {stalePlans.length > 0 && (
+            <p
+              role="status"
+              className="mb-4 flex items-start gap-2 rounded-xl border border-border bg-bg-subtle px-3.5 py-2.5 text-[0.76rem] text-text-secondary"
+              style={{ fontFamily: 'var(--font-body)' }}
+            >
+              <AlertCircle size={15} className="mt-px shrink-0 text-warning-ink" aria-hidden="true" />
+              <span>
+                {stalePlans.length === 1
+                  ? `“${stalePlans[0].title}” has changed since you added it, so it’s left out.`
+                  : `${stalePlans.length} planned bookings have changed since you added them, so they’re left out.`}{' '}
+                <Link to="/cart" className="font-semibold underline underline-offset-2">
+                  Fix in your cart
+                </Link>
+              </span>
+            </p>
+          )}
+          {leftInCart > 0 && (
+            <p className="mb-4 text-[0.74rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+              {leftInCart === 1 ? '1 other item stays' : `${leftInCart} other items stay`} in your cart for later.
+            </p>
+          )}
 
           {foodLines.length > 0 && (
             <Bucket
@@ -571,7 +619,7 @@ export function CheckoutPage() {
             />
           )}
 
-          {plans.map((plan) => (
+          {selectedPlans.map((plan) => (
             <PlanBucket key={plan.key} plan={plan} />
           ))}
 
@@ -587,7 +635,7 @@ export function CheckoutPage() {
               className="text-[1.4rem] font-bold text-text-primary"
               style={{ fontFamily: 'var(--font-numeric)' }}
             >
-              {formatPeso(foodTotal + rentalTotal + plansTotal)}
+              {formatPeso(foodTotal + rentalTotal + selectedPlansTotal)}
             </span>
           </div>
           <p
@@ -616,7 +664,7 @@ export function CheckoutPage() {
             >
               <p className="flex items-start gap-2">
                 <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
-                We couldn’t re-check your plans against today’s prices.
+                We couldn’t re-check a ticked plan against today’s prices. Try again, or untick it in your cart.
               </p>
               <button
                 type="button"

@@ -17,7 +17,7 @@ import { useCart } from './useCart';
  * check was in flight keeps the new version, and the stale answer is discarded.
  */
 export function usePlanRecheck() {
-  const { plans, restored, markPlanChecked, markPlanCheckFailed, recheckPlans } = useCart();
+  const { plans, selectedPlans, restored, markPlanChecked, markPlanCheckFailed, recheckPlans } = useCart();
   const inFlight = useRef(new Set<string>());
 
   useEffect(() => {
@@ -37,6 +37,9 @@ export function usePlanRecheck() {
         startTime: recipe.startTime,
         endTime: recipe.endTime ?? null,
         eventType: recipe.eventType ?? null,
+        /* Sent so a wizard plan's names are judged against its event type on every
+           re-check, as checkout will judge them — not only when it was first priced. */
+        eventDetails: recipe.eventDetails ?? null,
         proposal: recipe.proposal,
       })
         .then((quote) => markPlanChecked(key, recipe, quote))
@@ -45,11 +48,13 @@ export function usePlanRecheck() {
     }
   }, [plans, restored, markPlanChecked, markPlanCheckFailed]);
 
+  /* Every plan is re-checked, ticked or not, so an unticked one still shows what is
+     wrong with it. Only the ticked ones hold checkout. */
   return {
-    /** Some plan hasn't been re-checked yet. Checkout waits for it. */
-    checking: plans.some((p) => p.status === 'unverified'),
-    /** A re-check couldn't reach the server. Checkout is paused until a retry works. */
-    failed: plans.some((p) => p.status === 'unchecked'),
+    /** Some ticked plan hasn't been re-checked yet. Checkout waits for it. */
+    checking: selectedPlans.some((p) => p.status === 'unverified'),
+    /** A ticked plan's re-check couldn't reach the server. Checkout is paused until a retry works. */
+    failed: selectedPlans.some((p) => p.status === 'unchecked'),
     retry: () => recheckPlans(),
   };
 }

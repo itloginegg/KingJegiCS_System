@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 
@@ -35,6 +35,11 @@ import type { CartItemType, CartLine, CartPlan } from '../context/CartContext';
  * all three catalogs on mount and reconciles — which is what turns 'unverified'
  * lines into priced ones, and what surfaces a delisted item before the user
  * reaches a payment screen rather than after.
+ *
+ * SELECTION. Checkout takes what is ticked (see SELECTION in CartContext). The summary
+ * totals only the ticked entries, and only a ticked entry can hold checkout up: a
+ * delisted line or a stale plan can't be ticked, so it is left out of the order rather
+ * than blocking the rest of it.
  */
 
 const TYPE_LABEL: Record<CartItemType, string> = {
@@ -55,9 +60,7 @@ export function CartPage() {
   const { isAuthenticated } = useAuth();
   const {
     lines,
-    subtotal,
     pieces,
-    hasBlockingIssue,
     restored,
     revision,
     setQty,
@@ -65,8 +68,19 @@ export function CartPage() {
     clear,
     reconcile,
     plans,
-    plansTotal,
     removePlan,
+    selectedKeys,
+    isSelected,
+    isSelectable,
+    toggle,
+    setSelection,
+    selectAll,
+    selectNone,
+    selectedLines,
+    selectedPlans,
+    selectedSubtotal,
+    selectedPieces,
+    selectedPlansTotal,
   } = useCart();
 
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -208,30 +222,36 @@ export function CartPage() {
     setPromoNote(`"${code}" isn't an active code.`);
   }, [promo]);
 
-  const total = Math.max(0, subtotal - discount) + plansTotal;
+  /* Only what is ticked: the summary is what checkout will take. */
+  const total = Math.max(0, selectedSubtotal - discount) + selectedPlansTotal;
 
-  /* Every type in the cart has to have been priced against a catalog that
-     actually answered. A cart of trays is fine when only the rentals endpoint is
-     down; the same cart is not fine when the menu endpoints are. */
+  /* Every TICKED type has to have been priced against a catalog that actually
+     answered. A cart of trays is fine when only the rentals endpoint is down; the
+     same cart is not fine when the menu endpoints are — unless the trays are
+     unticked, since checkout won't take them. */
   const unpriced = useMemo(
-    () => [...new Set(lines.map((l) => l.type))].filter((t) => !verified.has(t)),
-    [lines, verified],
+    () => [...new Set(selectedLines.map((l) => l.type))].filter((t) => !verified.has(t)),
+    [selectedLines, verified],
   );
   const cannotPrice = !checking && unpriced.length > 0;
+  /* The catalog check only holds checkout while there is a ticked line to price. */
+  const linesChecking = checking && selectedLines.length > 0;
+  const nothingSelected = selectedKeys.size === 0;
 
   /* ── Checkout ──
      No sign-in here. /checkout shows a guest their order and asks at "Place order",
      returning with ?redirect=. Making someone sign in just to LOOK at what they are
      about to buy was the wall the guest cart exists to take down. */
   const goToCheckout = useCallback(() => {
-    if ((lines.length === 0 && plans.length === 0) || hasBlockingIssue || cannotPrice) return;
+    /* Scoped to the selection. planCheck's flags are too (see usePlanRecheck). */
+    if (nothingSelected || linesChecking || cannotPrice) return;
     if (planCheck.checking || planCheck.failed) return;
     /* Not /book. That is the FullService wizard, which asks for event type and
        guest count — neither of which a drop-off or an equipment rental needs, and
        neither of which the backend requires for those two types. /checkout collects
        only what BookingCreateDto actually validates for them. */
     navigate('/checkout');
-  }, [lines.length, plans.length, hasBlockingIssue, cannotPrice, planCheck.checking, planCheck.failed, navigate]);
+  }, [nothingSelected, linesChecking, cannotPrice, planCheck.checking, planCheck.failed, navigate]);
 
   /* Grouped so a mixed cart reads as "food, then equipment" rather than as one
      undifferentiated column where a tray and a chair look like the same thing. */
@@ -243,6 +263,14 @@ export function CartPage() {
   }, [lines]);
 
   const deadCount = lines.filter((l) => l.status === 'unavailable').length;
+
+  /** A checkbox's state over some entries. Only entries that could be ticked count. */
+  const tickState = (keys: string[]): TickState => {
+    const open = keys.filter((k) => isSelectable(k));
+    const on = open.filter((k) => isSelected(k)).length;
+    return { keys: open, checked: open.length > 0 && on === open.length, indeterminate: on > 0 && on < open.length };
+  };
+  const everything = tickState([...plans.map((p) => p.key), ...lines.map((l) => l.key)]);
 
   return (
     <div className="min-h-screen bg-bg">
@@ -267,7 +295,7 @@ export function CartPage() {
               aria-labelledby="cart-heading"
               className="rounded-2xl border border-border bg-bg-card p-5 shadow-card sm:p-8"
             >
-              <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <h1
                   id="cart-heading"
                   className="text-[1.75rem] font-bold text-text-primary sm:text-[2rem]"
@@ -275,14 +303,24 @@ export function CartPage() {
                 >
                   My Cart
                 </h1>
-                <button
-                  type="button"
-                  onClick={clear}
-                  className="cursor-pointer rounded text-[0.75rem] text-text-muted underline-offset-4 transition-colors hover:text-danger-ink hover:underline focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
-                  style={{ fontFamily: 'var(--font-body)' }}
-                >
-                  Clear all
-                </button>
+                <div className="flex items-center gap-5">
+                  <TickBox
+                    label="Select all"
+                    showLabel
+                    checked={everything.checked}
+                    indeterminate={everything.indeterminate}
+                    disabled={everything.keys.length === 0}
+                    onChange={() => (everything.checked ? selectNone() : selectAll())}
+                  />
+                  <button
+                    type="button"
+                    onClick={clear}
+                    className="cursor-pointer rounded text-[0.75rem] text-text-muted underline-offset-4 transition-colors hover:text-danger-ink hover:underline focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                    style={{ fontFamily: 'var(--font-body)' }}
+                  >
+                    Clear all
+                  </button>
+                </div>
               </div>
 
               {catalogError && (
@@ -298,18 +336,20 @@ export function CartPage() {
 
               {plans.length > 0 && (
                 <div className={grouped.length > 0 ? 'mb-8' : undefined}>
-                  <h2
-                    className="mb-1 text-[0.68rem] font-semibold tracking-[0.14em] text-text-muted uppercase"
-                    style={{ fontFamily: 'var(--font-body)' }}
-                  >
-                    Planned bookings
-                    <span className="ml-2 tracking-normal normal-case text-text-dim">{plans.length}</span>
-                  </h2>
+                  <GroupHeading
+                    label="Planned bookings"
+                    count={plans.length}
+                    tick={tickState(plans.map((p) => p.key))}
+                    onTick={setSelection}
+                  />
                   <ul className="list-none p-0">
                     {plans.map((plan) => (
                       <PlanRow
                         key={plan.key}
                         plan={plan}
+                        selected={isSelected(plan.key)}
+                        selectable={isSelectable(plan.key)}
+                        onToggle={() => toggle(plan.key)}
                         onEdit={() => setEditingPlanKey(plan.key)}
                         onRemove={() => removePlan(plan.key)}
                       />
@@ -320,21 +360,21 @@ export function CartPage() {
 
               {grouped.map((group, gi) => (
                 <div key={group.type} className={gi > 0 ? 'mt-8' : undefined}>
-                  <h2
-                    className="mb-1 text-[0.68rem] font-semibold tracking-[0.14em] text-text-muted uppercase"
-                    style={{ fontFamily: 'var(--font-body)' }}
-                  >
-                    {TYPE_LABEL[group.type]}
-                    <span className="ml-2 tracking-normal normal-case text-text-dim">
-                      {group.rows.length}
-                    </span>
-                  </h2>
+                  <GroupHeading
+                    label={TYPE_LABEL[group.type]}
+                    count={group.rows.length}
+                    tick={tickState(group.rows.map((l) => l.key))}
+                    onTick={setSelection}
+                  />
 
                   <ul className="list-none p-0">
                     {group.rows.map((line) => (
                       <CartRow
                         key={line.key}
                         line={line}
+                        selected={isSelected(line.key)}
+                        selectable={isSelectable(line.key)}
+                        onToggle={() => toggle(line.key)}
                         onQty={(q) => setQty(line.key, q)}
                         onRemove={() => removeItem(line.key)}
                       />
@@ -358,14 +398,20 @@ export function CartPage() {
               </h2>
 
               <dl className="space-y-3 text-[0.85rem]" style={{ fontFamily: 'var(--font-body)' }}>
+                {/* The ticked figures, with the cart's own count beside them whenever the
+                    two differ, so what is left behind is stated rather than inferred. */}
                 {lines.length > 0 && (
-                  <SummaryRow label={`Subtotal (${pieces} ${pieces === 1 ? 'item' : 'items'})`}>
-                    {formatPeso(subtotal)}
+                  <SummaryRow
+                    label={`Subtotal (${selectedPieces === pieces ? '' : `${selectedPieces} of `}${pieces} ${pieces === 1 ? 'item' : 'items'})`}
+                  >
+                    {formatPeso(selectedSubtotal)}
                   </SummaryRow>
                 )}
                 {plans.length > 0 && (
-                  <SummaryRow label={`Planned bookings (${plans.length})`}>
-                    {formatPeso(plansTotal)}
+                  <SummaryRow
+                    label={`Planned bookings (${selectedPlans.length === plans.length ? '' : `${selectedPlans.length} of `}${plans.length})`}
+                  >
+                    {formatPeso(selectedPlansTotal)}
                   </SummaryRow>
                 )}
                 <SummaryRow label="Discount">
@@ -444,7 +490,7 @@ export function CartPage() {
                 </span>
               </div>
 
-              {cannotPrice && !hasBlockingIssue && (
+              {cannotPrice && (
                 <div
                   role="alert"
                   className="mt-4 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
@@ -456,7 +502,8 @@ export function CartPage() {
                         commit to a total we cannot stand behind, and the booking
                         endpoint prices independently — so the figure on screen could
                         differ from the one they are charged. */}
-                    We couldn’t confirm today’s prices, so checkout is paused.
+                    We couldn’t confirm today’s prices for what’s ticked, so checkout is paused. Try again, or
+                    untick those items to go ahead without them.
                   </p>
                   <button
                     type="button"
@@ -468,25 +515,29 @@ export function CartPage() {
                 </div>
               )}
 
+              {/* Neither blocks any more: an entry that can't be ticked is left out of the
+                  order. Said here so the gap between the cart and the total is explained. */}
               {deadCount > 0 && (
                 <p
-                  role="alert"
-                  className="mt-4 flex items-start gap-2 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
+                  role="status"
+                  className="mt-4 flex items-start gap-2 rounded-xl border border-border bg-bg-subtle px-3.5 py-2.5 text-[0.76rem] text-text-secondary"
                   style={{ fontFamily: 'var(--font-body)' }}
                 >
-                  <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
-                  Remove the unavailable {deadCount > 1 ? 'items' : 'item'} above to continue.
+                  <AlertCircle size={15} className="mt-px shrink-0 text-warning-ink" aria-hidden="true" />
+                  {deadCount > 1 ? `${deadCount} items are` : 'An item is'} no longer available, so{' '}
+                  {deadCount > 1 ? 'they’re' : 'it’s'} left out of this order.
                 </p>
               )}
 
               {planStale && (
                 <p
-                  role="alert"
-                  className="mt-4 flex items-start gap-2 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
+                  role="status"
+                  className="mt-4 flex items-start gap-2 rounded-xl border border-border bg-bg-subtle px-3.5 py-2.5 text-[0.76rem] text-text-secondary"
                   style={{ fontFamily: 'var(--font-body)' }}
                 >
-                  <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
-                  A planned booking has changed since you added it. Edit or remove the plan marked above to continue.
+                  <AlertCircle size={15} className="mt-px shrink-0 text-warning-ink" aria-hidden="true" />
+                  A planned booking has changed since you added it, so it’s left out of this order. Fix it to add it
+                  back.
                 </p>
               )}
 
@@ -498,7 +549,8 @@ export function CartPage() {
                 >
                   <p className="flex items-start gap-2">
                     <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
-                    We couldn’t re-check your planned bookings, so checkout is paused.
+                    We couldn’t re-check a ticked planned booking, so checkout is paused. Try again, or untick it
+                    to go ahead without it.
                   </p>
                   <button
                     type="button"
@@ -510,14 +562,26 @@ export function CartPage() {
                 </div>
               )}
 
+              {nothingSelected && (
+                <p
+                  id="checkout-hint"
+                  role="status"
+                  className="mt-4 text-center text-[0.76rem] text-text-muted"
+                  style={{ fontFamily: 'var(--font-body)' }}
+                >
+                  Select at least one item to check out.
+                </p>
+              )}
+
               <button
                 type="button"
                 onClick={goToCheckout}
-                disabled={checking || planCheck.checking || planCheck.failed || hasBlockingIssue || cannotPrice}
+                disabled={nothingSelected || linesChecking || planCheck.checking || planCheck.failed || cannotPrice}
+                aria-describedby={nothingSelected ? 'checkout-hint' : undefined}
                 className="mt-5 w-full cursor-pointer rounded-full bg-accent px-6 py-3.5 text-[0.85rem] font-semibold text-accent-fg transition-colors hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-card focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
-                {checking || planCheck.checking
+                {linesChecking || planCheck.checking
                   ? 'Checking availability…'
                   : cannotPrice
                     ? 'Prices unavailable'
@@ -568,6 +632,96 @@ function SummaryRow({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+interface TickState {
+  /** The entries the checkbox acts on: those that could be ticked. */
+  keys: string[];
+  checked: boolean;
+  indeterminate: boolean;
+}
+
+/**
+ * A checkbox that can also show "some of these are ticked". `indeterminate` exists
+ * only as a DOM property — there is no HTML attribute for it — so it is set through a
+ * ref; browsers then report it to assistive tech as "mixed".
+ */
+function TickBox({
+  label,
+  showLabel = false,
+  checked,
+  indeterminate = false,
+  disabled = false,
+  title,
+  onChange,
+}: {
+  label: string;
+  showLabel?: boolean;
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onChange: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  const box = (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      aria-label={showLabel ? undefined : label}
+      title={title}
+      className="h-4 w-4 shrink-0 cursor-pointer accent-accent focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+    />
+  );
+  if (!showLabel) return box;
+  return (
+    <label
+      className="inline-flex cursor-pointer items-center gap-2 text-[0.75rem] text-text-muted"
+      style={{ fontFamily: 'var(--font-body)' }}
+    >
+      {box}
+      {label}
+    </label>
+  );
+}
+
+/** A group's heading, with the checkbox that ticks or unticks the whole group. */
+function GroupHeading({
+  label,
+  count,
+  tick,
+  onTick,
+}: {
+  label: string;
+  count: number;
+  tick: TickState;
+  onTick: (keys: string[], on: boolean) => void;
+}) {
+  return (
+    <div className="mb-1 flex items-center gap-3">
+      <TickBox
+        label={`Select all in ${label}`}
+        checked={tick.checked}
+        indeterminate={tick.indeterminate}
+        disabled={tick.keys.length === 0}
+        onChange={() => onTick(tick.keys, !tick.checked)}
+      />
+      <h2
+        className="text-[0.68rem] font-semibold tracking-[0.14em] text-text-muted uppercase"
+        style={{ fontFamily: 'var(--font-body)' }}
+      >
+        {label}
+        <span className="ml-2 tracking-normal normal-case text-text-dim">{count}</span>
+      </h2>
+    </div>
+  );
+}
+
 /**
  * One line.
  *
@@ -577,10 +731,16 @@ function SummaryRow({ label, children }: { label: string; children: ReactNode })
  */
 function CartRow({
   line,
+  selected,
+  selectable,
+  onToggle,
   onQty,
   onRemove,
 }: {
   line: CartLine;
+  selected: boolean;
+  selectable: boolean;
+  onToggle: () => void;
   onQty: (qty: number) => void;
   onRemove: () => void;
 }) {
@@ -590,7 +750,16 @@ function CartRow({
   const atMax = line.qty >= max;
 
   return (
-    <li className="grid grid-cols-[auto_1fr_auto] items-start gap-x-4 gap-y-3 border-b border-border py-5 last:border-b-0 sm:gap-x-5">
+    <li className="grid grid-cols-[auto_auto_1fr_auto] items-start gap-x-3 gap-y-3 border-b border-border py-5 last:border-b-0 sm:gap-x-5">
+      <div className="pt-1">
+        <TickBox
+          label={`Include ${line.snap.name} in checkout`}
+          checked={selected}
+          disabled={!selectable}
+          title={selectable ? undefined : 'No longer available, so it can’t be checked out'}
+          onChange={onToggle}
+        />
+      </div>
       <div className="h-20 w-28 shrink-0 overflow-hidden rounded-xl border border-border bg-bg-subtle sm:h-24 sm:w-32">
         {line.snap.image ? (
           <img
@@ -632,7 +801,7 @@ function CartRow({
             className="mt-2 text-[0.74rem] font-medium text-danger-ink"
             style={{ fontFamily: 'var(--font-body)' }}
           >
-            No longer available — remove it to continue.
+            No longer available, so it’s left out of your order.
           </p>
         ) : (
           <>
@@ -748,18 +917,43 @@ function QtyButton({
  * The figures are its latest quote: re-checked on every load, and flagged when the
  * total moved or when something in it can no longer be booked.
  */
-function PlanRow({ plan, onEdit, onRemove }: { plan: CartPlan; onEdit: () => void; onRemove: () => void }) {
+function PlanRow({
+  plan,
+  selected,
+  selectable,
+  onToggle,
+  onEdit,
+  onRemove,
+}: {
+  plan: CartPlan;
+  selected: boolean;
+  selectable: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+}) {
   const r = plan.recipe;
   return (
     <li className="border-b border-border py-5 last:border-b-0">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-[0.95rem] font-semibold text-text-primary" style={{ fontFamily: 'var(--font-body)' }}>
-            {plan.title}
-          </p>
-          <p className="mt-1 text-[0.75rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
-            {fmtDate(r.eventDate)} · {fmtTime(r.startTime)} · {r.venueAddress}
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="pt-1">
+            <TickBox
+              label={`Include ${plan.title} in checkout`}
+              checked={selected}
+              disabled={!selectable}
+              title={selectable ? undefined : 'This plan needs fixing before it can be checked out'}
+              onChange={onToggle}
+            />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[0.95rem] font-semibold text-text-primary" style={{ fontFamily: 'var(--font-body)' }}>
+              {plan.title}
+            </p>
+            <p className="mt-1 text-[0.75rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+              {fmtDate(r.eventDate)} · {fmtTime(r.startTime)} · {r.venueAddress}
+            </p>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -802,7 +996,7 @@ function PlanRow({ plan, onEdit, onRemove }: { plan: CartPlan; onEdit: () => voi
           className="mt-3 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
           style={{ fontFamily: 'var(--font-body)' }}
         >
-          <p className="font-semibold">This plan can’t be booked as it is:</p>
+          <p className="font-semibold">This plan can’t be booked as it is, so it’s left out of your order:</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">
             {(plan.problems ?? []).map((problem) => (
               <li key={problem}>{problem}</li>

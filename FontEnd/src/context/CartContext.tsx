@@ -32,6 +32,13 @@ import { dropAllPlanImages, dropPlanImages } from '../lib/planImages';
  * their own list and their own storage key: a plan is a recipe, not a catalog row,
  * so product reconciliation has nothing to say about it, and keeping it apart
  * leaves the product cart's stored shape exactly as it was.
+ *
+ * SELECTION. Checkout takes the ticked entries, lines and plans alike, and the rest
+ * stay in the cart. What is stored is the set of UNticked keys, so an entry is ticked
+ * unless someone (or its status) unticked it: a new entry arrives ticked, and a cart
+ * saved before selection existed opens fully ticked, the way checkout used to take
+ * everything. It persists beside the cart so a refresh, or the sign-in round trip from
+ * /checkout, doesn't lose it.
  */
 
 export type CartItemType = 'MenuItem' | 'MenuTray' | 'Rental';
@@ -165,6 +172,12 @@ interface CartState {
   lines: CartLine[];
   /** Planned bookings. Kept apart from `lines`: a plan has no catalog row to reconcile against. */
   plans: CartPlan[];
+  /**
+   * Keys of the entries the customer has unticked. Lines and plans share one key space
+   * — `${type}:${id}` and `plan:<uuid>` can't collide. Everything else is ticked; see
+   * SELECTION at the top.
+   */
+  unticked: ReadonlySet<string>;
   /** False until the first localStorage read lands, so an empty cart never overwrites a real one. */
   restored: boolean;
   /**
@@ -178,7 +191,7 @@ interface CartState {
 }
 
 type CartAction =
-  | { type: 'RESTORE'; lines: CartLine[]; plans: CartPlan[] }
+  | { type: 'RESTORE'; lines: CartLine[]; plans: CartPlan[]; unticked: string[] }
   | { type: 'ADD'; line: Omit<CartLine, 'status'> }
   | { type: 'SET_QTY'; key: CartKey; qty: number }
   | { type: 'REMOVE'; key: CartKey }
@@ -190,11 +203,19 @@ type CartAction =
   | { type: 'PLAN_CHECK_FAILED'; key: string; recipe: MaterializeRequest }
   | { type: 'RECHECK_PLANS'; keys?: string[] }
   | { type: 'CLEAR_TYPES'; types: CartItemType[] }
-  | { type: 'RECONCILE'; itemType: CartItemType; rows: ReconcileRow[] };
+  | { type: 'RECONCILE'; itemType: CartItemType; rows: ReconcileRow[] }
+  | { type: 'TOGGLE'; key: string }
+  | { type: 'SET_SELECTION'; keys: string[]; on: boolean }
+  | { type: 'SELECT_ALL' }
+  | { type: 'SELECT_NONE' }
+  | { type: 'REMOVE_KEYS'; keys: string[] };
 
 const STORAGE_KEY = 'kingjegi.cart.v1';
 /** Plans live under their own key, so the product cart's stored shape is untouched. */
 const PLANS_KEY = 'kingjegi.cart.plans.v1';
+/** The unticked keys (CartState.unticked), under their own key for the same reason. */
+const UNTICKED_KEY = 'kingjegi.cart.unticked.v1';
+const NONE: ReadonlySet<string> = new Set();
 const MAX_QTY = 99;
 
 /* ── persistence ────────────────────────────────────────────────────────── */
@@ -332,6 +353,38 @@ function writeStoredPlans(plans: CartPlan[]): void {
   }
 }
 
+/**
+ * Read the unticked keys. Anything that isn't a string is dropped; a key whose entry
+ * is no longer in the cart is pruned by the reducer once the restore lands.
+ */
+function readStoredUnticked(): string[] {
+  if (typeof window === 'undefined') return [];
+
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(UNTICKED_KEY);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredUnticked(unticked: ReadonlySet<string>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(UNTICKED_KEY, JSON.stringify([...unticked]));
+  } catch {
+    /* Quota exceeded or private mode — the in-memory selection is still correct. */
+  }
+}
+
 function writeStored(lines: CartLine[]): void {
   if (typeof window === 'undefined') return;
   try {
@@ -387,18 +440,92 @@ function applyPlanCheck(plan: CartPlan, quote: QuoteResponse): CartPlan {
   };
 }
 
+/* ── selection ──────────────────────────────────────────────────────────── */
+
+/**
+ * Whether an entry may be ticked. A delisted line and a stale plan can't be checked
+ * out as they are, so they can't be ticked: they untick themselves when they get there
+ * (RECONCILE, PLAN_CHECKED) and stay unticked until the customer acts — re-adding the
+ * item, or saving an edit to the plan. An unverified or unchecked entry CAN be ticked;
+ * it only holds checkout until its check lands (see selectionBlocked).
+ */
+function lineSelectable(line: CartLine): boolean {
+  return line.status !== 'unavailable';
+}
+
+function planSelectable(plan: CartPlan): boolean {
+  return plan.status !== 'stale';
+}
+
+function allKeys(state: CartState): string[] {
+  return [...state.lines.map((l) => l.key), ...state.plans.map((p) => p.key)];
+}
+
+function selectable(state: CartState, key: string): boolean {
+  const line = state.lines.find((l) => l.key === key);
+  if (line) return lineSelectable(line);
+  const plan = state.plans.find((p) => p.key === key);
+  return plan ? planSelectable(plan) : false;
+}
+
+/* Both return the same set when nothing changes, so a no-op doesn't rewrite storage. */
+function withKeys(set: ReadonlySet<string>, keys: Iterable<string>): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const k of keys) {
+    if (set.has(k) || next?.has(k)) continue;
+    next ??= new Set(set);
+    next.add(k);
+  }
+  return next ?? set;
+}
+
+function withoutKeys(set: ReadonlySet<string>, keys: Iterable<string>): ReadonlySet<string> {
+  let next: Set<string> | null = null;
+  for (const k of keys) {
+    if (!(next ?? set).has(k)) continue;
+    next ??= new Set(set);
+    next.delete(k);
+  }
+  return next ?? set;
+}
+
 /* ── reducer ────────────────────────────────────────────────────────────── */
 
+/**
+ * The cart reducer, plus the one selection rule every action shares: a key doesn't
+ * stay unticked once its entry has left the cart. Applied here once rather than in
+ * each removing action (REMOVE, SET_QTY to 0, CLEAR, CLEAR_TYPES, REMOVE_PLAN,
+ * REMOVE_KEYS, RESTORE), so a removal path added later can't forget it — and a
+ * re-added item isn't born unticked by a leftover key.
+ */
 function reducer(state: CartState, action: CartAction): CartState {
+  const next = cartReducer(state, action);
+  if (next.unticked.size === 0 || (next.lines === state.lines && next.plans === state.plans)) return next;
+  const live = new Set(allKeys(next));
+  const orphaned = [...next.unticked].filter((k) => !live.has(k));
+  return orphaned.length === 0 ? next : { ...next, unticked: withoutKeys(next.unticked, orphaned) };
+}
+
+function cartReducer(state: CartState, action: CartAction): CartState {
   switch (action.type) {
     case 'RESTORE':
-      return { lines: action.lines, plans: action.plans, restored: true, revision: state.revision + 1 };
+      return {
+        lines: action.lines,
+        plans: action.plans,
+        unticked: new Set(action.unticked),
+        restored: true,
+        revision: state.revision + 1,
+      };
 
     case 'ADD': {
       const existing = state.lines.some((l) => l.key === action.line.key);
+      /* Adding is the latest thing the customer did with this item, so it is ticked
+         again even if they had unticked it. */
+      const unticked = withoutKeys(state.unticked, [action.line.key]);
       if (existing) {
         return {
           ...state,
+          unticked,
           lines: state.lines.map((l) =>
             l.key === action.line.key
               ? /* Adding again refreshes the snapshot: the catalog the user is
@@ -420,6 +547,7 @@ function reducer(state: CartState, action: CartAction): CartState {
       }
       return {
         ...state,
+        unticked,
         lines: [
           ...state.lines,
           {
@@ -465,6 +593,9 @@ function reducer(state: CartState, action: CartAction): CartState {
     case 'UPDATE_PLAN':
       return {
         ...state,
+        /* Saving an edit is the customer acting on the plan, so it is ticked again —
+           typically a stale plan they have just fixed. */
+        unticked: withoutKeys(state.unticked, [action.key]),
         plans: state.plans.map((p) =>
           p.key === action.key
             ? /* Just priced in the editor, so it is as fresh as a check. */
@@ -476,13 +607,15 @@ function reducer(state: CartState, action: CartAction): CartState {
     /* Both results are matched on the recipe object as well as the key: a plan
        edited while its check was in flight has a new recipe, and the old answer
        must not land on it. */
-    case 'PLAN_CHECKED':
-      return {
-        ...state,
-        plans: state.plans.map((p) =>
-          p.key === action.key && p.recipe === action.recipe ? applyPlanCheck(p, action.quote) : p,
-        ),
-      };
+    case 'PLAN_CHECKED': {
+      const plans = state.plans.map((p) =>
+        p.key === action.key && p.recipe === action.recipe ? applyPlanCheck(p, action.quote) : p,
+      );
+      /* Gone stale: it can't be booked as it is, so it unticks itself. A later check
+         that clears it leaves it unticked — the customer ticks it, or saves an edit. */
+      const stale = plans.some((p) => p.key === action.key && p.status === 'stale');
+      return { ...state, plans, unticked: stale ? withKeys(state.unticked, [action.key]) : state.unticked };
+    }
 
     case 'PLAN_CHECK_FAILED':
       return {
@@ -507,7 +640,7 @@ function reducer(state: CartState, action: CartAction): CartState {
 
     case 'RECONCILE': {
       const live = new Map(action.rows.map((r) => [r.id, r]));
-      return {
+      const reconciled: CartState = {
         ...state,
         lines: state.lines.map((l) => {
           if (l.type !== action.itemType) return l;
@@ -554,6 +687,45 @@ function reducer(state: CartState, action: CartAction): CartState {
           };
         }),
       };
+      /* A line the catalog no longer has unticks itself, like a stale plan. */
+      const gone = reconciled.lines
+        .filter((l) => l.type === action.itemType && l.status === 'unavailable')
+        .map((l) => l.key);
+      return { ...reconciled, unticked: withKeys(state.unticked, gone) };
+    }
+
+    case 'TOGGLE':
+      if (state.unticked.has(action.key)) {
+        return selectable(state, action.key)
+          ? { ...state, unticked: withoutKeys(state.unticked, [action.key]) }
+          : state;
+      }
+      return allKeys(state).includes(action.key)
+        ? { ...state, unticked: withKeys(state.unticked, [action.key]) }
+        : state;
+
+    case 'SET_SELECTION':
+      return {
+        ...state,
+        unticked: action.on
+          ? withoutKeys(state.unticked, action.keys.filter((k) => selectable(state, k)))
+          : withKeys(state.unticked, action.keys.filter((k) => allKeys(state).includes(k))),
+      };
+
+    case 'SELECT_ALL':
+      /* Everything that can be ticked. A delisted line or a stale plan stays unticked. */
+      return { ...state, unticked: withoutKeys(state.unticked, allKeys(state).filter((k) => selectable(state, k))) };
+
+    case 'SELECT_NONE':
+      return { ...state, unticked: withKeys(state.unticked, allKeys(state)) };
+
+    case 'REMOVE_KEYS': {
+      const keys = new Set(action.keys);
+      return {
+        ...state,
+        lines: state.lines.filter((l) => !keys.has(l.key)),
+        plans: state.plans.filter((p) => !keys.has(p.key)),
+      };
     }
 
     default:
@@ -588,7 +760,7 @@ export interface CartContextValue {
   setQty: (key: CartKey, qty: number) => void;
   removeItem: (key: CartKey) => void;
   clear: () => void;
-  /** Empty just the food lines, or just the rentals — used after a partial checkout. */
+  /** Empty just the food lines, or just the rentals — MenuPage's and RentalPage's Clear buttons. Checkout uses removeKeys. */
   clearTypes: (types: CartItemType[]) => void;
   /** Hand the cart a freshly fetched catalog so it can re-price and flag delisted lines. */
   reconcile: (itemType: CartItemType, rows: ReconcileRow[]) => void;
@@ -608,17 +780,46 @@ export interface CartContextValue {
   markPlanCheckFailed: (key: string, recipe: MaterializeRequest) => void;
   /** Queue plans for another check: the given keys, or every stale/unchecked plan. */
   recheckPlans: (keys?: string[]) => void;
+
+  /* ── selection: what checkout takes (see SELECTION at the top) ── */
+
+  /** The ticked keys, lines and plans alike. Never holds a delisted line or a stale plan. */
+  selectedKeys: ReadonlySet<string>;
+  isSelected: (key: string) => boolean;
+  /** Whether the entry could be ticked now: false for a delisted line or a stale plan. */
+  isSelectable: (key: string) => boolean;
+  selectedLines: CartLine[];
+  selectedPlans: CartPlan[];
+  /** Σ price × qty over the ticked lines. */
+  selectedSubtotal: number;
+  /** Pieces across the ticked lines. */
+  selectedPieces: number;
+  /** Σ of the ticked plans' quoted totals. */
+  selectedPlansTotal: number;
+  /**
+   * A ticked plan isn't known to be bookable yet: its re-check is still running, or
+   * couldn't reach the server. Checkout waits. A delisted line or a stale plan can't be
+   * ticked at all, so neither ever blocks the selection — that is what unticking is for.
+   */
+  selectionBlocked: boolean;
+  toggle: (key: string) => void;
+  /** Tick or untick several entries at once — a group header's checkbox. */
+  setSelection: (keys: string[], on: boolean) => void;
+  selectAll: () => void;
+  selectNone: () => void;
+  /** Remove exactly these entries, lines and plans: what a checkout placed. */
+  removeKeys: (keys: string[]) => void;
 }
 
 export const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, { lines: [], plans: [], restored: false, revision: 0 });
+  const [state, dispatch] = useReducer(reducer, { lines: [], plans: [], unticked: NONE, restored: false, revision: 0 });
 
   /* Restore once, after mount. Doing this in useReducer's initialiser would run
      it during render, which React 19 may invoke more than once. */
   useEffect(() => {
-    dispatch({ type: 'RESTORE', lines: readStored(), plans: readStoredPlans() });
+    dispatch({ type: 'RESTORE', lines: readStored(), plans: readStoredPlans(), unticked: readStoredUnticked() });
   }, []);
 
   /* Persist on every change, but not before the restore has landed — otherwise
@@ -633,12 +834,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
     writeStoredPlans(state.plans);
   }, [state.plans, state.restored]);
 
+  useEffect(() => {
+    if (!state.restored) return;
+    writeStoredUnticked(state.unticked);
+  }, [state.unticked, state.restored]);
+
   /* Another tab changed the cart. Without this, two open tabs quietly diverge
      and whichever is closed last wins. */
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY && e.key !== PLANS_KEY) return;
-      dispatch({ type: 'RESTORE', lines: readStored(), plans: readStoredPlans() });
+      if (e.key !== STORAGE_KEY && e.key !== PLANS_KEY && e.key !== UNTICKED_KEY) return;
+      dispatch({ type: 'RESTORE', lines: readStored(), plans: readStoredPlans(), unticked: readStoredUnticked() });
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -699,6 +905,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
   );
   const recheckPlans = useCallback((keys?: string[]) => dispatch({ type: 'RECHECK_PLANS', keys }), []);
 
+  const toggle = useCallback((key: string) => dispatch({ type: 'TOGGLE', key }), []);
+  const setSelection = useCallback(
+    (keys: string[], on: boolean) => dispatch({ type: 'SET_SELECTION', keys, on }),
+    [],
+  );
+  const selectAll = useCallback(() => dispatch({ type: 'SELECT_ALL' }), []);
+  const selectNone = useCallback(() => dispatch({ type: 'SELECT_NONE' }), []);
+  const removeKeys = useCallback((keys: string[]) => {
+    /* A line key is simply never in the image map, so every key can be offered. */
+    for (const key of keys) dropPlanImages(key);
+    dispatch({ type: 'REMOVE_KEYS', keys });
+  }, []);
+
   const qtyOf = useCallback(
     (type: CartItemType, id: string) => state.lines.find((l) => l.key === cartKeyOf(type, id))?.qty ?? 0,
     [state.lines],
@@ -706,6 +925,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<CartContextValue>(() => {
     const purchasable = state.lines.filter((l) => l.status !== 'unavailable');
+    const selectedLines = state.lines.filter((l) => lineSelectable(l) && !state.unticked.has(l.key));
+    const selectedPlans = state.plans.filter((p) => planSelectable(p) && !state.unticked.has(p.key));
+    const selectedKeys: ReadonlySet<string> = new Set([
+      ...selectedLines.map((l) => l.key),
+      ...selectedPlans.map((p) => p.key),
+    ]);
     return {
       lines: state.lines,
       pieces: state.lines.reduce((n, l) => n + l.qty, 0),
@@ -729,8 +954,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
       markPlanChecked,
       markPlanCheckFailed,
       recheckPlans,
+      selectedKeys,
+      isSelected: (key) => selectedKeys.has(key),
+      isSelectable: (key) => selectable(state, key),
+      selectedLines,
+      selectedPlans,
+      selectedSubtotal: selectedLines.reduce((sum, l) => sum + l.snap.price * l.qty, 0),
+      selectedPieces: selectedLines.reduce((n, l) => n + l.qty, 0),
+      selectedPlansTotal: selectedPlans.reduce((sum, p) => sum + p.snap.total, 0),
+      selectionBlocked: selectedPlans.some((p) => p.status === 'unverified' || p.status === 'unchecked'),
+      toggle,
+      setSelection,
+      selectAll,
+      selectNone,
+      removeKeys,
     };
-  }, [state.lines, state.plans, state.restored, state.revision, addItem, setQty, removeItem, clear, clearTypes, reconcile, qtyOf, addPlan, removePlan, updatePlan, markPlanChecked, markPlanCheckFailed, recheckPlans]);
+  }, [state, addItem, setQty, removeItem, clear, clearTypes, reconcile, qtyOf, addPlan, removePlan, updatePlan, markPlanChecked, markPlanCheckFailed, recheckPlans, toggle, setSelection, selectAll, selectNone, removeKeys]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }
