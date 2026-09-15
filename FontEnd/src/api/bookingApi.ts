@@ -42,7 +42,7 @@ export class BookingApiError extends Error {
 /**
  * Matches the backend BookingType enum (Models/Booking.cs).
  * RentalService is equipment-only: event-dated and deposit-based like FullService,
- * but it doesn't consume a calendar event slot and reserves on 5% of its total.
+ * but it doesn't consume a calendar event slot and reserves on 20% of its total.
  */
 export type BookingTypeName = 'FullService' | 'FoodDelivery' | 'RentalService';
 

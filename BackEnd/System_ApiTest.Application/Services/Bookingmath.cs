@@ -22,8 +22,16 @@ namespace System_ApiTest.Application.Services
             return (guestCount + serves - 1) / serves;
         }
 
-        /// <summary>Rental bookings reserve on a percentage of the order, not a flat fee.</summary>
-        public const decimal RentalReservationRate = 0.05m;
+        /// <summary>
+        /// Rental bookings reserve on a percentage of the order, not a flat fee.
+        ///
+        /// 20%, raised from 5%. The equipment leaves the warehouse on the start date but
+        /// is not paid off until it comes back (see the rental branch of
+        /// BuildMilestonePlanAsync), so the reservation is the only money in hand for the
+        /// whole hire — 5% of an order was too thin a stake against stock that is out of
+        /// your possession for days.
+        /// </summary>
+        public const decimal RentalReservationRate = 0.20m;
 
         /// <summary>
         /// The amount that must be paid to secure a booking's date.
@@ -31,7 +39,7 @@ namespace System_ApiTest.Application.Services
         /// A flat SystemSettings.ReservationFee makes sense for a catered event, where
         /// the fee is small relative to the total. It doesn't for equipment: a ₱5,000
         /// flat fee could exceed a small chair order outright, so RentalService reserves
-        /// on 5% of its own total instead.
+        /// on 20% of its own total instead.
         ///
         /// FoodDelivery reserves on deliveryRate (SystemSettings.DepositPercentage) of
         /// its own total, for the same reason as rentals — a flat fee is the wrong shape

@@ -54,11 +54,11 @@ namespace System_ApiTest.Application.Services
             {
                 throw new BookingRuleException(
                     $"Invoice subtotal ({subtotal:0.00}) does not match the booking's frozen total " +
-                    $"({booking.TotalAmount:0.00}). Investigate before issuing � totals are not overwritten silently.");
+                    $"({booking.TotalAmount:0.00}). Investigate before issuing — totals are not overwritten silently.");
             }
 
             var settings = await _settings.GetAsync();
-            // Zero under the current settings � VAT was removed by setting the rate to 0
+            // Zero under the current settings — VAT was removed by setting the rate to 0
             // rather than by deleting this line, so that the budget planner (which does
             // the same multiplication) can never disagree with the invoice. See
             // Systemsettings.TaxRate.
@@ -171,7 +171,7 @@ namespace System_ApiTest.Application.Services
 
         /// <summary>
         /// One milestone of the payment plan: a cumulative target by a date.
-        /// IsDeadline = false for the reservation fee � it's first-come-first-served
+        /// IsDeadline = false for the reservation fee — it's first-come-first-served
         /// (the pressure is losing the date), so it never drives Overdue.
         /// </summary>
         private readonly record struct MilestonePlanItem(
@@ -179,7 +179,7 @@ namespace System_ApiTest.Application.Services
 
         /// <summary>
         /// The single source of truth for the payment plan. Full service: reservation
-        /// fee at issue ? deposit_percentage of the total one week before the event ?
+        /// fee at issue → deposit_percentage of the total one week before the event →
         /// balance on the event day. Delivery: a down payment at issue, then the balance
         /// by the delivery date.
         /// Used by BOTH the schedule endpoint and the invoice status refresh, so
@@ -190,23 +190,40 @@ namespace System_ApiTest.Application.Services
             var settings = await _settings.GetAsync();
             var grand = invoice.GrandTotal;
 
-            // Deliveries settle in two phases: a down payment that secures the slot at
-            // issue, then the balance on the delivery day. Rentals follow the full-service
-            // milestone plan (deposit -> mid-payment -> balance), just with the percentage
-            // reservation fee below.
-            if (booking.BookingType == BookingType.FoodDelivery)
+            // Deliveries and rentals both settle in TWO phases: a down payment that
+            // secures the slot at issue, then one final balance. Neither carries the
+            // full-service mid-payment, because that milestone exists to de-risk a large
+            // catered event booked months out — it is noise on an order that is placed
+            // days ahead and handed over in one go.
+            //
+            // They differ only in WHEN the balance falls due, which follows the goods:
+            // food is settled the day it arrives, equipment the day it comes back.
+            if (booking.BookingType == BookingType.FoodDelivery ||
+                booking.BookingType == BookingType.RentalService)
             {
-                var deliveryDown = BookingMath.ReservationFeeFor(
+                // Named `reservation`, not `down`: the full-service path below declares
+                // its own `down` in this method's scope, and C# treats that as a conflict
+                // even though the two never coexist at runtime.
+                var reservation = BookingMath.ReservationFeeFor(
                     booking.BookingType, grand, settings.ReservationFee, settings.DepositPercentage);
+
+                var isDelivery = booking.BookingType == BookingType.FoodDelivery;
+
+                // EndDate is required for a rental (BookingCreateDto.Validate and
+                // CreateAsync both insist on it), so the coalesce is a guard for older
+                // rows rather than an expected path — a rental that somehow lacks a
+                // return date falls back to settling on the day it goes out.
+                var finalDue = isDelivery ? booking.EventDate : booking.EndDate ?? booking.EventDate;
 
                 return new List<MilestonePlanItem>
                 {
                     // Not a deadline, same as full service: unpaid means the slot simply
                     // isn't secured yet, not that the customer is late.
-                    new("Down payment (reservation)", invoice.IssueDate, 0m, deliveryDown, IsDeadline: false),
+                    new("Down payment (reservation)", invoice.IssueDate, 0m, reservation, IsDeadline: false),
                     // Cumulative is the grand total exactly, so the final phase absorbs any
-                    // rounding cent left over from halving an odd total.
-                    new("Final balance (delivery day)", booking.EventDate, deliveryDown, grand, IsDeadline: true)
+                    // rounding cent left over from a percentage of an odd total.
+                    new(isDelivery ? "Final balance (delivery day)" : "Final balance (on return)",
+                        finalDue, reservation, grand, IsDeadline: true)
                 };
             }
 
@@ -226,7 +243,7 @@ namespace System_ApiTest.Application.Services
         /// <summary>
         /// Derives the payment plan for a booking against its invoice grand total.
         /// Milestones are cumulative targets; each is Paid / Overdue / Upcoming based on
-        /// verified payments and today. This is monitoring � it does not block payments.
+        /// verified payments and today. This is monitoring — it does not block payments.
         /// </summary>
         public async Task<PaymentScheduleDto> GetPaymentScheduleAsync(Guid bookingId, DateOnly today)
         {
