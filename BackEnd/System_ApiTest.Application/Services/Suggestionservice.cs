@@ -15,6 +15,20 @@ namespace System_ApiTest.Application.Services
     /// writes booking rows itself (THE GOLDEN RULE: the engine proposes, the backend
     /// validates and prices).
     /// </summary>
+    /// <summary>
+    /// A plan checkout refused as a whole. Problems carries every reason the customer
+    /// has to fix: all the quote found, or the one rule that refused mid-checkout.
+    /// A BookingRuleException, so existing handlers that only know that type still map
+    /// it to a 400.
+    /// </summary>
+    public class CheckoutRejectedException : BookingRuleException
+    {
+        public IReadOnlyList<string> Problems { get; }
+
+        public CheckoutRejectedException(string message, IReadOnlyList<string> problems) : base(message)
+            => Problems = problems;
+    }
+
     public class Suggestionservice
     {
         private readonly IApplicationDbContext _db;
@@ -439,6 +453,336 @@ namespace System_ApiTest.Application.Services
         }
 
         // ---------------------------------------------------------------------------
+        //  Quote
+        // ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Prices an edited plan without saving anything: the live total in the plan
+        /// editor, and the re-check for a plan left sitting in a cart.
+        ///
+        /// The arithmetic is Bookingservice.ComputeTotal run over an unsaved Booking built
+        /// from the request, the same function a real booking's total comes from, so a
+        /// quote and the booking it becomes cannot disagree about a figure. The rules are
+        /// the ones the line endpoints enforce (active, standalone-priced, nothing but
+        /// food on a delivery, stock, package minimum, course choices). A line that breaks
+        /// one is still listed, with Problem set, and left out of the total.
+        ///
+        /// When the request carries a start time, the booking's details are checked too,
+        /// through Bookingservice.ValidateNewHeaderAsync — the rules CreateAsync itself
+        /// runs, so a cart can say "this date no longer works" in the same words checkout
+        /// would refuse it with.
+        /// </summary>
+        public async Task<QuoteResponse> QuoteAsync(QuoteRequest req)
+        {
+            var isDelivery = req.BookingType == BookingType.FoodDelivery;
+            var problems = new List<string>();
+            var lines = new List<QuoteLineDto>();
+
+            // Never attached to the context, so nothing built on it can be saved by accident.
+            var draft = new Booking { BookingType = req.BookingType, GuestCount = req.GuestCount };
+
+            Menupackage? package = null;
+            if (req.Proposal.PackageId is Guid packageId)
+            {
+                package = await _db.MenuPackages.AsNoTracking().FirstOrDefaultAsync(p => p.Id == packageId);
+                var guests = req.GuestCount ?? 0;
+                string? problem =
+                    package is null ? "This package is no longer offered."
+                    : req.BookingType != BookingType.FullService ? "Only a full-service event can include a menu package."
+                    : guests < package.MinPax ? $"Guest count {guests} is below the package minimum of {package.MinPax}."
+                    : null;
+
+                var price = 0m;
+                if (problem is null && package is not null)
+                {
+                    draft.MenuPackage = package;
+                    price = package.ComputeCost(guests);
+                }
+                if (problem is not null) problems.Add(problem);
+
+                lines.Add(new QuoteLineDto("Package", packageId, package?.PackageName ?? "Menu package", 1, price, price, problem));
+            }
+
+            var seen = new HashSet<(string, Guid)>();
+            foreach (var line in req.Proposal.Lines)
+            {
+                if (string.Equals(line.Type, "Package", StringComparison.OrdinalIgnoreCase)) continue;
+                var quoted = await QuoteLineAsync(draft, line, isDelivery, seen);
+                if (quoted.Problem is not null) problems.Add($"{quoted.Name}: {quoted.Problem}");
+                lines.Add(quoted);
+            }
+
+            var slots = await QuoteSlotsAsync(package, req, problems);
+
+            string? headerProblem = null;
+            if (req.StartTime is TimeOnly start)
+            {
+                try
+                {
+                    await _bookings.ValidateNewHeaderAsync(
+                        req.BookingType, req.EventDate, start, req.EndDate, req.EndTime,
+                        req.EventType, req.GuestCount, req.Proposal.PackageId);
+                }
+                catch (BookingRuleException ex)
+                {
+                    headerProblem = ex.Message;
+                    // The package minimum is also reported against the package line; list it once.
+                    if (!problems.Contains(ex.Message)) problems.Add(ex.Message);
+                }
+            }
+
+            // Event details from the booking wizard, judged by the rule BookingCreateDto
+            // applies: a groom's name on a birthday is refused, never silently dropped.
+            if (req.EventDetails is { } details)
+            {
+                foreach (var rule in EventDetailRules.Validate(
+                             req.EventType, details.GroomName, details.BrideName,
+                             details.CelebrantName, details.CelebrantSex, details.CelebrantAge, details.EventName))
+                {
+                    var message = rule.ErrorMessage ?? "These event details don't fit the event type.";
+                    headerProblem ??= message;
+                    if (!problems.Contains(message)) problems.Add(message);
+                }
+            }
+
+            var subtotal = Bookingservice.ComputeTotal(draft);
+            var settings = await _settings.GetAsync();
+            var tax = subtotal * settings.TaxRate;
+
+            return new QuoteResponse(
+                lines, slots, problems, headerProblem,
+                Money(subtotal), Money(tax), Money(subtotal + tax),
+                problems.Count == 0);
+        }
+
+        /// <summary>
+        /// Prices one line onto the unsaved draft, or explains why the booking would
+        /// refuse it. Mirrors the checks in AddMenuItemAsync, AddMenuTrayAsync,
+        /// AddServiceAsync and AddRentalAsync, including that a second line for the same
+        /// item is refused ("already on the booking").
+        /// </summary>
+        private async Task<QuoteLineDto> QuoteLineAsync(
+            Booking draft, MaterializeLineDto line, bool isDelivery, HashSet<(string, Guid)> seen)
+        {
+            QuoteLineDto Refused(string name, string problem) =>
+                new(line.Type, line.RefId, name, line.Quantity, 0m, 0m, problem);
+
+            if (line.Quantity <= 0) return Refused(line.Type, "Quantity must be greater than zero.");
+            if (!seen.Add((line.Type, line.RefId))) return Refused(line.Type, "Listed twice; combine the quantities.");
+
+            switch (line.Type)
+            {
+                case "MenuItem":
+                {
+                    var item = await _db.MenuItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == line.RefId);
+                    if (item is null) return Refused("Dish", "No longer on the menu.");
+                    if (!item.IsActive) return Refused(item.ItemName, "No longer available.");
+                    if (item.PricePerTray is null) return Refused(item.ItemName, "Only served as part of a package.");
+
+                    var link = new BookingMenuItem { ItemId = item.Id, Quantity = line.Quantity, CapturedPrice = item.PricePerTray.Value };
+                    draft.MenuItems.Add(link);
+                    return new(line.Type, line.RefId, item.ItemName, line.Quantity, link.CapturedPrice, link.LineTotal, null);
+                }
+                case "MenuTray":
+                {
+                    var tray = await _db.MenuTrays.AsNoTracking().FirstOrDefaultAsync(t => t.Id == line.RefId);
+                    if (tray is null) return Refused("Tray", "No longer on the menu.");
+                    if (!tray.IsActive) return Refused(tray.TrayName, "No longer available.");
+
+                    var link = new BookingMenuTray { TrayId = tray.Id, Quantity = line.Quantity, CapturedPrice = tray.PricePerTray };
+                    draft.MenuTrays.Add(link);
+                    return new(line.Type, line.RefId, tray.TrayName, line.Quantity, link.CapturedPrice, link.LineTotal, null);
+                }
+                case "Rental":
+                {
+                    if (isDelivery) return Refused("Rental", "Food delivery orders can only contain menu items and trays.");
+                    var item = await _db.RentalItems.AsNoTracking().FirstOrDefaultAsync(r => r.Id == line.RefId);
+                    if (item is null) return Refused("Rental", "No longer offered.");
+                    if (!item.IsActive) return Refused(item.ItemName, "No longer available.");
+
+                    // The rule AddRentalAsync applies at checkout, so a quote can't pass a
+                    // quantity that checkout then refuses.
+                    var available = item.TotalQuantity - await _rentals.CommittedOutgoingAsync(item.Id);
+                    if (line.Quantity > available)
+                        return Refused(item.ItemName, available > 0 ? $"Only {available} available." : "Out of stock.");
+
+                    var rental = new Rental { RentalItemId = item.Id, RentalItem = item, Quantity = line.Quantity };
+                    draft.Rentals.Add(rental);
+                    return new(line.Type, line.RefId, item.ItemName, line.Quantity, item.UnitPrice, rental.Subtotal, null);
+                }
+                case "Service":
+                {
+                    if (isDelivery) return Refused("Service", "Food delivery orders can only contain menu items and trays.");
+                    var svc = await _db.ServiceItems.AsNoTracking().FirstOrDefaultAsync(s => s.Id == line.RefId);
+                    if (svc is null) return Refused("Service", "No longer offered.");
+                    if (!svc.IsActive) return Refused(svc.ServiceName, "No longer available.");
+
+                    var service = new Service { ServiceItemId = svc.Id, ServiceItem = svc, Quantity = line.Quantity };
+                    draft.Services.Add(service);
+                    return new(line.Type, line.RefId, svc.ServiceName, line.Quantity, svc.UnitCost, service.TotalCost, null);
+                }
+                default:
+                    return Refused(line.Type, $"Unknown line type '{line.Type}'.");
+            }
+        }
+
+        /// <summary>
+        /// Every course of the chosen package with the dishes picked for it, judged by the
+        /// same rule SetSlotSelectionAsync applies. A course with no picks is reported as
+        /// a problem, because SubmitAsync refuses a package with an unfilled course.
+        /// </summary>
+        private async Task<List<QuoteSlotDto>> QuoteSlotsAsync(Menupackage? package, QuoteRequest req, List<string> problems)
+        {
+            var result = new List<QuoteSlotDto>();
+            if (package is null || req.BookingType != BookingType.FullService) return result;
+
+            var slots = await _db.MenuPackageSlots.AsNoTracking()
+                .Include(s => s.AllowedCategories)
+                .Where(s => s.MenuPackageId == package.Id)
+                .OrderBy(s => s.DisplayOrder)
+                .ToListAsync();
+
+            var chosen = req.Proposal.PackageSlotSelections;
+            var chosenIds = chosen.SelectMany(s => s.ItemIds).Distinct().ToList();
+            var names = await _db.MenuItems.AsNoTracking()
+                .Where(m => chosenIds.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, m => m.ItemName);
+
+            foreach (var slot in slots)
+            {
+                IReadOnlyList<Guid> ids = chosen.LastOrDefault(s => s.SlotId == slot.Id)?.ItemIds ?? new List<Guid>();
+                var problem = await _packages.SlotChoiceProblemAsync(slot, ids);
+                if (problem is not null) problems.Add(problem);
+
+                result.Add(new QuoteSlotDto(
+                    slot.Id, slot.Label, slot.ChooseCount, ids,
+                    ids.Select(id => names.TryGetValue(id, out var n) ? n : "Unavailable dish").ToList(),
+                    problem));
+            }
+
+            if (chosen.Any(c => slots.All(s => s.Id != c.SlotId)))
+                problems.Add("A dish choice no longer matches this package's courses.");
+
+            return result;
+        }
+
+        // ---------------------------------------------------------------------------
+        //  Checkout
+        // ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// Places a plan as a submitted booking, all or nothing.
+        ///
+        /// Not one database transaction, and it can't be: CreateAsync, AddRentalAsync,
+        /// SubmitAsync and DeleteDraftAsync each open their own inside the connection's
+        /// retrying execution strategy, which does not nest. So it is check, then do,
+        /// then undo:
+        ///
+        ///   1. Quote the plan. Any problem refuses the whole checkout before anything
+        ///      exists; the common case is an item delisted while it sat in a cart.
+        ///   2. Create the header. Its own rules (lead time, a full day, a time clash)
+        ///      also refuse before anything exists.
+        ///   3. Add every line and course choice through the booking's own rules, then
+        ///      submit (invoice issued, total frozen).
+        ///   4. If step 3 is refused anywhere, delete the Draft it was building.
+        ///
+        /// What this can't cover: the process dying between creating the Draft and
+        /// deleting it leaves an unsubmitted Draft behind, and a response lost after the
+        /// submit committed can let a retry place the plan twice. Closing the second needs
+        /// an idempotency key stored on the booking.
+        /// </summary>
+        public async Task<CheckoutResultDto> CheckoutAsync(Guid customerId, MaterializeRequest req)
+        {
+            var quote = await QuoteAsync(new QuoteRequest
+            {
+                BookingType = req.BookingType,
+                EventDate = req.EventDate,
+                EndDate = req.EndDate,
+                GuestCount = req.GuestCount,
+                // The times too, so a refusal lists a date problem alongside any line
+                // problems in one go, rather than one per attempt.
+                StartTime = req.StartTime,
+                EndTime = req.EndTime,
+                EventType = req.EventType,
+                EventDetails = req.EventDetails,
+                Proposal = req.Proposal,
+            });
+            if (!quote.CanCheckout)
+                throw new CheckoutRejectedException(
+                    "Part of this plan has changed since it was priced. Review it in your cart.", quote.Problems);
+
+            var booking = await _bookings.CreateAsync(
+                customerId, req.BookingType,
+                req.EventDate, req.StartTime, req.EndDate, req.EndTime,
+                req.EventType, req.VenueAddress, req.GuestCount,
+                req.Proposal.PackageId, req.ContactNumber,
+                details: req.EventDetails?.ToDomain());
+
+            try
+            {
+                foreach (var line in req.Proposal.Lines)
+                {
+                    if (string.Equals(line.Type, "Package", StringComparison.OrdinalIgnoreCase)) continue;
+                    await AddLineAsync(booking.Id, line);
+                }
+
+                if (req.Proposal.PackageId is not null)
+                    foreach (var slot in req.Proposal.PackageSlotSelections)
+                        await _packages.SetSlotSelectionAsync(booking.Id, slot.SlotId, slot.ItemIds);
+
+                await _bookings.SubmitAsync(booking.Id);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    await _bookings.DeleteDraftAsync(booking.Id);
+                }
+                catch (Exception)
+                {
+                    // The Draft stays behind, unsubmitted and invoiceless, visible to the
+                    // customer in My Bookings. The original refusal is what they need to
+                    // see, so it is not masked by this one.
+                }
+
+                if (ex is BookingRuleException rule)
+                    throw new CheckoutRejectedException(rule.Message, new[] { rule.Message });
+                throw;
+            }
+
+            var total = await _db.Bookings.Where(b => b.Id == booking.Id)
+                .Select(b => b.TotalAmount).FirstAsync();
+
+            return new CheckoutResultDto(booking.Id, booking.BookingName, total);
+        }
+
+        /// <summary>
+        /// Adds one plan line through the booking's own line rules. Throws
+        /// BookingRuleException when refused; materialize catches it to drop the line,
+        /// checkout lets it abort the whole placement.
+        /// </summary>
+        private async Task AddLineAsync(Guid bookingId, MaterializeLineDto line)
+        {
+            switch (line.Type)
+            {
+                case "MenuItem":
+                    await _bookings.AddMenuItemAsync(bookingId, line.RefId, line.Quantity);
+                    break;
+                case "MenuTray":
+                    await _bookings.AddMenuTrayAsync(bookingId, line.RefId, line.Quantity);
+                    break;
+                case "Service":
+                    await _bookings.AddServiceAsync(bookingId, line.RefId, line.Quantity);
+                    break;
+                case "Rental":
+                    await _rentals.AddRentalAsync(bookingId, line.RefId, line.Quantity);
+                    break;
+                default:
+                    throw new BookingRuleException($"Unknown line type '{line.Type}'.");
+            }
+        }
+
+        // ---------------------------------------------------------------------------
         //  Materialize
         // ---------------------------------------------------------------------------
 
@@ -459,7 +803,8 @@ namespace System_ApiTest.Application.Services
                 customerId, req.BookingType,
                 req.EventDate, req.StartTime, req.EndDate, req.EndTime,
                 req.EventType, req.VenueAddress, req.GuestCount,
-                req.Proposal.PackageId, req.ContactNumber);
+                req.Proposal.PackageId, req.ContactNumber,
+                details: req.EventDetails?.ToDomain());
 
             var dropped = new List<DroppedLineDto>();
             var added = 0;
@@ -472,24 +817,7 @@ namespace System_ApiTest.Application.Services
 
                 try
                 {
-                    switch (line.Type)
-                    {
-                        case "MenuItem":
-                            await _bookings.AddMenuItemAsync(booking.Id, line.RefId, line.Quantity);
-                            break;
-                        case "MenuTray":
-                            await _bookings.AddMenuTrayAsync(booking.Id, line.RefId, line.Quantity);
-                            break;
-                        case "Service":
-                            await _bookings.AddServiceAsync(booking.Id, line.RefId, line.Quantity);
-                            break;
-                        case "Rental":
-                            await _rentals.AddRentalAsync(booking.Id, line.RefId, line.Quantity);
-                            break;
-                        default:
-                            dropped.Add(new DroppedLineDto(line.Type, line.RefId, $"Unknown line type '{line.Type}'."));
-                            continue;
-                    }
+                    await AddLineAsync(booking.Id, line);
                     added++;
                 }
                 catch (BookingRuleException ex)

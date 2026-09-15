@@ -22,7 +22,7 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
-        /// THE definition of "this stock isn't available to me" � the single expression
+        /// THE definition of "this stock isn't available to me" — the single expression
         /// every availability question in the system is answered with.
         ///
         /// It lives here as a shared predicate rather than being written out at each
@@ -33,15 +33,15 @@ namespace System_ApiTest.Application.Services
         /// A line counts when the booking is live (Confirmed/Completed, not returned)
         /// AND either:
         ///
-        ///   (a) its rental window overlaps the window being asked about � reserved for
+        ///   (a) its rental window overlaps the window being asked about — reserved for
         ///       an overlapping period, even if nothing has physically moved yet; or
-        ///   (b) the goods are physically gone � Delivered, or Damaged and never coming
-        ///       back � which holds whatever the dates say.
+        ///   (b) the goods are physically gone — Delivered, or Damaged and never coming
+        ///       back — which holds whatever the dates say.
         ///
         /// Pass no window and only (b) applies: the honest answer to "how many are off
         /// the shelf right now", with future reservations excluded.
         ///
-        /// Returned lines never count � those are back. Damaged deliberately still does,
+        /// Returned lines never count — those are back. Damaged deliberately still does,
         /// so a broken chair can't quietly become bookable again.
         /// </summary>
         /// <param name="excludeBookingId">The booking being placed, so it can't conflict with itself.</param>
@@ -172,7 +172,7 @@ namespace System_ApiTest.Application.Services
         /// Computes availability on demand (never stored).
         ///
         /// With a date window, answers "how many could a booking over these dates take?"
-        /// � the same question, and the same rule, the confirm-time check applies, so the
+        /// — the same question, and the same rule, the confirm-time check applies, so the
         /// catalog can't advertise a shortage the confirm would allow (or vice versa).
         ///
         /// Without one, answers "how many are physically off the shelf right now?".
@@ -207,6 +207,24 @@ namespace System_ApiTest.Application.Services
 
             return new RentalAvailability(item.TotalQuantity, outgoing, item.TotalQuantity - outgoing);
         }
+
+        /// <summary>
+        /// Units of an item held by live bookings (Confirmed or Completed, not yet
+        /// returned), whatever their dates — the stock rule AddRentalAsync enforces when a
+        /// line is added.
+        ///
+        /// Extracted so the plan quote asks exactly the question checkout will, and a
+        /// quote can't pass a quantity that checkout then refuses. Note this is NOT the
+        /// date-windowed rule GetAvailabilityAsync answers with; the two already differed
+        /// before the extraction, and aligning them is a separate decision.
+        /// </summary>
+        public async Task<int> CommittedOutgoingAsync(Guid rentalItemId)
+            => await _db.Rentals
+                .Where(r => r.RentalItemId == rentalItemId
+                            && (r.Booking.Status == BookingStatus.Confirmed ||
+                                r.Booking.Status == BookingStatus.Completed)
+                            && r.DeliveryStatus != DeliveryStatus.Returned)
+                .SumAsync(r => (int?)r.Quantity) ?? 0;
 
         /// <summary>
         /// Adds a rental line to a booking. The availability check runs inside a
@@ -253,12 +271,7 @@ namespace System_ApiTest.Application.Services
                     throw new BookingRuleException("This rental item is inactive and cannot be added.");
 
                 // Recompute outgoing inside the locked transaction.
-                var outgoing = await _db.Rentals
-                    .Where(r => r.RentalItemId == rentalItemId
-                                && (r.Booking.Status == BookingStatus.Confirmed ||
-                                    r.Booking.Status == BookingStatus.Completed)
-                                && r.DeliveryStatus != DeliveryStatus.Returned)
-                    .SumAsync(r => (int?)r.Quantity) ?? 0;
+                var outgoing = await CommittedOutgoingAsync(rentalItemId);
 
                 if (outgoing + quantity > item.TotalQuantity)
                     throw new BookingRuleException(
@@ -277,7 +290,7 @@ namespace System_ApiTest.Application.Services
                 return line;
             });
 
-            // The booking's total changed � recompute (no-op if already frozen).
+            // The booking's total changed — recompute (no-op if already frozen).
             await _bookingService.RecomputeTotalAsync(bookingId);
 
             // Staff-facing: a rental line was added, which changes what has to be
@@ -330,11 +343,11 @@ namespace System_ApiTest.Application.Services
         /// <summary>
         /// Every rental line still needing an admin action, for the returns/check-in list:
         /// Pending (not yet handed over), Delivered (out), Damaged (out, awaiting repair or
-        /// write-off). Returned is excluded � that line is done.
+        /// write-off). Returned is excluded — that line is done.
         ///
         /// Pending is included deliberately. A list of only Delivered lines would start
         /// empty and stay empty, because nothing else in the system moves a line off
-        /// Pending � that transition has to be reachable from here too.
+        /// Pending — that transition has to be reachable from here too.
         ///
         /// Only Confirmed/Completed bookings count, matching CommittedStock: a cancelled
         /// booking holds no stock, so its lines are not the returns desk's problem.

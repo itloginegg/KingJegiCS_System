@@ -30,6 +30,7 @@ const PackagePage = lazy(() => import('../pages/PackagePage').then((m) => ({ def
 const MenuPage = lazy(() => import('../pages/MenuPage').then((m) => ({ default: m.MenuPage })));
 const RentalPage = lazy(() => import('../pages/RentalPage').then((m) => ({ default: m.RentalPage })));
 const CartPage = lazy(() => import('../pages/CartPage').then((m) => ({ default: m.CartPage })));
+const CheckoutPage = lazy(() => import('../pages/CheckoutPage').then((m) => ({ default: m.CheckoutPage })));
 const BookingPage = lazy(() => import('../pages/BookingPage').then((m) => ({ default: m.BookingPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('../pages/RegisterPage').then((m) => ({ default: m.RegisterPage })));
@@ -134,6 +135,7 @@ export function AppRoutes() {
           <Route path="/menus" element={<MenuPage />} />
           <Route path="/rentals" element={<RentalPage />} />
           <Route path="/cart" element={<CartPage />} />
+          <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/book" element={<BookingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />

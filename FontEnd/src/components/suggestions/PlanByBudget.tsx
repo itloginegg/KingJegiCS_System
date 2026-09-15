@@ -1,46 +1,45 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   getBudgetSuggestions,
-  materializeProposal,
   SuggestionsApiError,
   type BudgetSuggestionRequest,
-  type MaterializeRequest,
   type Proposal,
   type SuggestionSetResponse,
 } from '../../api/suggestionsApi';
-import { BookingApiError } from '../../api/bookingApi';
+import { fetchMenuTrays } from '../../api/menuAdminApi';
 import { readSession } from '../../lib/tokenStorage';
 import { ProposalCard, ProposalCardStyles } from './ProposalCard';
-import { PhoneNumberInput } from '../forms/PhoneNumberInput';
-import { VenueAddressFields } from '../forms/VenueAddressFields';
-import {
-  composeVenueAddress,
-  emptyVenueAddress,
-  isVenueAddressComplete,
-  type VenueAddress,
-} from '../../lib/venue';
+import { PlanReview } from './PlanReview';
 
 /*
  * Plan by Budget — relocated out of CustomerDashboardPage into BookingPage's Step 0.
- * Self-contained (`pbg-` prefix) so it drops into any surface. Guests may survey
- * (POST /api/suggestions/budget is anonymous); turning a plan into a Draft requires
- * login (materialize is customer-only) and hands off to onMaterialized afterward.
+ * Self-contained (`pbg-` prefix) so it drops into any surface.
  *
- * GOLDEN RULE: every money figure is rendered from the response, never recomputed.
+ * Signed in or not, the whole flow runs here: survey tiered proposals (POST
+ * /api/suggestions/budget is anonymous), open one in <PlanReview> to edit it against
+ * live server quotes, then add it to the cart. Sign-in happens at checkout, which
+ * places the plan as a submitted booking, all or nothing.
+ *
+ * GOLDEN RULE: every money figure is rendered from a response, never recomputed.
  */
-
-const fmt = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n);
 
 export interface PlanByBudgetProps {
   /** "Change Service" — back to the flow picker. */
   onBack: () => void;
-  /** A guest clicked "Use this plan"; caller should route to login. */
-  onRequireLogin: () => void;
-  /** A Draft was created; caller routes to it (e.g. My Bookings) so it can be reviewed + submitted. */
-  onMaterialized: (bookingId: string) => void;
+  /** A plan went into the cart; the caller routes to it. */
+  onAddedToCart: () => void;
 }
 
-export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByBudgetProps) {
+/** The ask the current proposals were generated for — what the review editor prices against. */
+interface Ask {
+  budget: number;
+  guestCount: number;
+  eventDate: string;
+  bookingType: 'FullService' | 'FoodDelivery';
+  eventType: string | null;
+}
+
+export function PlanByBudget({ onBack, onAddedToCart }: PlanByBudgetProps) {
   const [budget, setBudget] = useState('50000');
   const [guestCount, setGuestCount] = useState('100');
   const [eventDate, setEventDate] = useState('');
@@ -52,25 +51,33 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<SuggestionSetResponse | null>(null);
-  const [authPrompt, setAuthPrompt] = useState(false);
-
+  /* Captured at "Suggest Plans", so editing the form afterwards can't quietly change
+     the guest count or date a proposal being reviewed is priced for. */
+  const [ask, setAsk] = useState<Ask | null>(null);
   const [chosen, setChosen] = useState<Proposal | null>(null);
-  const [venue, setVenue] = useState<VenueAddress>(emptyVenueAddress);
-  const [startTime, setStartTime] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [endTime, setEndTime] = useState('');
-  const [contact, setContact] = useState('');
-  const [mBusy, setMBusy] = useState(false);
-  const [mError, setMError] = useState('');
 
-  const [done, setDone] = useState<{ bookingId: string; bookingName: string; dropped: number } | null>(null);
+  /* Tray dish names, so a tray row can say what is in it. A nicety: the cards and
+     the editor render without it if the fetch fails. */
+  const [trayDishes, setTrayDishes] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    fetchMenuTrays(readSession()?.token ?? '')
+      .then((trays) => {
+        if (!cancelled) setTrayDishes(Object.fromEntries(trays.map((t) => [t.id, t.dishes.map((d) => d.itemName)])));
+      })
+      .catch(() => {
+        /* See above: dish names are optional. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const isFull = bookingType === 'FullService';
   const csv = (s: string): string[] | null => {
     const arr = s.split(',').map((x) => x.trim()).filter(Boolean);
     return arr.length ? arr : null;
   };
-  const toHms = (t: string) => (t.length === 5 ? `${t}:00` : t);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +85,7 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
       setError('Enter a budget, guest count, and event date.');
       return;
     }
-    setLoading(true); setError(''); setResult(null); setAuthPrompt(false);
+    setLoading(true); setError(''); setResult(null); setChosen(null);
     try {
       const req: BudgetSuggestionRequest = {
         budget: Number(budget),
@@ -89,6 +96,13 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
         preferences: (dietary || avoid) ? { dietaryTags: csv(dietary), avoidItemCategories: csv(avoid) } : null,
       };
       setResult(await getBudgetSuggestions(readSession()?.token ?? '', req));
+      setAsk({
+        budget: req.budget,
+        guestCount: req.guestCount,
+        eventDate: req.eventDate,
+        bookingType: req.bookingType,
+        eventType: req.eventType ?? null,
+      });
     } catch (err) {
       setError(err instanceof SuggestionsApiError ? err.message : 'Could not generate suggestions. Please try again.');
     } finally {
@@ -96,87 +110,9 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
     }
   };
 
-  const openFinalize = (p: Proposal) => {
-    if (!readSession()) { setAuthPrompt(true); return; }   // survey is open; creating needs login
-    setAuthPrompt(false);
-    setChosen(p);
-    setEndDate(eventDate);
-    setStartTime(''); setEndTime(''); setVenue(emptyVenueAddress); setContact(''); setMError('');
-  };
-
-  const materialize = async () => {
-    if (!chosen) return;
-    const session = readSession();
-    if (!session) { onRequireLogin(); return; }
-    if (!isVenueAddressComplete(venue) || !startTime || (isFull && (!endDate || !endTime))) {
-      setMError('Please fill in the venue street and city, start time, and (for events) end date and time.');
-      return;
-    }
-    if (isFull) {
-      const startAt = new Date(`${eventDate}T${toHms(startTime)}`);
-      const endAt = new Date(`${endDate || eventDate}T${toHms(endTime)}`);
-      if (endAt <= startAt) { setMError('The event must end after it starts — adjust the end date or time.'); return; }
-    }
-    setMBusy(true); setMError('');
-    try {
-      const pkgLine = chosen.lines.find((l) => l.type === 'Package');
-      const lines = chosen.lines
-        .filter((l) => l.type !== 'Package')
-        .map((l) => ({ type: l.type, refId: l.refId, quantity: l.quantity }));
-      const req: MaterializeRequest = {
-        bookingType,
-        eventDate,
-        startTime: toHms(startTime),
-        endDate: isFull ? (endDate || eventDate) : null,
-        endTime: isFull ? toHms(endTime) : null,
-        eventType: isFull ? eventType : null,
-        venueAddress: composeVenueAddress(venue),
-        guestCount: isFull ? Number(guestCount) : null,
-        contactNumber: contact.trim() || null,
-        proposal: {
-          packageId: pkgLine ? pkgLine.refId : null,
-          lines,
-          packageSlotSelections: chosen.packageSlotSelections.map((s) => ({ slotId: s.slotId, itemIds: s.itemIds })),
-        },
-      };
-      const res = await materializeProposal(session.token, req);
-      setChosen(null);
-      setDone({ bookingId: res.bookingId, bookingName: res.bookingName, dropped: res.droppedLines.length });
-    } catch (err) {
-      setMError(
-        err instanceof SuggestionsApiError ? err.message
-          : err instanceof BookingApiError ? err.message
-          : 'Could not create the Draft. Please try again.',
-      );
-    } finally {
-      setMBusy(false);
-    }
-  };
-
-  if (done) {
-    return (
-      <div className="pbg-wrap">
-        <Styles />
-        <div className="pbg-card" style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '0.8rem', alignItems: 'center' }}>
-          <div style={{ fontSize: '2rem' }}>✅</div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-            Draft created
-          </h2>
-          <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: 460 }}>
-            "{done.bookingName}" is saved as a Draft. Review the details and submit it from My Bookings.
-            {done.dropped > 0 && ` (${done.dropped} item(s) couldn't be added and were skipped — you can adjust them there.)`}
-          </p>
-          <button type="button" className="pbg-btn primary" onClick={() => onMaterialized(done.bookingId)}>
-            Review &amp; Submit in My Bookings →
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="pbg-wrap">
-      <Styles />
+      <PlanByBudgetStyles />
       <ProposalCardStyles />
 
       <form onSubmit={submit} className="pbg-card" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
@@ -186,7 +122,7 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
               Plan by Budget
             </h2>
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-muted)', marginTop: '0.3rem', maxWidth: 520 }}>
-              Tell us your budget — we'll suggest complete, kitchen-priced configurations. Browse freely; sign in only when you're ready to turn one into a booking.
+              Tell us your budget — we'll suggest complete, kitchen-priced configurations. Adjust any plan, add it to your cart, and sign in only when you check out.
             </p>
           </div>
           <button type="button" className="pbg-btn outline" onClick={onBack}>← Change Service</button>
@@ -228,15 +164,6 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
         </button>
       </form>
 
-      {authPrompt && (
-        <div className="pbg-card" style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', borderColor: 'var(--border-accent)' }}>
-          <span style={{ flex: 1, minWidth: 220, fontFamily: 'var(--font-body)', fontSize: '0.84rem', color: 'var(--text-primary)' }}>
-            Sign in to turn a plan into a booking — your options above stay right here.
-          </span>
-          <button type="button" className="pbg-btn primary" onClick={onRequireLogin}>Sign in</button>
-        </div>
-      )}
-
       {result && (
         result.proposals.length === 0 ? (
           <div className="pbg-card" style={{ textAlign: 'center' }}>
@@ -250,52 +177,36 @@ export function PlanByBudget({ onBack, onRequireLogin, onMaterialized }: PlanByB
             {result.note && <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', color: 'var(--text-muted)' }}>{result.note}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
               {result.proposals.map((p) => (
-                <ProposalCard key={p.tier} proposal={p} onUse={openFinalize} busy={mBusy && chosen?.tier === p.tier} />
+                <ProposalCard
+                  key={p.tier}
+                  proposal={p}
+                  onUse={setChosen}
+                  actionLabel="Review this plan"
+                  trayDishes={trayDishes}
+                />
               ))}
             </div>
           </>
         )
       )}
 
-      {chosen && (
-        <div className="pbg-overlay" onClick={() => !mBusy && setChosen(null)}>
-          <div className="pbg-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Finalize booking details">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.2rem' }}>
-              <div>
-                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>A few event details</h3>
-                <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--text-dim)', marginTop: '0.25rem' }}>{chosen.tier} plan · {fmt(chosen.total)}</p>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <VenueAddressFields
-                value={venue}
-                onChange={setVenue}
-                labelClassName="pbg-label"
-                inputClassName="pbg-input"
-                required
-                labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.9rem' }}>
-                <label><span className="pbg-label">{isFull ? 'Start time' : 'Delivery time'}</span><input className="pbg-input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required /></label>
-                {isFull && <label><span className="pbg-label">End time</span><input className="pbg-input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required /></label>}
-              </div>
-              {isFull && <label><span className="pbg-label">End date</span><input className="pbg-input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required /></label>}
-              <label><span className="pbg-label">Contact number (optional)</span><PhoneNumberInput className="pbg-input" value={contact} onChange={setContact} /></label>
-
-              {mError && <div style={{ color: 'var(--danger)', fontSize: '0.8rem' }}>{mError}</div>}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.6rem', marginTop: '0.2rem' }}>
-                <button type="button" className="pbg-btn outline" onClick={() => setChosen(null)} disabled={mBusy}>Cancel</button>
-                <button type="button" className="pbg-btn primary" onClick={() => void materialize()} disabled={mBusy}>{mBusy ? 'Creating…' : 'Create Draft'}</button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {chosen && ask && (
+        <PlanReview
+          source={{ kind: 'proposal', proposal: chosen, ...ask }}
+          trayDishes={trayDishes}
+          onClose={() => setChosen(null)}
+          onDone={onAddedToCart}
+        />
       )}
     </div>
   );
 }
 
-function Styles() {
+/**
+ * The `pbg-` styles. Exported because <PlanReview> needs them wherever it opens,
+ * including /cart, where a plan is edited without PlanByBudget on the page.
+ */
+export function PlanByBudgetStyles() {
   return (
     <style>{`
       .pbg-wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem; }
@@ -311,6 +222,19 @@ function Styles() {
       .pbg-btn.outline:hover:not(:disabled) { background: var(--primary-muted); border-color: var(--primary); }
       .pbg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
       .pbg-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(20, 14, 8, 0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+      .pbg-row { display: flex; align-items: center; gap: 0.7rem; padding: 0.6rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+      .pbg-row:last-child { border-bottom: none; }
+      .pbg-line-name { font-family: var(--font-body); font-size: 0.82rem; font-weight: 500; color: var(--text-primary); }
+      .pbg-line-total { font-family: var(--font-body); font-size: 0.82rem; font-weight: 500; color: var(--text-primary); white-space: nowrap; min-width: 5.5rem; text-align: right; }
+      .pbg-sub { font-family: var(--font-body); font-size: 0.66rem; font-weight: 300; color: var(--text-dim); margin-top: 0.12rem; }
+      .pbg-problem { font-family: var(--font-body); font-size: 0.7rem; color: var(--danger-ink); margin-top: 0.15rem; }
+      .pbg-tag { font-family: var(--font-body); font-size: 0.5rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; color: var(--text-muted); background: var(--bg-subtle); border: 1px solid var(--border); padding: 0.15rem 0.45rem; border-radius: var(--r-full); }
+      .pbg-step { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: var(--r-full); }
+      .pbg-step button { background: none; border: none; cursor: pointer; padding: 0.28rem 0.62rem; color: var(--text-secondary); font-size: 0.9rem; line-height: 1; }
+      .pbg-step button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .pbg-link { background: none; border: none; padding: 0; cursor: pointer; font-family: var(--font-body); font-size: 0.7rem; color: var(--primary); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+      .pbg-total-row { display: flex; justify-content: space-between; gap: 1rem; font-family: var(--font-body); font-size: 0.8rem; color: var(--text-secondary); padding: 0.12rem 0; }
+      .pbg-total-row.grand { font-size: 1rem; font-weight: 600; color: var(--text-primary); }
       .pbg-modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); padding: 1.6rem 1.75rem; }
     `}</style>
   );

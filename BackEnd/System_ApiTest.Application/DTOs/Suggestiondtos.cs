@@ -87,6 +87,31 @@ namespace System_ApiTest.Application.DTOs
         string? Note);
 
     // ---------------------------------------------------------------------------
+    //  Plan event details — shared by materialize/checkout and quote
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// The event-type-specific details and motif/theme text a wizard-built plan carries,
+    /// in the shape BookingCreateDto takes them. Which fields apply depends on the event
+    /// type (EventDetailRules, which the quote runs); ToDomain hands them to CreateAsync,
+    /// whose BookingEventDetails.ApplyTo drops anything that doesn't fit the type.
+    /// </summary>
+    public class PlanEventDetailsDto
+    {
+        [MaxLength(150)] public string? GroomName { get; set; }
+        [MaxLength(150)] public string? BrideName { get; set; }
+        [MaxLength(150)] public string? CelebrantName { get; set; }
+        [MaxLength(20)] public string? CelebrantSex { get; set; }
+        public int? CelebrantAge { get; set; }
+        [MaxLength(200)] public string? EventName { get; set; }
+        [MaxLength(200)] public string? Motif { get; set; }
+        [MaxLength(200)] public string? Theme { get; set; }
+
+        public BookingEventDetails ToDomain() =>
+            new(GroomName, BrideName, CelebrantName, CelebrantSex, CelebrantAge, EventName, Motif, Theme);
+    }
+
+    // ---------------------------------------------------------------------------
     //  POST /api/suggestions/materialize  — request
     // ---------------------------------------------------------------------------
 
@@ -99,7 +124,7 @@ namespace System_ApiTest.Application.DTOs
     public class MaterializeRequest
     {
         [Required]
-        [EnumDataType(typeof(BookingType), ErrorMessage = "Booking type must be FullService or FoodDelivery.")]
+        [EnumDataType(typeof(BookingType), ErrorMessage = "Booking type must be FullService, FoodDelivery or RentalService.")]
         public BookingType BookingType { get; set; }
 
         [Required]
@@ -121,6 +146,9 @@ namespace System_ApiTest.Application.DTOs
 
         [MaxLength(30)]
         public string? ContactNumber { get; set; }
+
+        /// <summary>Names, event name, motif and theme, for a plan built in the booking wizard.</summary>
+        public PlanEventDetailsDto? EventDetails { get; set; }
 
         [Required]
         public MaterializeProposalDto Proposal { get; set; } = new();
@@ -174,6 +202,94 @@ namespace System_ApiTest.Application.DTOs
         decimal TotalAmount,
         int AddedLineCount,
         IReadOnlyList<DroppedLineDto> DroppedLines);
+
+    // ---------------------------------------------------------------------------
+    //  POST /api/suggestions/quote  — request / response
+    // ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// An edited plan to price: the booking type (what may be on it), the guest count
+    /// (package cost and minimum), and the plan itself.
+    ///
+    /// StartTime is optional. When it is sent — with EndDate, EndTime and EventType for
+    /// an event — the quote also checks the booking's details with the rules
+    /// CreateAsync applies (lead time, a full or locked day, a time clash) and reports
+    /// the result as HeaderProblem. The current stock rule does not read the dates.
+    /// </summary>
+    public class QuoteRequest
+    {
+        [Required]
+        [EnumDataType(typeof(BookingType))]
+        public BookingType BookingType { get; set; }
+
+        [Required]
+        public DateOnly EventDate { get; set; }
+
+        public DateOnly? EndDate { get; set; }
+
+        public int? GuestCount { get; set; }
+
+        public TimeOnly? StartTime { get; set; }
+
+        public TimeOnly? EndTime { get; set; }
+
+        [EnumDataType(typeof(EventType))]
+        public EventType? EventType { get; set; }
+
+        /// <summary>When sent, judged against EventType the way booking creation judges it.</summary>
+        public PlanEventDetailsDto? EventDetails { get; set; }
+
+        [Required]
+        public MaterializeProposalDto Proposal { get; set; } = new();
+    }
+
+    /// <summary>
+    /// One priced line. Problem is null for a line the booking would accept; when set,
+    /// the line is excluded from the totals and names what would refuse it.
+    /// </summary>
+    public record QuoteLineDto(
+        string Type,        // Package | MenuItem | MenuTray | Service | Rental
+        Guid RefId,
+        string Name,
+        int Quantity,
+        decimal UnitPrice,
+        decimal LineTotal,
+        string? Problem);
+
+    /// <summary>One package course and the dishes chosen for it, with any problem the choice has.</summary>
+    public record QuoteSlotDto(
+        Guid SlotId,
+        string SlotLabel,
+        int ChooseCount,
+        IReadOnlyList<Guid> ItemIds,
+        IReadOnlyList<string> ItemNames,
+        string? Problem);
+
+    /// <summary>
+    /// The plan as the server prices it. Subtotal comes from the same computation a
+    /// booking's total does. HeaderProblem is why the booking's details (date, time,
+    /// guests) would be refused, or null when they would be accepted or weren't sent.
+    /// CanCheckout is false while anything — a line, a course, the details — has a problem.
+    /// </summary>
+    public record QuoteResponse(
+        IReadOnlyList<QuoteLineDto> Lines,
+        IReadOnlyList<QuoteSlotDto> PackageSlots,
+        IReadOnlyList<string> Problems,
+        string? HeaderProblem,
+        decimal Subtotal,
+        decimal Tax,
+        decimal Total,
+        bool CanCheckout);
+
+    // ---------------------------------------------------------------------------
+    //  POST /api/suggestions/checkout  — response
+    // ---------------------------------------------------------------------------
+
+    /// <summary>A plan placed as a submitted booking: invoice issued, total frozen.</summary>
+    public record CheckoutResultDto(
+        Guid BookingId,
+        string BookingName,
+        decimal TotalAmount);
 }
 
 

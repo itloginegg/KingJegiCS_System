@@ -40,3 +40,28 @@ export function composeVenueAddress(value: VenueAddress): string {
 export function isVenueAddressComplete(value: VenueAddress): boolean {
   return value.street.trim().length > 0 && value.city.trim().length > 0;
 }
+
+/**
+ * The inverse of composeVenueAddress, for editing an address that was stored as one
+ * string. Best effort, and deliberately forgiving: a trailing four-digit part is the
+ * zip, a part naming a service-area city is the city, and everything else — commas
+ * included — stays the street, so nothing typed is ever dropped.
+ */
+export function parseVenueAddress(text: string): VenueAddress {
+  const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
+
+  let zip = '';
+  if (parts.length > 1 && /^\d{4}$/.test(parts[parts.length - 1])) zip = parts.pop() ?? '';
+
+  let city = '';
+  if (parts.length > 1) {
+    const last = parts[parts.length - 1].toLowerCase();
+    const match = SERVICE_AREA_CITIES.find((c) => c.value.toLowerCase() === last || c.label.toLowerCase() === last);
+    if (match) {
+      city = match.value;
+      parts.pop();
+    }
+  }
+
+  return { street: parts.join(', '), city, zip };
+}

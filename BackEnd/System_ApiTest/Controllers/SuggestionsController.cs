@@ -65,6 +65,48 @@ namespace System_ApiTest.Controllers
             }
         }
 
+        /// <summary>
+        /// Prices an edited plan: each line with any problem that would refuse it, the
+        /// package courses, and totals from the same computation a booking's total uses.
+        /// Anonymous for the same reason /budget is — a guest edits a plan before signing
+        /// in, and the payload is catalog prices, never a booking or a customer.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("quote")]
+        public async Task<IActionResult> Quote([FromBody] QuoteRequest req)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            return Ok(await _suggestions.QuoteAsync(req));
+        }
+
+        /// <summary>
+        /// Places a plan as a submitted booking, all or nothing: if any line, course
+        /// choice or the submit itself is refused, nothing is left behind and the 400
+        /// lists why, so the customer fixes the plan in their cart and tries again.
+        /// </summary>
+        [HttpPost("checkout")]
+        public async Task<IActionResult> Checkout([FromBody] MaterializeRequest req)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var customerId = CurrentUserId();
+            if (customerId is null) return Unauthorized();
+
+            try
+            {
+                return Ok(await _suggestions.CheckoutAsync(customerId.Value, req));
+            }
+            catch (CheckoutRejectedException ex)
+            {
+                return BadRequest(new { message = ex.Message, problems = ex.Problems });
+            }
+            catch (BookingRuleException ex)
+            {
+                // Header rules (lead time, a full day, a time clash) refuse before
+                // anything is created.
+                return BadRequest(new { message = ex.Message, problems = new[] { ex.Message } });
+            }
+        }
+
         private Guid? CurrentUserId() =>
             Guid.TryParse(User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
                           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;

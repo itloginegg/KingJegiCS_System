@@ -23,7 +23,14 @@ namespace System_ApiTest.Controllers
             _audit = audit;
         }
 
-        /// <summary>Catalog list. Admins see everything; customers see only active services.</summary>
+        /// <summary>
+        /// Catalog list. Admins see everything; everyone else sees only active services.
+        ///
+        /// Anonymous like every other catalog read (menu items, trays, packages,
+        /// rentals): a guest building a plan has to be able to see and price the services
+        /// in it. IsAdmin() is false for a guest, so they get the active list.
+        /// </summary>
+        [AllowAnonymous]
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -34,6 +41,7 @@ namespace System_ApiTest.Controllers
             return Ok(items.Select(ToDto));
         }
 
+        [AllowAnonymous]
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
         {

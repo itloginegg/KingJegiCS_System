@@ -124,7 +124,7 @@ export function ProposalCardStyles() {
   );
 }
 
-function LineRow({ line }: { line: ProposalLine }) {
+function LineRow({ line, dishes }: { line: ProposalLine; dishes?: string[] }) {
   return (
     <div className="prop-line">
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -134,6 +134,9 @@ function LineRow({ line }: { line: ProposalLine }) {
         <div className="prop-line-sub">
           {line.quantity} × {fmt(line.unitPrice)}
         </div>
+        {dishes && dishes.length > 0 && (
+          <div className="prop-line-sub">{dishes.join(' · ')}</div>
+        )}
       </div>
       <span className="prop-tag">{LINE_LABEL[line.type] ?? line.type}</span>
       <span className="prop-line-total">{fmt(line.lineTotal)}</span>
@@ -149,9 +152,11 @@ export interface ProposalCardProps {
   busy?: boolean;
   /** Button label override (defaults to "Use this plan"). */
   actionLabel?: string;
+  /** Dish names per tray id. When given, tray rows list what's in the tray. */
+  trayDishes?: Record<string, string[]>;
 }
 
-export function ProposalCard({ proposal, onUse, busy, actionLabel }: ProposalCardProps) {
+export function ProposalCard({ proposal, onUse, busy, actionLabel, trayDishes }: ProposalCardProps) {
   const accent = TIER_ACCENT[proposal.tier] ?? 'var(--primary)';
 
   return (
@@ -167,7 +172,11 @@ export function ProposalCard({ proposal, onUse, busy, actionLabel }: ProposalCar
 
       <div className="prop-lines">
         {proposal.lines.map((line) => (
-          <LineRow key={`${line.type}-${line.refId}`} line={line} />
+          <LineRow
+            key={`${line.type}-${line.refId}`}
+            line={line}
+            dishes={line.type === 'MenuTray' ? trayDishes?.[line.refId] : undefined}
+          />
         ))}
       </div>
 

@@ -4,6 +4,8 @@
  * Endpoint inventory:
  *   POST /api/suggestions/budget        → tiered, budget-fitting proposals (stateless)
  *   POST /api/suggestions/materialize   → turn a chosen proposal into a Draft booking
+ *   POST /api/suggestions/quote         → price an edited plan (anonymous, nothing saved)
+ *   POST /api/suggestions/checkout      → place a plan as a submitted booking, all or nothing
  *
  * THE GOLDEN RULE (frontend): every price/subtotal/tax/total/remainingBudget shown
  * is rendered exactly as the backend returned it — never recomputed client-side.
@@ -19,11 +21,14 @@ const API_BASE_URL = (
 
 export class SuggestionsApiError extends Error {
   readonly status: number | null;
+  /** Every reason a plan checkout was refused, when the server listed them. */
+  readonly problems: string[];
 
-  constructor(message: string, status: number | null = null) {
+  constructor(message: string, status: number | null = null, problems: string[] = []) {
     super(message);
     this.name = 'SuggestionsApiError';
     this.status = status;
+    this.problems = problems;
   }
 
   get isAuthError(): boolean {
@@ -106,9 +111,25 @@ export interface MaterializeProposal {
   packageSlotSelections: MaterializeSlotSelection[];
 }
 
-/** Matches MaterializeRequest. */
+/**
+ * Matches PlanEventDetailsDto: the event-type-specific details and motif/theme text a
+ * plan built in the booking wizard carries. Only the fields matching the event type
+ * should be set; the quote reports any that don't fit.
+ */
+export interface PlanEventDetails {
+  groomName?: string | null;
+  brideName?: string | null;
+  celebrantName?: string | null;
+  celebrantSex?: string | null;
+  celebrantAge?: number | null;
+  eventName?: string | null;
+  motif?: string | null;
+  theme?: string | null;
+}
+
+/** Matches MaterializeRequest — also the recipe a planned booking keeps in the cart. */
 export interface MaterializeRequest {
-  bookingType: 'FullService' | 'FoodDelivery';
+  bookingType: 'FullService' | 'FoodDelivery' | 'RentalService';
   eventDate: string;                              // "YYYY-MM-DD"
   startTime: string;                              // "HH:mm:ss"
   endDate?: string | null;
@@ -117,6 +138,7 @@ export interface MaterializeRequest {
   venueAddress: string;
   guestCount?: number | null;
   contactNumber?: string | null;
+  eventDetails?: PlanEventDetails | null;
   proposal: MaterializeProposal;
 }
 
@@ -136,21 +158,85 @@ export interface MaterializeResult {
   droppedLines: DroppedLine[];
 }
 
+/**
+ * Matches QuoteRequest. The times are optional: send them (with endDate and eventType
+ * for an event) and the quote also judges the date and time the way booking creation
+ * would, reporting it as `headerProblem`.
+ */
+export interface QuoteRequest {
+  bookingType: 'FullService' | 'FoodDelivery' | 'RentalService';
+  eventDate: string;                              // "YYYY-MM-DD"
+  endDate?: string | null;
+  guestCount?: number | null;
+  startTime?: string | null;                      // "HH:mm:ss"
+  endTime?: string | null;
+  eventType?: string | null;
+  eventDetails?: PlanEventDetails | null;
+  proposal: MaterializeProposal;
+}
+
+/**
+ * Matches QuoteLineDto. A non-null `problem` means the booking would refuse this
+ * line; it is left out of the totals.
+ */
+export interface QuoteLine {
+  type: string;        // "Package" | "MenuItem" | "MenuTray" | "Service" | "Rental"
+  refId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  problem: string | null;
+}
+
+/** Matches QuoteSlotDto — one package course and the dishes chosen for it. */
+export interface QuoteSlot {
+  slotId: string;
+  slotLabel: string;
+  chooseCount: number;
+  itemIds: string[];
+  itemNames: string[];
+  problem: string | null;
+}
+
+/** Matches QuoteResponse. All money values are authoritative — render as-is. */
+export interface QuoteResponse {
+  lines: QuoteLine[];
+  packageSlots: QuoteSlot[];
+  problems: string[];
+  /** Why the date, time or guest count would be refused; null when fine or not sent. */
+  headerProblem: string | null;
+  subtotal: number;
+  tax: number;
+  total: number;
+  canCheckout: boolean;
+}
+
+/** Matches CheckoutResultDto — the plan, placed as a submitted booking. */
+export interface CheckoutResult {
+  bookingId: string;
+  bookingName: string;
+  totalAmount: number;
+}
+
 // ── Internal helpers (copied from bookingApi.ts's shape) ─────────────────
 
-async function readErrorMessage(res: Response): Promise<string | null> {
+async function readErrorBody(res: Response): Promise<{ message: string | null; problems: string[] }> {
   try {
     const body = (await res.json()) as any;
-    if (typeof body.message === 'string') return body.message;
+    const problems = Array.isArray(body.problems)
+      ? body.problems.filter((p: unknown): p is string => typeof p === 'string')
+      : [];
+    if (typeof body.message === 'string') return { message: body.message, problems };
     if (body.errors && typeof body.errors === 'object') {
       const firstKey = Object.keys(body.errors)[0];
       if (firstKey && Array.isArray(body.errors[firstKey]) && body.errors[firstKey].length > 0) {
-        return body.errors[firstKey][0];
+        return { message: body.errors[firstKey][0], problems };
       }
     }
-    return null;
+    return { message: null, problems };
   } catch {
-    return null;
+    return { message: null, problems: [] };
   }
 }
 
@@ -162,9 +248,12 @@ async function request<T>(
 ): Promise<T> {
   let res: Response;
   try {
+    /* No Authorization header at all for a guest. `Bearer ` with an empty token is a
+       malformed credential rather than an absent one (see fetchPublicMenuItems), and
+       the anonymous endpoints here, /budget and /quote, are called exactly that way. */
     const options: RequestInit = {
       method,
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     };
     if (body !== undefined) {
       options.headers = { ...options.headers, 'Content-Type': 'application/json' };
@@ -188,10 +277,11 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const message = await readErrorMessage(res);
+    const { message, problems } = await readErrorBody(res);
     throw new SuggestionsApiError(
       message ?? `The server responded with an error (HTTP ${res.status}).`,
       res.status,
+      problems,
     );
   }
 
@@ -215,4 +305,17 @@ export function materializeProposal(
   req: MaterializeRequest,
 ): Promise<MaterializeResult> {
   return request<MaterializeResult>('/api/suggestions/materialize', 'POST', token, req);
+}
+
+/** Price an edited plan. Anonymous: pass '' when signed out. Nothing is saved. */
+export function quoteProposal(token: string, req: QuoteRequest): Promise<QuoteResponse> {
+  return request<QuoteResponse>('/api/suggestions/quote', 'POST', token, req);
+}
+
+/**
+ * Place a plan as a submitted booking, all or nothing. A refusal is a
+ * SuggestionsApiError whose `problems` lists everything that needs fixing.
+ */
+export function checkoutPlan(token: string, req: MaterializeRequest): Promise<CheckoutResult> {
+  return request<CheckoutResult>('/api/suggestions/checkout', 'POST', token, req);
 }

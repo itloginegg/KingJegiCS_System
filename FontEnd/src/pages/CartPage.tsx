@@ -10,7 +10,13 @@ import { readSession } from '../lib/tokenStorage';
 import { formatPeso, toRentalItem } from '../components/rentals/rentalData';
 import { fetchRentalItems } from '../api/rentalAdminApi';
 import { fetchMenuItems, fetchMenuTrays, getFullImageUrl } from '../api/menuAdminApi';
-import type { CartItemType, CartLine } from '../context/CartContext';
+import { fmtDate, fmtTime } from '../lib/format';
+import { usePlanRecheck } from '../hooks/usePlanRecheck';
+import { holdPlanImages, peekPlanImages } from '../lib/planImages';
+import { validateReferenceImage } from '../api/bookingApi';
+import { PlanReview } from '../components/suggestions/PlanReview';
+import { PlanByBudgetStyles } from '../components/suggestions/PlanByBudget';
+import type { CartItemType, CartLine, CartPlan } from '../context/CartContext';
 
 /**
  * /cart — the one place a mixed booking is reviewed before it becomes a booking.
@@ -58,6 +64,9 @@ export function CartPage() {
     removeItem,
     clear,
     reconcile,
+    plans,
+    plansTotal,
+    removePlan,
   } = useCart();
 
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -74,6 +83,15 @@ export function CartPage() {
   const [verified, setVerified] = useState<Set<CartItemType>>(() => new Set());
   /** Bumped by the retry button, which is the only way back from a failed price check. */
   const [retryToken, setRetryToken] = useState(0);
+
+  /* Planned bookings: re-checked on every load (see usePlanRecheck), and opened back
+     up in the plan editor to fix one the re-check flagged. */
+  const planCheck = usePlanRecheck();
+  const [editingPlanKey, setEditingPlanKey] = useState<string | null>(null);
+  const editingPlan = plans.find((p) => p.key === editingPlanKey) ?? null;
+  const planStale = plans.some((p) => p.status === 'stale');
+  /** Dish names per tray, for the editor's tray rows. Filled by the catalog fetch below. */
+  const [trayDishes, setTrayDishes] = useState<Record<string, string[]>>({});
 
   /* ── Reconcile against the live catalogs ──
      All three run together: a mixed cart needs all three before any total it
@@ -131,6 +149,7 @@ export function CartPage() {
       }
 
       if (trays.status === 'fulfilled') {
+        setTrayDishes(Object.fromEntries(trays.value.map((t) => [t.id, t.dishes.map((d) => d.itemName)])));
         reconcile(
           'MenuTray',
           trays.value
@@ -189,7 +208,7 @@ export function CartPage() {
     setPromoNote(`"${code}" isn't an active code.`);
   }, [promo]);
 
-  const total = Math.max(0, subtotal - discount);
+  const total = Math.max(0, subtotal - discount) + plansTotal;
 
   /* Every type in the cart has to have been priced against a catalog that
      actually answered. A cart of trays is fine when only the rentals endpoint is
@@ -200,17 +219,19 @@ export function CartPage() {
   );
   const cannotPrice = !checking && unpriced.length > 0;
 
-  /* ── Auth-gated checkout ──
-     A guest keeps their cart (it is in localStorage), signs in, and comes
-     straight back here. The redirect param is what closes that loop. */
+  /* ── Checkout ──
+     No sign-in here. /checkout shows a guest their order and asks at "Place order",
+     returning with ?redirect=. Making someone sign in just to LOOK at what they are
+     about to buy was the wall the guest cart exists to take down. */
   const goToCheckout = useCallback(() => {
-    if (lines.length === 0 || hasBlockingIssue || cannotPrice) return;
-    if (!isAuthenticated) {
-      navigate(`/login?redirect=${encodeURIComponent('/cart')}`);
-      return;
-    }
-    navigate('/book', { state: { fromCart: true } });
-  }, [lines.length, hasBlockingIssue, cannotPrice, isAuthenticated, navigate]);
+    if ((lines.length === 0 && plans.length === 0) || hasBlockingIssue || cannotPrice) return;
+    if (planCheck.checking || planCheck.failed) return;
+    /* Not /book. That is the FullService wizard, which asks for event type and
+       guest count — neither of which a drop-off or an equipment rental needs, and
+       neither of which the backend requires for those two types. /checkout collects
+       only what BookingCreateDto actually validates for them. */
+    navigate('/checkout');
+  }, [lines.length, plans.length, hasBlockingIssue, cannotPrice, planCheck.checking, planCheck.failed, navigate]);
 
   /* Grouped so a mixed cart reads as "food, then equipment" rather than as one
      undifferentiated column where a tray and a chair look like the same thing. */
@@ -237,7 +258,7 @@ export function CartPage() {
           Continue browsing
         </Link>
 
-        {lines.length === 0 ? (
+        {lines.length === 0 && plans.length === 0 ? (
           <EmptyCart restored={restored} />
         ) : (
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
@@ -273,6 +294,28 @@ export function CartPage() {
                   <AlertCircle size={15} className="mt-px shrink-0 text-warning-ink" aria-hidden="true" />
                   {catalogError}
                 </p>
+              )}
+
+              {plans.length > 0 && (
+                <div className={grouped.length > 0 ? 'mb-8' : undefined}>
+                  <h2
+                    className="mb-1 text-[0.68rem] font-semibold tracking-[0.14em] text-text-muted uppercase"
+                    style={{ fontFamily: 'var(--font-body)' }}
+                  >
+                    Planned bookings
+                    <span className="ml-2 tracking-normal normal-case text-text-dim">{plans.length}</span>
+                  </h2>
+                  <ul className="list-none p-0">
+                    {plans.map((plan) => (
+                      <PlanRow
+                        key={plan.key}
+                        plan={plan}
+                        onEdit={() => setEditingPlanKey(plan.key)}
+                        onRemove={() => removePlan(plan.key)}
+                      />
+                    ))}
+                  </ul>
+                </div>
               )}
 
               {grouped.map((group, gi) => (
@@ -315,9 +358,16 @@ export function CartPage() {
               </h2>
 
               <dl className="space-y-3 text-[0.85rem]" style={{ fontFamily: 'var(--font-body)' }}>
-                <SummaryRow label={`Subtotal (${pieces} ${pieces === 1 ? 'item' : 'items'})`}>
-                  {formatPeso(subtotal)}
-                </SummaryRow>
+                {lines.length > 0 && (
+                  <SummaryRow label={`Subtotal (${pieces} ${pieces === 1 ? 'item' : 'items'})`}>
+                    {formatPeso(subtotal)}
+                  </SummaryRow>
+                )}
+                {plans.length > 0 && (
+                  <SummaryRow label={`Planned bookings (${plans.length})`}>
+                    {formatPeso(plansTotal)}
+                  </SummaryRow>
+                )}
                 <SummaryRow label="Discount">
                   {discount > 0 ? `−${formatPeso(discount)}` : '—'}
                 </SummaryRow>
@@ -418,7 +468,7 @@ export function CartPage() {
                 </div>
               )}
 
-              {hasBlockingIssue && (
+              {deadCount > 0 && (
                 <p
                   role="alert"
                   className="mt-4 flex items-start gap-2 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
@@ -429,14 +479,45 @@ export function CartPage() {
                 </p>
               )}
 
+              {planStale && (
+                <p
+                  role="alert"
+                  className="mt-4 flex items-start gap-2 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
+                  style={{ fontFamily: 'var(--font-body)' }}
+                >
+                  <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
+                  A planned booking has changed since you added it. Edit or remove the plan marked above to continue.
+                </p>
+              )}
+
+              {planCheck.failed && (
+                <div
+                  role="alert"
+                  className="mt-4 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
+                  style={{ fontFamily: 'var(--font-body)' }}
+                >
+                  <p className="flex items-start gap-2">
+                    <AlertCircle size={15} className="mt-px shrink-0" aria-hidden="true" />
+                    We couldn’t re-check your planned bookings, so checkout is paused.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={planCheck.retry}
+                    className="mt-2 cursor-pointer rounded-lg border border-danger-ink/40 px-2.5 py-1 text-[0.72rem] font-semibold underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={goToCheckout}
-                disabled={checking || hasBlockingIssue || cannotPrice}
+                disabled={checking || planCheck.checking || planCheck.failed || hasBlockingIssue || cannotPrice}
                 className="mt-5 w-full cursor-pointer rounded-full bg-accent px-6 py-3.5 text-[0.85rem] font-semibold text-accent-fg transition-colors hover:bg-accent-hover focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-card focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ fontFamily: 'var(--font-body)' }}
               >
-                {checking
+                {checking || planCheck.checking
                   ? 'Checking availability…'
                   : cannotPrice
                     ? 'Prices unavailable'
@@ -448,13 +529,26 @@ export function CartPage() {
                   className="mt-3 text-center text-[0.73rem] text-text-muted"
                   style={{ fontFamily: 'var(--font-body)' }}
                 >
-                  You'll be asked to sign in first. Your cart is saved.
+                  You'll sign in when you place the order. Your cart is saved.
                 </p>
               )}
             </aside>
           </div>
         )}
       </main>
+
+      {editingPlan && (
+        <>
+          <PlanByBudgetStyles />
+          <PlanReview
+            key={editingPlan.key}
+            source={{ kind: 'plan', plan: editingPlan }}
+            trayDishes={trayDishes}
+            onClose={() => setEditingPlanKey(null)}
+            onDone={() => setEditingPlanKey(null)}
+          />
+        </>
+      )}
 
       <SiteFooter />
     </div>
@@ -646,6 +740,176 @@ function QtyButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * One planned booking. Changing it means opening it in the plan editor again.
+ * The figures are its latest quote: re-checked on every load, and flagged when the
+ * total moved or when something in it can no longer be booked.
+ */
+function PlanRow({ plan, onEdit, onRemove }: { plan: CartPlan; onEdit: () => void; onRemove: () => void }) {
+  const r = plan.recipe;
+  return (
+    <li className="border-b border-border py-5 last:border-b-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[0.95rem] font-semibold text-text-primary" style={{ fontFamily: 'var(--font-body)' }}>
+            {plan.title}
+          </p>
+          <p className="mt-1 text-[0.75rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+            {fmtDate(r.eventDate)} · {fmtTime(r.startTime)} · {r.venueAddress}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="cursor-pointer rounded-lg px-2 py-1 text-[0.75rem] font-semibold text-text-secondary underline-offset-4 transition-colors hover:text-text-primary hover:underline focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+            style={{ fontFamily: 'var(--font-body)' }}
+          >
+            Edit plan
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`Remove ${plan.title} from cart`}
+            className="cursor-pointer rounded-lg p-1.5 text-text-dim transition-colors hover:bg-danger-muted hover:text-danger-ink focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+          >
+            <Trash2 size={17} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      {plan.status === 'unverified' && (
+        <p className="mt-2 text-[0.72rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+          Checking today’s prices and availability…
+        </p>
+      )}
+      {plan.status === 'unchecked' && (
+        <p className="mt-2 text-[0.72rem] text-warning-ink" style={{ fontFamily: 'var(--font-body)' }}>
+          Couldn’t re-check this plan.
+        </p>
+      )}
+      {plan.status === 'repriced' && plan.totalWhenAdded !== undefined && (
+        <p className="mt-2 text-[0.72rem] text-warning-ink" style={{ fontFamily: 'var(--font-body)' }}>
+          The total changed from {formatPeso(plan.totalWhenAdded)} to {formatPeso(plan.snap.total)}.
+        </p>
+      )}
+      {plan.status === 'stale' && (
+        <div
+          role="alert"
+          className="mt-3 rounded-xl bg-danger-muted px-3.5 py-2.5 text-[0.76rem] text-danger-ink"
+          style={{ fontFamily: 'var(--font-body)' }}
+        >
+          <p className="font-semibold">This plan can’t be booked as it is:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {(plan.problems ?? []).map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="mt-2 cursor-pointer rounded-lg border border-danger-ink/40 px-2.5 py-1 text-[0.72rem] font-semibold underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none"
+          >
+            {plan.headerProblem ? 'Pick another date or time' : 'Fix this plan'}
+          </button>
+        </div>
+      )}
+
+      <PlanImagesNote plan={plan} />
+
+      <ul className="mt-3 list-none space-y-1.5 p-0">
+        {plan.snap.lines.map((l) => (
+          <li key={`${l.type}-${l.refId}`} className="flex items-baseline justify-between gap-3 text-[0.8rem]">
+            <span className="min-w-0 truncate text-text-secondary" style={{ fontFamily: 'var(--font-body)' }}>
+              {l.type === 'Package' ? l.name : `${l.quantity} × ${l.name}`}
+            </span>
+            <span className="whitespace-nowrap text-text-primary" style={{ fontFamily: 'var(--font-numeric)' }}>
+              {formatPeso(l.lineTotal)}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {plan.snap.slots.length > 0 && (
+        <ul className="mt-2 list-none space-y-0.5 p-0">
+          {plan.snap.slots.map((s) => (
+            <li key={s.slotId} className="text-[0.74rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+              <span className="text-text-dim">{s.slotLabel}:</span> {s.itemNames.join(', ')}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 text-right text-[0.95rem] font-bold text-text-primary" style={{ fontFamily: 'var(--font-numeric)' }}>
+        {formatPeso(plan.snap.total)}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * The reference images a wizard plan carries. The files live in memory only (see
+ * lib/planImages), so a refresh loses them; this says so and lets the customer pick
+ * them again, rather than letting checkout place the plan without them unannounced.
+ */
+function PlanImagesNote({ plan }: { plan: CartPlan }) {
+  const [, rerender] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const names = plan.imageNames;
+  if (!names || (!names.motif && !names.theme)) return null;
+
+  const held = peekPlanImages(plan.key);
+  const lost = (['motif', 'theme'] as const).filter((kind) => names[kind] && !held?.[kind]);
+
+  const pick = (kind: 'motif' | 'theme', file: File | null) => {
+    if (!file) return;
+    const problem = validateReferenceImage(file);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(null);
+    const current = peekPlanImages(plan.key) ?? { motif: null, theme: null };
+    holdPlanImages(plan.key, { ...current, [kind]: file });
+    rerender((n) => n + 1);
+  };
+
+  if (lost.length === 0) {
+    return (
+      <p className="mt-2 text-[0.72rem] text-text-muted" style={{ fontFamily: 'var(--font-body)' }}>
+        Reference images attached at checkout: {[held?.motif?.name, held?.theme?.name].filter(Boolean).join(', ')}. Keep
+        this tab open until you place the order — they aren't saved anywhere yet.
+      </p>
+    );
+  }
+
+  return (
+    <div
+      className="mt-2 rounded-xl border border-border bg-bg-subtle px-3.5 py-2.5 text-[0.74rem] text-text-secondary"
+      style={{ fontFamily: 'var(--font-body)' }}
+    >
+      <p>
+        Your {lost.join(' and ')} image{lost.length > 1 ? 's were' : ' was'} lost when the page reloaded. Pick{' '}
+        {lost.length > 1 ? 'them' : 'it'} again, or place the plan without.
+      </p>
+      {lost.map((kind) => (
+        <label key={kind} className="mt-1.5 flex flex-wrap items-center gap-2">
+          <span className="capitalize">{kind}:</span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            aria-label={`Pick the ${kind} image again`}
+            onChange={(e) => pick(kind, e.target.files?.[0] ?? null)}
+            className="text-[0.72rem]"
+          />
+        </label>
+      ))}
+      {error && <p className="mt-1 text-danger-ink">{error}</p>}
+    </div>
   );
 }
 

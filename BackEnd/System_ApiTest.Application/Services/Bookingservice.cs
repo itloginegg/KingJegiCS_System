@@ -64,11 +64,21 @@ namespace System_ApiTest.Application.Services
         // TODO: source this from System Settings (default_max_capacity) once that entity exists.
         private const int DefaultMaxCapacity = 3;
 
-        /// <summary>Auto name: "{Customer} - {Event type}" for events, "{Customer} - Food Delivery" for deliveries.</summary>
+        /// <summary>
+        /// Auto name: "{Customer} - {Event type}" for events, "{Customer} - Food Delivery"
+        /// for deliveries, "{Customer} - Equipment Rental" for a rental with no event type.
+        ///
+        /// The rental fallback matters now that a rental may legitimately arrive with a null
+        /// EventType: interpolating one would have produced "Jamu - " and shipped a booking
+        /// named after nothing.
+        /// </summary>
         public static string BuildBookingName(string customerFullName, BookingType bookingType, EventType? type)
-            => bookingType == BookingType.FoodDelivery
-                ? $"{customerFullName} - Food Delivery"
-                : $"{customerFullName} - {type}";
+            => bookingType switch
+            {
+                BookingType.FoodDelivery => $"{customerFullName} - Food Delivery",
+                BookingType.RentalService when type is null => $"{customerFullName} - Equipment Rental",
+                _ => $"{customerFullName} - {type}",
+            };
 
         /// <summary>
         /// True if the given date falls anywhere within a CONFIRMED full-service
@@ -105,49 +115,14 @@ namespace System_ApiTest.Application.Services
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
 
-            // Minimum lead time: the event/delivery date must be far enough out.
+            // Every header rule (lead time, per-type fields, package minimum, a window that
+            // could be confirmed) lives in ValidateNewHeaderAsync, shared with the plan
+            // quote. It returns the header as the type's rules normalise it.
+            var header = await ValidateNewHeaderAsync(
+                bookingType, eventDate, start, endDate, end, type, guestCount, menuPackageId);
+            (endDate, end, type, guestCount) = (header.EndDate, header.End, header.Type, header.GuestCount);
+
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
-            var leadDays = bookingType == BookingType.FoodDelivery
-                ? settings?.MinLeadDaysDelivery ?? 1
-                : settings?.MinLeadDaysFullService ?? 7;
-            var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
-            if (eventDate < earliest)
-                throw new BookingRuleException(
-                    $"The {(bookingType == BookingType.FoodDelivery ? "delivery" : "event")} date must be at least " +
-                    $"{leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
-
-            if (bookingType == BookingType.FoodDelivery)
-            {
-                // Deliveries are menu items/trays only — no package, no event fields.
-                if (menuPackageId is not null)
-                    throw new BookingRuleException("Food delivery orders can't include a menu package.");
-                if (await DateHasConfirmedEventAsync(eventDate))
-                    throw new BookingRuleException("This date already has a booked event and isn't available for delivery.");
-
-                // Event-only fields are ignored for a delivery.
-                endDate = null; end = null; type = null; guestCount = null;
-            }
-            else
-            {
-                // Full-service requires the event fields.
-                if (endDate is null || end is null || type is null || guestCount is null)
-                    throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
-
-                if (menuPackageId is not null)
-                {
-                    var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
-                    if (pkg is null)
-                        throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
-                    
-                    if (guestCount < pkg.MinPax)
-                        throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
-                }
-            }
-
-            // Fail early if this window can never be confirmed, rather than letting the
-            // customer build out a booking on a date that's already taken. Confirmation
-            // still re-checks under a row lock — this doesn't replace that guarantee.
-            await EnsureSlotOpenForNewWindowAsync(null, bookingType, eventDate, start, endDate, end);
 
             // Retries: the execution strategy re-runs this whole block after a transient
             // failure, and EF accepts changes into the change tracker on SaveChanges even
@@ -251,7 +226,12 @@ namespace System_ApiTest.Application.Services
             await _db.SaveChangesAsync();
         }
 
-        private static decimal ComputeTotal(Booking b)
+        /// <summary>
+        /// Internal rather than private so Suggestionservice's quote can run it over an
+        /// unsaved Booking: one computation for a quote and for the booking it becomes,
+        /// so the two cannot disagree about a figure.
+        /// </summary>
+        internal static decimal ComputeTotal(Booking b)
         {
             decimal total = 0m;
             total += b.MenuPackage?.ComputeCost(b.GuestCount ?? 0) ?? 0m; // base + overage (package implies guest count)
@@ -792,6 +772,96 @@ namespace System_ApiTest.Application.Services
             }
         }
 
+        /// <summary>The header fields a new booking keeps once its type's rules have been applied.</summary>
+        public sealed record NewBookingHeader(DateOnly? EndDate, TimeOnly? End, EventType? Type, int? GuestCount);
+
+        /// <summary>
+        /// Every rule a NEW booking's header must pass before anything is written: lead
+        /// time; the per-type field rules (a delivery takes no package and no event
+        /// fields, a rental needs its return window, a full-service event needs its end,
+        /// type and guest count and must meet the package minimum); and whether the window
+        /// could ever be confirmed. Throws BookingRuleException with the customer-facing
+        /// reason.
+        ///
+        /// Moved out of CreateAsync unchanged, so a plan quote can ask "would these details
+        /// be accepted?" with exactly the rules create applies, without creating anything.
+        /// Returns the header as normalised by the type's rules (a delivery's event-only
+        /// fields cleared), which is what CreateAsync stores.
+        /// </summary>
+        public async Task<NewBookingHeader> ValidateNewHeaderAsync(
+            BookingType bookingType, DateOnly eventDate, TimeOnly start,
+            DateOnly? endDate, TimeOnly? end, EventType? type, int? guestCount, Guid? menuPackageId)
+        {
+            // Minimum lead time: the event/delivery date must be far enough out.
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var leadDays = bookingType == BookingType.FoodDelivery
+                ? settings?.MinLeadDaysDelivery ?? 1
+                : settings?.MinLeadDaysFullService ?? 7;
+            var earliest = DateOnly.FromDateTime(DateTime.Now).AddDays(leadDays);
+            if (eventDate < earliest)
+                throw new BookingRuleException(
+                    $"The {(bookingType == BookingType.FoodDelivery ? "delivery" : "event")} date must be at least " +
+                    $"{leadDays} day(s) from today (earliest available: {earliest:yyyy-MM-dd}).");
+
+            if (bookingType == BookingType.FoodDelivery)
+            {
+                // Deliveries are menu items/trays only — no package, no event fields.
+                if (menuPackageId is not null)
+                    throw new BookingRuleException("Food delivery orders can't include a menu package.");
+                if (await DateHasConfirmedEventAsync(eventDate))
+                    throw new BookingRuleException("This date already has a booked event and isn't available for delivery.");
+
+                // Event-only fields are ignored for a delivery.
+                endDate = null; end = null; type = null; guestCount = null;
+            }
+            else if (bookingType == BookingType.RentalService)
+            {
+                // Equipment needs a WINDOW — when it goes out, when it comes back — and
+                // nothing else. There is no event to classify and nobody to seat.
+                //
+                // This branch exists because the `else` below used to catch RentalService
+                // too: it was written when "not a delivery" still meant "full service",
+                // before RentalService was appended to the enum. BookingCreateDto.Validate
+                // and Booking's own field comments have both said all along that EventType
+                // and GuestCount are null for a rental — this was the one layer that had
+                // not caught up, so ordering chairs demanded a guest count.
+                if (endDate is null || end is null)
+                    throw new BookingRuleException("Rental bookings require a return date and time.");
+
+                // A menu package is catering, which a rental by definition has none of.
+                if (menuPackageId is not null)
+                    throw new BookingRuleException("Rental bookings can't include a menu package.");
+
+                // type and guestCount are deliberately NOT cleared the way the delivery
+                // branch clears them: BookingPage's rentals flow still sends both, and
+                // silently discarding a value the UI collected is worse than storing it.
+                // Retire that once the rentals flow stops asking.
+            }
+            else
+            {
+                // Full-service requires the event fields.
+                if (endDate is null || end is null || type is null || guestCount is null)
+                    throw new BookingRuleException("Full-service bookings require end date, end time, event type, and guest count.");
+
+                if (menuPackageId is not null)
+                {
+                    var pkg = await _db.MenuPackages.FindAsync(menuPackageId.Value);
+                    if (pkg is null)
+                        throw new BookingRuleException($"Menu package with ID '{menuPackageId.Value}' was not found.");
+                    
+                    if (guestCount < pkg.MinPax)
+                        throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+                }
+            }
+
+            // Fail early if this window can never be confirmed, rather than letting the
+            // customer build out a booking on a date that's already taken. Confirmation
+            // still re-checks under a row lock — this doesn't replace that guarantee.
+            await EnsureSlotOpenForNewWindowAsync(null, bookingType, eventDate, start, endDate, end);
+
+            return new NewBookingHeader(endDate, end, type, guestCount);
+        }
+
         /// <summary>
         /// Rejects a proposed booking window that can never be confirmed, at the moment
         /// it's being created or re-dated rather than only at confirmation.
@@ -1227,6 +1297,21 @@ namespace System_ApiTest.Application.Services
                 if (menuPackageId is not null)
                     throw new BookingRuleException("Food delivery orders can't include a menu package.");
                 endDate = null; end = null; type = null; guestCount = null;
+            }
+            else if (booking.BookingType == BookingType.RentalService)
+            {
+                // Same asymmetry as CreateAsync: a rental needs its return window and
+                // nothing more. Kept in step with that branch deliberately — the two
+                // drifting apart is how a booking becomes creatable but not editable.
+                if (endDate is null || end is null)
+                    throw new BookingRuleException("Rental bookings require a return date and time.");
+
+                // Symmetry with CreateAsync. Without it an update is the back door that
+                // create closed: the MinPax check further down compares against a null
+                // guestCount, which is false in a lifted comparison, so a package would
+                // attach to a rental unchallenged.
+                if (menuPackageId is not null)
+                    throw new BookingRuleException("Rental bookings can't include a menu package.");
             }
             else if (endDate is null || end is null || type is null || guestCount is null)
             {

@@ -54,7 +54,10 @@ export function Navbar({
      read 0 on first paint), and Landing, Packages and Booking passed nothing at
      all — which left the icon showing an empty cart, and inert, on three pages
      where the cart was not empty. One cart, one number, owned by the bar. */
-  const { pieces } = useCart();
+  const { pieces: productPieces, plans } = useCart();
+  /* A planned booking counts once: it is one thing to check out, however many
+     lines it holds. */
+  const pieces = productPieces + plans.length;
 
   const [menuOpen, setMenuOpen] = useState(false);
 

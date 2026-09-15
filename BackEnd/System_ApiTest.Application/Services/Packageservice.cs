@@ -41,7 +41,7 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
-        /// Loads a package and computes the eligible items per slot — everything the
+        /// Loads a package and computes the eligible items per slot ï¿½ everything the
         /// customer "pick your dishes" screen needs. Fixed items and inclusions come
         /// straight off the package.
         /// </summary>
@@ -65,7 +65,7 @@ namespace System_ApiTest.Application.Services
         /// Records the customer's choice(s) for one slot on a booking, replacing any
         /// prior choices for that slot. Validates the slot belongs to the booking's
         /// package, the count equals choose_count, and every item is active and
-        /// category-eligible. Selections are free — no total recompute.
+        /// category-eligible. Selections are free ï¿½ no total recompute.
         /// </summary>
         public async Task SetSlotSelectionAsync(Guid bookingId, Guid slotId, IReadOnlyList<Guid> itemIds)
         {
@@ -83,15 +83,9 @@ namespace System_ApiTest.Application.Services
             if (slot.MenuPackageId != booking.MenuPackageId)
                 throw new BookingRuleException("That slot does not belong to this booking's package.");
 
-            if (itemIds.Count != slot.ChooseCount)
-                throw new BookingRuleException($"Slot '{slot.Label}' requires exactly {slot.ChooseCount} selection(s).");
-            if (itemIds.Distinct().Count() != itemIds.Count)
-                throw new BookingRuleException("The selections for a slot must be distinct.");
-
-            var eligible = (await EligibleItemsAsync(slot)).Select(m => m.Id).ToHashSet();
-            foreach (var id in itemIds)
-                if (!eligible.Contains(id))
-                    throw new BookingRuleException("One or more chosen items are not eligible for this slot.");
+            var problem = await SlotChoiceProblemAsync(slot, itemIds);
+            if (problem is not null)
+                throw new BookingRuleException(problem);
 
             // Replace existing selections for this slot on this booking.
             var existing = _db.BookingPackageSelections
@@ -106,6 +100,27 @@ namespace System_ApiTest.Application.Services
                 });
 
             await _db.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Why a set of dishes can't fill a slot, or null if it can: exactly
+        /// choose_count, no repeats, every item active and category-eligible.
+        ///
+        /// Split out of SetSlotSelectionAsync so a quote can ask the same question with
+        /// no booking yet â€” one rule for "is this choice valid", not a second copy that
+        /// drifts. The slot must be loaded with AllowedCategories.
+        /// </summary>
+        public async Task<string?> SlotChoiceProblemAsync(Menupackageslot slot, IReadOnlyList<Guid> itemIds)
+        {
+            if (itemIds.Count != slot.ChooseCount)
+                return $"Slot '{slot.Label}' requires exactly {slot.ChooseCount} selection(s).";
+            if (itemIds.Distinct().Count() != itemIds.Count)
+                return "The selections for a slot must be distinct.";
+
+            var eligible = (await EligibleItemsAsync(slot)).Select(m => m.Id).ToHashSet();
+            return itemIds.All(eligible.Contains)
+                ? null
+                : "One or more chosen items are not eligible for this slot.";
         }
 
         /// <summary>

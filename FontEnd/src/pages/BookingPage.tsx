@@ -10,7 +10,8 @@ import type {
 } from '../components/booking/heroTypes';
 import { useAuth } from '../hooks/useAuth';
 import { useCart } from '../hooks/useCart';
-import type { CartLine } from '../context/CartContext';
+import { snapFromQuote } from '../context/CartContext';
+import { holdPlanImages } from '../lib/planImages';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
@@ -20,28 +21,17 @@ import { VenueAddressFields } from '../components/forms/VenueAddressFields';
 import { composeVenueAddress, emptyVenueAddress, type VenueAddress } from '../lib/venue';
 import { fetchServiceItems, type AdminServiceItem } from '../api/serviceAdminApi';
 import {
-  createBooking,
-  updateBooking,
-  addMenuItem,
-  addMenuTray,
-  addRental,
-  addService,
-  chooseSlotItems,
-  submitBooking,
   getPackageTemplate,
-  setBookingPackage,
-  deleteDraftBooking,
-  deleteDraftBookingOnUnload,
   eventDetailFieldsFor,
-  uploadMotifImage,
-  uploadThemeImage,
   validateReferenceImage,
-  BookingApiError,
-  type BookingCreatePayload,
-  type BookingUpdatePayload,
-  type BookingResponse,
   type PackageTemplateResponse,
 } from '../api/bookingApi';
+import {
+  quoteProposal,
+  SuggestionsApiError,
+  type MaterializeRequest,
+  type QuoteResponse,
+} from '../api/suggestionsApi';
 import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules } from '../api/calendarApi';
 import { SiteFooter } from '../components/site/SiteFooter';
 
@@ -91,54 +81,6 @@ const fmtLeadDate = (iso: string) => {
    share one definition. Same union, same name, same usages below. */
 type ServiceFlow = HeroServiceFlow;
 
-/* ── arriving from /cart ── */
-
-/** The cart, in the shape step 3 already keeps its à la carte quantities in. */
-type CartSeed = {
-  menuItemQty: Record<string, number>;
-  menuTrayQty: Record<string, number>;
-  rentalQty: Record<string, number>;
-  /** CartKeys that fed the seed, so submit clears exactly these and nothing added since. */
-  keys: string[];
-};
-
-/** Lines a booking can carry. 'unavailable' means delisted — /cart already blocks on those. */
-function bookableLines(lines: CartLine[]): CartLine[] {
-  return lines.filter((l) => l.status !== 'unavailable' && l.qty > 0);
-}
-
-function seedFromCart(lines: CartLine[]): CartSeed {
-  const seed: CartSeed = { menuItemQty: {}, menuTrayQty: {}, rentalQty: {}, keys: [] };
-  for (const l of bookableLines(lines)) {
-    if (l.type === 'MenuItem') seed.menuItemQty[l.id] = l.qty;
-    else if (l.type === 'MenuTray') seed.menuTrayQty[l.id] = l.qty;
-    else seed.rentalQty[l.id] = l.qty;
-    seed.keys.push(l.key);
-  }
-  return seed;
-}
-
-/**
- * Which flow a cart opens in — and so which BookingType it is created as.
- *
- * This is a pricing decision, not a cosmetic one. BookingMath.ReservationFeeFor
- * charges RentalService 5% of the grand total where FullService takes the flat
- * SystemSettings fee, and ConfirmCoreAsync deliberately does NOT consume a
- * calendar event slot for RentalService — lending out chairs doesn't occupy the
- * venue. So any cart holding food has to open as an event: booking catering as
- * RentalService would take a 5% deposit on it and reserve no slot for the event
- * it is being cooked for.
- *
- * The backend does not object to either mix on its own — AddMenuItemAsync,
- * AddMenuTrayAsync and AddRentalAsync gate on EnsureEditableAsync only, never on
- * BookingType — which is exactly why the choice has to be made deliberately
- * here, rather than left to whichever endpoint happens to reject first.
- */
-function flowForCart(lines: CartLine[]): ServiceFlow {
-  const hasFood = bookableLines(lines).some((l) => l.type === 'MenuItem' || l.type === 'MenuTray');
-  return hasFood ? 'event' : 'rentals';
-}
-
 /* ── component ────────────────────────────────────────────────────────── */
 
 export function BookingPage() {
@@ -159,35 +101,16 @@ export function BookingPage() {
     presetFlow?: ServiceFlow | 'plan';
     /** Preselects a package, so /packages' "Book this package" lands on step 3 with it chosen. */
     presetPackageId?: string;
-    /** Set by /cart's "Proceed to Checkout": seed step 3 from the cart, skip the service picker. */
-    fromCart?: boolean;
   };
   const presetService = preset.presetFlow === 'plan' ? null : preset.presetFlow ?? null;
 
-  /* The shared cart. `restored` is load-bearing: a hard reload of /book keeps
-     location.state (history.state survives it) but remounts CartProvider, whose
-     localStorage read lands an effect later — so on that path the seed is not
-     available during the first render and has to be filled in afterwards. */
-  const { lines: cartLines, restored: cartRestored, removeItem: removeCartLine } = useCart();
-  const cameFromCart = Boolean(preset.fromCart);
+  /* The wizard ends in the cart, not in a booking. Nothing is sent to the server while
+     it is filled in: step 4 prices the plan, "Add to cart" stores it, and checkout —
+     where signing in happens — places it. */
+  const { addPlan } = useCart();
 
-  /* Null unless the cart is both present and non-empty: an empty cart must not
-     pick a flow, or a stale `fromCart` would open a rentals booking for nothing. */
-  const initialCartFlow =
-    cameFromCart && cartRestored && bookableLines(cartLines).length > 0
-      ? flowForCart(cartLines)
-      : null;
-
-  /* Seeded once. The wizard owns these quantities from here on — a later cart
-     edit (another tab, via the storage listener) must not reach in and rewrite
-     step 3 underneath a customer who is part-way through filling it in. */
-  const [cartSeed, setCartSeed] = useState<CartSeed>(() =>
-    initialCartFlow ? seedFromCart(cartLines) : seedFromCart([]),
-  );
-  const [cartSeeded, setCartSeeded] = useState(() => Boolean(initialCartFlow));
-
-  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService ?? initialCartFlow);
-  const [step, setStep] = useState(presetService || initialCartFlow ? 1 : 0);
+  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService);
+  const [step, setStep] = useState(presetService ? 1 : 0);
   // Step-0 "Plan by Budget" card. Opens straight away when the landing page's
   // reserve modal sent us here with that path chosen.
   const [planMode, setPlanMode] = useState(preset.presetFlow === 'plan');
@@ -239,16 +162,6 @@ export function BookingPage() {
 
   // Delivery (rentals/menu flows)
 
-  // API state
-  const [bookingId, setBookingId] = useState<string | null>(null);
-  /* When the server last accepted a write for this draft. A Draft row has existed
-     from step 2 onward since long before this redesign — it was simply never shown,
-     so leaving mid-wizard felt like losing the work. */
-  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
-  const [bookingResponse, setBookingResponse] = useState<BookingResponse | null>(null);
-  const [creatingBooking, setCreatingBooking] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
-
   // Step 3 — Catalog data
   const [packages, setPackages] = useState<AdminPackage[]>([]);
   const [menuItems, setMenuItems] = useState<AdminMenuItem[]>([]);
@@ -266,131 +179,20 @@ export function BookingPage() {
   // Package slot selections: slotId → Set of chosen itemIds
   const [slotSelections, setSlotSelections] = useState<Record<string, string[]>>({});
 
-  // À la carte quantity maps — pre-filled when the customer arrived from /cart.
-  const [menuItemQty, setMenuItemQty] = useState<Record<string, number>>(cartSeed.menuItemQty);
-  const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>(cartSeed.menuTrayQty);
-  const [rentalQty, setRentalQty] = useState<Record<string, number>>(cartSeed.rentalQty);
+  // À la carte quantity maps.
+  const [menuItemQty, setMenuItemQty] = useState<Record<string, number>>({});
+  const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>({});
+  const [rentalQty, setRentalQty] = useState<Record<string, number>>({});
   const [serviceQty, setServiceQty] = useState<Record<string, number>>({});
   const [alacarteTab, setAlacarteTab] = useState<'dishes' | 'trays' | 'rentals' | 'services'>(
     /* A rentals booking has no Dishes tab to click, and the tab CONTENT is not
        gated on the flow — so defaulting to 'dishes' there rendered the whole dish
        catalog under a bar whose only button was "Rentals". */
-    (presetService ?? initialCartFlow) === 'rentals' ? 'rentals' : 'dishes',
+    presetService === 'rentals' ? 'rentals' : 'dishes',
   );
 
-  /* The reload path: CartProvider restored after this component mounted, so the
-     seed was empty at first render. Fill it in once. Guarded on `cartSeeded`
-     rather than on emptiness, so a customer who deliberately empties step 3 does
-     not get the cart pushed back at them. */
-  useEffect(() => {
-    if (!cameFromCart || cartSeeded || !cartRestored) return;
-    setCartSeeded(true);
-    const seed = seedFromCart(cartLines);
-    if (seed.keys.length === 0) return;
-    setCartSeed(seed);
-    setMenuItemQty(seed.menuItemQty);
-    setMenuTrayQty(seed.menuTrayQty);
-    setRentalQty(seed.rentalQty);
-    const flow = flowForCart(cartLines);
-    setServiceFlow((current) => current ?? flow);
-    if (flow === 'rentals') setAlacarteTab('rentals');
-    setStep((s) => (s === 0 ? 1 : s));
-  }, [cameFromCart, cartSeeded, cartRestored, cartLines]);
   const [dishFilter, setDishFilter] = useState('all');
 
-  // Step 3 → 4 saving
-  const [savingSelections, setSavingSelections] = useState(false);
-  /* Lines this draft has already been sent, so a second pass through step 3 does
-     not re-POST them. Keyed by booking so a fresh draft starts clean. */
-  const savedLinesRef = useRef<{ bookingId: string | null; keys: Set<string> }>({
-    bookingId: null,
-    keys: new Set(),
-  });
-
-  // Step 4
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-
-  /* ── Abandonment guard ──────────────────────────────────────────────────
-     A Draft exists from the moment Step 2 creates it. Until the booking is
-     submitted, leaving discards it — so warn first, then delete on the way out.
-
-     Two separate mechanisms, because the browser only lets us do so much:
-       • In-app navigation (nav links, footer, anything routed) — intercepted in
-         the capture phase so we can show our OWN modal with real wording.
-       • Tab close / refresh / typed URL — beforeunload only. Every current
-         browser ignores custom text here and shows its own generic message;
-         that's a platform limit, not something to work around.
-  ─────────────────────────────────────────────────────────────────────────── */
-  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
-
-  /** True while there's an unsubmitted Draft that leaving would throw away. */
-  const hasUnsavedDraft = Boolean(bookingId) && !submitted;
-
-  const discardDraft = useCallback(async () => {
-    const session = readSession();
-    if (!session?.token || !bookingId) return;
-    try {
-      await deleteDraftBooking(session.token, bookingId);
-    } catch {
-      // Best-effort: the DraftCleanupWorker sweeps anything left behind.
-    }
-  }, [bookingId]);
-
-  useEffect(() => {
-    if (!hasUnsavedDraft) return;
-
-    // Tab close / refresh. preventDefault is what triggers the prompt; the browser
-    // supplies its own wording regardless of what we set here.
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-
-    // Fires when the page is genuinely going away (unlike beforeunload, which also
-    // fires when the user then cancels), so this is the safe place to delete.
-    const onPageHide = () => {
-      const session = readSession();
-      if (session?.token && bookingId) deleteDraftBookingOnUnload(session.token, bookingId);
-    };
-
-    // In-app navigation. Capture phase so we run before React Router's own handler,
-    // and only for links that actually leave this page.
-    const onDocumentClick = (e: MouseEvent) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-
-      const anchor = (e.target as HTMLElement | null)?.closest?.('a');
-      const href = anchor?.getAttribute('href');
-      if (!anchor || !href || href.startsWith('#')) return;
-      if (anchor.target && anchor.target !== '_self') return;
-
-      // Same-page links (and the wizard's own controls) aren't leaving.
-      const destination = new URL(anchor.href, window.location.origin);
-      if (destination.origin !== window.location.origin) return;
-      if (destination.pathname === window.location.pathname) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      setPendingLeaveHref(destination.pathname + destination.search);
-    };
-
-    window.addEventListener('beforeunload', onBeforeUnload);
-    window.addEventListener('pagehide', onPageHide);
-    document.addEventListener('click', onDocumentClick, true);
-
-    return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-      window.removeEventListener('pagehide', onPageHide);
-      document.removeEventListener('click', onDocumentClick, true);
-    };
-  }, [hasUnsavedDraft, bookingId]);
-
-  const confirmLeave = async () => {
-    const href = pendingLeaveHref;
-    setPendingLeaveHref(null);
-    await discardDraft();
-    if (href) navigate(href);
-  };
 
   // Terms
   const [showTerms, setShowTerms] = useState(false);
@@ -409,9 +211,8 @@ export function BookingPage() {
 
   /* ── load catalog on step 3 ── */
   const loadCatalog = useCallback(async () => {
-    // The catalog GETs are anonymous (item 1); the login gate lives at
-    // handleCreateBooking. Step 3 is only reached post-create, so a token is
-    // normally present — fall back to '' so browsing never hard-blocks on it.
+    // The catalog GETs are anonymous, so a guest can build a whole booking before
+    // signing in. A token is sent when there is one, and '' otherwise.
     const token = readSession()?.token ?? '';
     setCatalogLoading(true);
     setCatalogError(null);
@@ -439,29 +240,32 @@ export function BookingPage() {
     if (step === 3) void loadCatalog();
   }, [step, loadCatalog]);
 
-  /* ── load package template ── */
+  /* ── load package template ──
+     Anonymous, like the catalog. Nothing is saved: the chosen package and its dishes
+     stay in this page's state until step 4 puts the plan in the cart. */
   const loadTemplate = useCallback(async (pkgId: string) => {
-    const session = readSession();
-    if (!session || !bookingId) return;
+    templateTriedFor.current = pkgId;
     setTemplateLoading(true);
     setCatalogError(null);
     try {
-      // Set the package on the booking
-      await setBookingPackage(session.token, bookingId, pkgId);
-
-      // Fetch the template slots
-      const tmpl = await getPackageTemplate(session.token, pkgId);
+      const tmpl = await getPackageTemplate(readSession()?.token ?? '', pkgId);
       setPackageTemplate(tmpl);
-      // Initialize slot selections
-      const initial: Record<string, string[]> = {};
-      tmpl.slots.forEach(s => { initial[s.slotId] = []; });
-      setSlotSelections(initial);
+      setSlotSelections(Object.fromEntries(tmpl.slots.map((s) => [s.slotId, [] as string[]])));
     } catch (err) {
       setCatalogError(err instanceof Error ? err.message : 'Unable to load package details. Please try again.');
     } finally {
       setTemplateLoading(false);
     }
-  }, [bookingId]);
+  }, []);
+
+  /* A package chosen before arriving (/packages' "Book this package") has no template
+     yet, and without one its courses can never be filled in. Tried once per package,
+     so a failed load shows its error instead of retrying on every render. */
+  const templateTriedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (step !== 3 || !selectedPackageId || packageTemplate || templateTriedFor.current === selectedPackageId) return;
+    void loadTemplate(selectedPackageId);
+  }, [step, selectedPackageId, packageTemplate, loadTemplate]);
 
   /* Lead-time rules, fetched once. Deliberately not hardcoded: MinLeadDaysFullService
      is owner-editable, and a copy here would disagree with the API the moment it
@@ -693,216 +497,118 @@ export function BookingPage() {
     });
   };
 
-  /**
-   * Uploads whichever reference images are pending, then forgets them so a later
-   * re-save doesn't send the same file again.
-   *
-   * Failures here are deliberately swallowed rather than thrown: the booking itself
-   * has already been saved by this point, and blocking the customer's progress to
-   * Step 3 over an optional inspiration photo would be a worse outcome than the photo
-   * simply not being attached. The error is surfaced inline instead.
-   */
-  const uploadPendingImages = async (token: string, id: string) => {
-    try {
-      if (motifImage) {
-        await uploadMotifImage(token, id, motifImage);
-        setMotifImage(null);
-      }
-      if (themeImage) {
-        await uploadThemeImage(token, id, themeImage);
-        setThemeImage(null);
-      }
-    } catch (err) {
-      setImageError(
-        err instanceof BookingApiError
-          ? `Your booking was saved, but the reference image didn't upload: ${err.message}`
-          : "Your booking was saved, but the reference image didn't upload.",
-      );
-    }
-  };
+  /* ── step 4: price the plan, then put it in the cart ──
+     Priced by the server (POST /api/suggestions/quote) with every detail included —
+     dates, times, event type, the event details — so step 4 shows the total checkout
+     will charge and any refusal checkout would give. And because nothing has been
+     saved before this point, an edited quantity can't be lost any more: there is no
+     earlier save left for it to collide with. */
+  const bookingType: MaterializeRequest['bookingType'] = serviceFlow === 'rentals' ? 'RentalService' : 'FullService';
 
-  /* ── Step 2 → 3: create booking ── */
-  const handleCreateBooking = async () => {
-    const session = readSession();
-    if (!session || !user) { setApiError('Please sign in.'); return; }
-    
-    if (user.role === 'admin') {
-      setApiError('Admins cannot book events through this customer page. Please log out and create a customer account to test this feature.');
-      return;
-    }
+  const planRecipe = useMemo<MaterializeRequest>(() => {
+    const clean = (s: string) => s.trim() || null;
+    const toLines = (type: string, qty: Record<string, number>) =>
+      Object.entries(qty)
+        .filter(([, q]) => q > 0)
+        .map(([refId, quantity]) => ({ type, refId, quantity }));
+    const packageId = serviceFlow === 'event' ? selectedPackageId : null;
 
-    setCreatingBooking(true);
-    setApiError(null);
-
-    const venueAddress = composeVenueAddress(venue);
-
-    const payload: BookingCreatePayload = {
-      customerId: user.id,
-      // The rentals flow is now its own booking type rather than a FullService booking
-      // with nothing catered. It still sends the full event fields (the backend applies
-      // full-service rules to it), but the backend can now tell the two apart — which is
-      // what lets a rental skip the event-slot capacity it never actually uses.
-      bookingType: serviceFlow === 'rentals' ? 'RentalService' : 'FullService',
+    return {
+      bookingType,
       eventDate,
-      startTime: startTime + ':00',
+      startTime: startTime ? `${startTime}:00` : '',
       endDate: endDate || null,
-      endTime: endTime ? endTime + ':00' : null,
-      eventType,
-      venueAddress: venueAddress || 'To be provided',
+      endTime: endTime ? `${endTime}:00` : null,
+      eventType: eventType || null,
+      venueAddress: composeVenueAddress(venue) || 'To be provided',
       guestCount: guests,
       contactNumber: phone || null,
-      // Only the group matching the event type. Sending a field that doesn't belong to
-      // the chosen type is a 400 from EventDetailRules, so the others go as null rather
-      // than as empty strings.
-      groomName: detailGroup === 'couple' ? groomName.trim() || null : null,
-      brideName: detailGroup === 'couple' ? brideName.trim() || null : null,
-      celebrantName: detailGroup === 'celebrant' ? celebrantName.trim() || null : null,
-      celebrantSex: detailGroup === 'celebrant' ? celebrantSex.trim() || null : null,
-      celebrantAge:
-        detailGroup === 'celebrant' && celebrantAge.trim()
-          ? Number(celebrantAge)
-          : null,
-      eventName: detailGroup === 'named' ? eventName.trim() || null : null,
-      motif: motif.trim() || null,
-      theme: theme.trim() || null,
+      /* Only the group matching the event type. The quote refuses a field that
+         doesn't belong to the type, so the others go as null, never as ''. */
+      eventDetails: {
+        groomName: detailGroup === 'couple' ? clean(groomName) : null,
+        brideName: detailGroup === 'couple' ? clean(brideName) : null,
+        celebrantName: detailGroup === 'celebrant' ? clean(celebrantName) : null,
+        celebrantSex: detailGroup === 'celebrant' ? clean(celebrantSex) : null,
+        celebrantAge: detailGroup === 'celebrant' && celebrantAge.trim() ? Number(celebrantAge) : null,
+        eventName: detailGroup === 'named' ? clean(eventName) : null,
+        motif: clean(motif),
+        theme: clean(theme),
+      },
+      proposal: {
+        packageId,
+        lines: [
+          ...toLines('MenuItem', menuItemQty),
+          ...toLines('MenuTray', menuTrayQty),
+          ...toLines('Rental', rentalQty),
+          ...toLines('Service', serviceQty),
+        ],
+        packageSlotSelections: packageId
+          ? Object.entries(slotSelections).map(([slotId, itemIds]) => ({ slotId, itemIds }))
+          : [],
+      },
     };
+  }, [
+    bookingType, serviceFlow, selectedPackageId, eventDate, startTime, endDate, endTime, eventType, venue,
+    guests, phone, detailGroup, groomName, brideName, celebrantName, celebrantSex, celebrantAge, eventName,
+    motif, theme, menuItemQty, menuTrayQty, rentalQty, serviceQty, slotSelections,
+  ]);
+  const recipeKey = JSON.stringify(planRecipe);
 
-    try {
-      if (bookingId && bookingResponse) {
-        let currentPkgId = bookingResponse.menuPackageId || null;
-        if (currentPkgId && serviceFlow === 'event') {
-          const pkg = packages.find(p => p.id === currentPkgId);
-          if (pkg && guests < pkg.minPax) {
-            currentPkgId = null;
-            setSelectedPackageId(null);
-            setSlotSelections({});
-          }
-        }
+  /* Keyed like PlanReview's quote: an answer for an older version of the plan never
+     lands on a newer one, and state is only set from the promise. */
+  const [quoted, setQuoted] = useState<{ key: string; quote: QuoteResponse | null; error: string | null } | null>(null);
+  const latestQuoteKey = useRef(recipeKey);
+  useEffect(() => {
+    latestQuoteKey.current = recipeKey;
+    if (step !== 4) return;
+    const key = recipeKey;
+    quoteProposal(readSession()?.token ?? '', {
+      bookingType: planRecipe.bookingType,
+      eventDate: planRecipe.eventDate,
+      endDate: planRecipe.endDate,
+      guestCount: planRecipe.guestCount,
+      startTime: planRecipe.startTime,
+      endTime: planRecipe.endTime,
+      eventType: planRecipe.eventType,
+      eventDetails: planRecipe.eventDetails,
+      proposal: planRecipe.proposal,
+    })
+      .then((quote) => {
+        if (latestQuoteKey.current === key) setQuoted({ key, quote, error: null });
+      })
+      .catch((err: unknown) => {
+        if (latestQuoteKey.current !== key) return;
+        setQuoted({
+          key,
+          quote: null,
+          error: err instanceof SuggestionsApiError ? err.message : 'Could not price your booking right now.',
+        });
+      });
+  }, [step, recipeKey, planRecipe]);
 
-        const updatePayload: BookingUpdatePayload = {
-          bookingName: bookingResponse.bookingName,
-          eventDate: payload.eventDate,
-          startTime: payload.startTime,
-          endDate: payload.endDate,
-          endTime: payload.endTime,
-          eventType: payload.eventType,
-          venueAddress: payload.venueAddress,
-          guestCount: payload.guestCount,
-          menuPackageId: currentPkgId,
-          contactNumber: payload.contactNumber,
-          groomName: payload.groomName,
-          brideName: payload.brideName,
-          celebrantName: payload.celebrantName,
-          celebrantSex: payload.celebrantSex,
-          celebrantAge: payload.celebrantAge,
-          eventName: payload.eventName,
-          motif: payload.motif,
-          theme: payload.theme,
-        };
-        const result = await updateBooking(session.token, bookingId, updatePayload);
-        setBookingResponse(result);
-        setDraftSavedAt(new Date());
-        await uploadPendingImages(session.token, bookingId);
-        setStep(3);
-      } else {
-        const result = await createBooking(session.token, payload);
-        setBookingId(result.id);
-        setBookingResponse(result);
-        setDraftSavedAt(new Date());
-        // Only now can the images go up: they need multipart and a booking id, and
-        // the Draft that create just returned is the first point both exist.
-        await uploadPendingImages(session.token, result.id);
-        setStep(3);
-      }
-    } catch (err) {
-      setApiError(err instanceof BookingApiError ? err.message : 'Failed to save booking.');
-    } finally {
-      setCreatingBooking(false);
-    }
-  };
+  const planQuote = quoted?.key === recipeKey ? quoted : null;
 
-  /* ── Step 3 → 4: save selections ── */
-  const handleSaveSelections = async () => {
-    if (!bookingId) return;
-    const session = readSession();
-    if (!session) return;
+  /** A line's total from the quote once it's in; the local estimate until then. */
+  const quotedLineTotal = (type: string, refId: string, estimate: number) =>
+    planQuote?.quote?.lines.find((l) => l.type === type && l.refId === refId && !l.problem)?.lineTotal ?? estimate;
 
-    setSavingSelections(true);
-    setApiError(null);
-
-    try {
-      if (selectedPackageId && packageTemplate) {
-        // Save package slot selections
-        for (const slot of packageTemplate.slots) {
-          const chosen = slotSelections[slot.slotId] ?? [];
-          if (chosen.length === slot.chooseCount) {
-            await chooseSlotItems(session.token, bookingId, slot.slotId, chosen);
-          }
-        }
-      }
-      
-      /* Save à la carte items one by one, skipping any this draft already has.
-
-         The line endpoints are add-only — there is no PUT or DELETE for a booking
-         line — and AddMenuItemAsync/AddMenuTrayAsync throw "already on the
-         booking; update its quantity instead" on a second call. So without this
-         guard, stepping 3 → 4 → Back → Next fails outright, which a cart-seeded
-         step 3 makes an ordinary thing to do rather than a rare one.
-
-         The gap this leaves: a quantity edited AFTER its first save cannot be
-         pushed, because no endpoint accepts one. The booking keeps the quantity
-         it was given first. Closing that needs a backend line-update endpoint. */
-      if (savedLinesRef.current.bookingId !== bookingId) {
-        savedLinesRef.current = { bookingId, keys: new Set() };
-      }
-      const alreadySaved = savedLinesRef.current.keys;
-      const saveLine = async (kind: string, id: string, run: () => Promise<unknown>) => {
-        const key = `${kind}:${id}`;
-        if (alreadySaved.has(key)) return;
-        await run();
-        alreadySaved.add(key);
-      };
-
-      for (const [id, qty] of Object.entries(menuItemQty)) {
-        await saveLine('MenuItem', id, () => addMenuItem(session.token, bookingId, id, qty));
-      }
-      for (const [id, qty] of Object.entries(menuTrayQty)) {
-        await saveLine('MenuTray', id, () => addMenuTray(session.token, bookingId, id, qty));
-      }
-      for (const [id, qty] of Object.entries(rentalQty)) {
-        await saveLine('Rental', id, () => addRental(session.token, bookingId, id, qty));
-      }
-      for (const [id, qty] of Object.entries(serviceQty)) {
-        await saveLine('Service', id, () => addService(session.token, bookingId, id, qty));
-      }
-      setStep(4);
-    } catch (err) {
-      setApiError(err instanceof BookingApiError ? err.message : 'Failed to save selections.');
-    } finally {
-      setSavingSelections(false);
-    }
-  };
-
-  /* ── Step 4: submit ── */
-  const handleSubmit = async () => {
-    if (!bookingId) return;
-    const session = readSession();
-    if (!session) return;
-
-    setSubmitting(true);
-    setApiError(null);
-    try {
-      await submitBooking(session.token, bookingId);
-      setSubmitted(true);
-      /* Empty only the lines that actually became this booking. Clearing the whole
-         cart would also discard anything added in another tab while the wizard was
-         open, which the customer never submitted. */
-      for (const key of cartSeed.keys) removeCartLine(key);
-    } catch (err) {
-      setApiError(err instanceof BookingApiError ? err.message : 'Failed to submit booking.');
-    } finally {
-      setSubmitting(false);
-    }
+  const addToCart = () => {
+    const quote = planQuote?.quote;
+    if (!quote || !quote.canCheckout || !termsAgreed) return;
+    const typeLabel = EVENT_TYPES.find((t) => t.value === eventType)?.label ?? eventType;
+    const key = addPlan({
+      title: serviceFlow === 'rentals'
+        ? `Equipment rental${typeLabel ? ` · ${typeLabel}` : ''}`
+        : `${typeLabel || 'Event'} · ${guests} guests`,
+      recipe: planRecipe,
+      snap: snapFromQuote(quote),
+      imageNames: motifImage || themeImage ? { motif: motifImage?.name, theme: themeImage?.name } : undefined,
+    });
+    /* The files can't go to storage; they wait in memory for checkout to upload them
+       once the booking exists (lib/planImages). */
+    holdPlanImages(key, { motif: motifImage, theme: themeImage });
+    navigate('/cart');
   };
 
   /* ── navigation helpers ── */
@@ -1182,7 +888,7 @@ export function BookingPage() {
       <main style={{ background: 'var(--bg)', minHeight: '100vh', transition: 'background 0.4s' }}>
         
         {/* ═══════════════════════ HERO (STEP 0) ═══════════════════════ */}
-        {step === 0 && !submitted && (
+        {step === 0 && (
           <section style={{ padding: '6rem 0', position: 'relative', paddingTop: 'calc(6rem + 80px)', paddingBottom: '4rem', overflow: 'hidden' }}>
             <div className="blob blob-primary" style={{ width: 520, height: 520, top: '-120px', left: '-140px' }} />
             <div className="blob blob-accent" style={{ width: 400, height: 400, bottom: '-60px', right: '5%', animationDelay: '6s' }} />
@@ -1200,8 +906,7 @@ export function BookingPage() {
               ) : (
                 <PlanByBudget
                   onBack={() => setPlanMode(false)}
-                  onRequireLogin={() => navigate('/login')}
-                  onMaterialized={(bookingId) => navigate('/dashboard', { state: { pendingDraftId: bookingId } })}
+                  onAddedToCart={() => navigate('/cart')}
                 />
               )}
             </div>
@@ -1209,7 +914,7 @@ export function BookingPage() {
         )}
 
         {/* ═══════════════════════ MAIN CONTENT (STEPS 1-4 & SUCCESS) ═══════════════════════ */}
-        {(step >= 1 || submitted) && (
+        {step >= 1 && (
           <section style={{ 
             background: 'var(--bg-subtle)', 
             paddingTop: 'calc(4rem + 80px)',
@@ -1220,44 +925,15 @@ export function BookingPage() {
           }}>
             <div className="bk-container" style={{ padding: '0 1.5rem', width: '100%', margin: 'auto' }}>
 
-              {/* ═══════ SUBMITTED SUCCESS ═══════ */}
-          {submitted && (
-            <div className="bk-card bk-success-card">
-              {/* Lucide rather than the ✅ emoji: the glyph inherits currentColor,
-                  so it reads as the success green in both themes instead of
-                  rendering as a fixed-colour platform image. */}
-              <div className="bk-success-icon">
-                <Check size={26} strokeWidth={2} aria-hidden="true" />
-              </div>
-              <div className="bk-success-title">Booking Submitted!</div>
-              <p className="bk-success-sub">
-                Your booking has been submitted for review. Our team will reach out to confirm the details.
-                You can track your booking status in your dashboard.
-              </p>
-              <div style={{ marginTop: '1.5rem' }}>
-                <button className="bk-btn outline" onClick={() => { setStep(0); setServiceFlow(null); setSubmitted(false); setBookingId(null); }}>
-                  Book Another
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* ── STEPPER RAIL + STEP CONTENT ──
               The stepper used to be a centred horizontal strip above the card, which
               meant the running total only appeared at step 4. It is a sticky rail
               now, so "what have I picked and what does it cost" is answerable from
               step 2 onward. Below 1020 the rail collapses to a progress bar. */}
-          {step >= 1 && !submitted && (
+          {step >= 1 && (
             <div className="bk-layout">
               <aside className="bk-rail">
                 <div className="bk-rail-inner">
-                  {draftSavedAt && (
-                    <p className="bk-draft" role="status">
-                      <Check size={13} strokeWidth={2.25} aria-hidden="true" />
-                      Draft saved · {draftSavedAt.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
-                    </p>
-                  )}
-
                   <ol className="bk-stepper">
                     {stepLabels.map((label, i) => {
                       const num = i + 1;
@@ -1289,7 +965,7 @@ export function BookingPage() {
                   {/* Running total. Reads the same figures step 4 sums — no new
                       endpoint, the calculation was already at component scope. */}
                   <div className="bk-summary">
-                    <div className="bk-summary-kicker">Running total</div>
+                    <div className="bk-summary-kicker">Estimated total</div>
                     <div className="bk-summary-total">{fmtPHP(grandTotal)}</div>
                     <dl className="bk-summary-list">
                       <div>
@@ -1315,18 +991,8 @@ export function BookingPage() {
 
               <div className="bk-main">
 
-          {apiError && (
-            <div className="bk-error" role="alert">
-              <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
-              <div>
-                <div className="bk-error-title">{apiError}</div>
-                <div className="bk-error-body">Your draft is kept. Try again, or come back from the dashboard — nothing is lost.</div>
-              </div>
-            </div>
-          )}
-
           {/* ═══════ STEP 1 — CONTACT ═══════ */}
-          {step === 1 && !submitted && (
+          {step === 1 && (
             <div className="bk-card">
               <h2 className="bk-heading">Contact Details</h2>
               <p className="bk-sub">Let us know how to reach you for your event.</p>
@@ -1370,7 +1036,7 @@ export function BookingPage() {
           )}
 
           {/* ═══════ STEP 2 — EVENT / DELIVERY ═══════ */}
-          {step === 2 && !submitted && (
+          {step === 2 && (
             <div className="bk-card">
               <h2 className="bk-heading">Event Details</h2>
               <p className="bk-sub">
@@ -1551,17 +1217,17 @@ export function BookingPage() {
                 <button className="bk-btn outline" onClick={() => setStep(1)}>← Back</button>
                 <button
                   className="bk-btn primary"
-                  disabled={!eventComplete || creatingBooking}
-                  onClick={handleCreateBooking}
+                  disabled={!eventComplete}
+                  onClick={() => setStep(3)}
                 >
-                  {creatingBooking ? <><span className="bk-spinner" /> Creating…</> : 'Next → Rentals & Add‑ons'}
+                  {serviceFlow === 'event' ? 'Next → Package & Add‑ons' : 'Next → Rentals & Add‑ons'}
                 </button>
               </div>
             </div>
           )}
 
           {/* ═══════ STEP 3 — SELECTIONS ═══════ */}
-          {step === 3 && !submitted && (
+          {step === 3 && (
             <div className="bk-card">
               <h2 className="bk-heading">
                 {serviceFlow === 'event' ? 'Package & Add‑ons' : 'Rentals & Add‑ons'}
@@ -1573,17 +1239,6 @@ export function BookingPage() {
                   ? 'Select the items you need for your event.'
                   : 'Pick dishes and trays for your delivery.'}
               </p>
-
-              {cartSeed.keys.length > 0 && (
-                <p className="bk-cart-note">
-                  <Check size={15} strokeWidth={2} aria-hidden="true" />
-                  <span>
-                    Your cart is already filled in below — {cartSeed.keys.length}{' '}
-                    {cartSeed.keys.length === 1 ? 'item' : 'items'}. Adjust anything you need to
-                    before continuing.
-                  </span>
-                </p>
-              )}
 
               {catalogLoading ? (
                 <div aria-live="polite" aria-busy="true">
@@ -1600,7 +1255,7 @@ export function BookingPage() {
                   <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
                   <div>
                     <div className="bk-error-title">{catalogError}</div>
-                    <div className="bk-error-body">Your draft is kept. Try again, or come back from the dashboard — nothing is lost.</div>
+                    <div className="bk-error-body">Everything you've chosen so far is still here. Try again in a moment.</div>
                   </div>
                 </div>
               ) : (
@@ -1859,20 +1514,20 @@ export function BookingPage() {
                 <button className="bk-btn outline" onClick={() => setStep(2)}>← Back</button>
                 <button
                   className="bk-btn primary"
-                  disabled={!canProceedStep3 || savingSelections}
-                  onClick={handleSaveSelections}
+                  disabled={!canProceedStep3}
+                  onClick={() => setStep(4)}
                 >
-                  {savingSelections ? <><span className="bk-spinner" /> Saving…</> : 'Next → Review'}
+                  Next → Review
                 </button>
               </div>
             </div>
           )}
 
           {/* ═══════ STEP 4 — REVIEW ═══════ */}
-          {step === 4 && !submitted && (
+          {step === 4 && (
             <div className="bk-card">
-              <h2 className="bk-heading">Review & Submit</h2>
-              <p className="bk-sub">Review your booking details before submitting.</p>
+              <h2 className="bk-heading">Review & Add to Cart</h2>
+              <p className="bk-sub">Check the details and today's price. Nothing is booked until you place the order at checkout.</p>
 
               {/* Contact Summary */}
               <div className="bk-review-section">
@@ -1899,7 +1554,7 @@ export function BookingPage() {
                 <div className="bk-review-title">Selections</div>
                 {selectedPkg && (
                   <>
-                    <div className="bk-review-row"><span className="bk-review-label">Package</span><span className="bk-review-value">{selectedPkg.packageName} — {fmtPHP(selectedPkg.basePrice)}</span></div>
+                    <div className="bk-review-row"><span className="bk-review-label">Package</span><span className="bk-review-value">{selectedPkg.packageName} — {fmtPHP(quotedLineTotal('Package', selectedPkg.id, packagePrice))}</span></div>
                     {packageTemplate?.slots.map(slot => {
                       const selectedIds = slotSelections[slot.slotId] || [];
                       const selectedItems = selectedIds.map(id => menuItems.find(m => m.id === id)?.itemName).filter(Boolean).join(', ');
@@ -1916,29 +1571,68 @@ export function BookingPage() {
                 {Object.entries(menuItemQty).map(([id, qty]) => {
                   const item = menuItems.find(m => m.id === id);
                   if (!item) return null;
-                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.itemName} ×{qty}</span><span className="bk-review-value">{fmtPHP((item.pricePerTray ?? 0) * qty)}</span></div>;
+                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.itemName} ×{qty}</span><span className="bk-review-value">{fmtPHP(quotedLineTotal('MenuItem', id, (item.pricePerTray ?? 0) * qty))}</span></div>;
                 })}
                 {Object.entries(menuTrayQty).map(([id, qty]) => {
                   const tray = menuTrays.find(t => t.id === id);
                   if (!tray) return null;
-                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{tray.trayName} ×{qty}</span><span className="bk-review-value">{fmtPHP(tray.pricePerTray * qty)}</span></div>;
+                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{tray.trayName} ×{qty}</span><span className="bk-review-value">{fmtPHP(quotedLineTotal('MenuTray', id, tray.pricePerTray * qty))}</span></div>;
                 })}
                 {Object.entries(rentalQty).map(([id, qty]) => {
                   const item = rentalItems.find(r => r.id === id);
                   if (!item) return null;
-                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.itemName} ×{qty}</span><span className="bk-review-value">{fmtPHP(item.unitPrice * qty)}</span></div>;
+                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.itemName} ×{qty}</span><span className="bk-review-value">{fmtPHP(quotedLineTotal('Rental', id, item.unitPrice * qty))}</span></div>;
                 })}
                 {Object.entries(serviceQty).map(([id, qty]) => {
                   const item = serviceItems.find(s => s.id === id);
                   if (!item) return null;
-                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.serviceName} ×{qty}</span><span className="bk-review-value">{fmtPHP(item.unitCost * qty)}</span></div>;
+                  return <div key={id} className="bk-review-row"><span className="bk-review-label">{item.serviceName} ×{qty}</span><span className="bk-review-value">{fmtPHP(quotedLineTotal('Service', id, item.unitCost * qty))}</span></div>;
                 })}
 
                 <div className="bk-review-total">
-                  <span>Estimated Total</span>
-                  <span>{fmtPHP(grandTotal)}</span>
+                  {/* A refused quote prices nothing (its total is 0), so the local estimate stays up. */}
+                  <span>{planQuote?.quote?.canCheckout ? 'Total' : 'Estimated Total'}</span>
+                  <span>{fmtPHP(planQuote?.quote?.canCheckout ? planQuote.quote.total : grandTotal)}</span>
                 </div>
               </div>
+
+              {/* What the server says about this booking today: the same checks
+                  checkout will run, so a refusal shows here instead of there. */}
+              {!planQuote && (
+                <p className="bk-loading" aria-live="polite">
+                  <span className="bk-spinner" /> Checking today's prices and availability…
+                </p>
+              )}
+              {planQuote?.error && (
+                <div className="bk-error" role="alert">
+                  <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+                  <div>
+                    <div className="bk-error-title">{planQuote.error}</div>
+                    <div className="bk-error-body">Your booking isn't lost — go back a step and return to try again.</div>
+                  </div>
+                </div>
+              )}
+              {planQuote?.quote && !planQuote.quote.canCheckout && (
+                <div className="bk-error" role="alert">
+                  <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+                  <div>
+                    <div className="bk-error-title">This booking can't be placed as it is</div>
+                    <div className="bk-error-body">
+                      <ul style={{ margin: '.3rem 0 .4rem', paddingLeft: '1.1rem' }}>
+                        {planQuote.quote.problems.map((problem) => (
+                          <li key={problem}>{problem}</li>
+                        ))}
+                      </ul>
+                      Go back to fix it: the date and time are on step 2, the selections on step 3.
+                    </div>
+                  </div>
+                </div>
+              )}
+              {(motifImage || themeImage) && (
+                <p style={{ fontFamily: 'var(--font-body)', fontSize: '.75rem', color: 'var(--text-muted)', margin: '0 0 1rem' }}>
+                  Your reference images are kept for checkout in this tab only. Refreshing before you place the order will lose them.
+                </p>
+              )}
 
               {/* Terms */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '.6rem', marginTop: '1rem' }}>
@@ -1955,10 +1649,10 @@ export function BookingPage() {
                 <button className="bk-btn outline" onClick={() => setStep(3)}>← Back</button>
                 <button
                   className="bk-btn primary"
-                  disabled={!termsAgreed || submitting}
-                  onClick={handleSubmit}
+                  disabled={!termsAgreed || !planQuote?.quote?.canCheckout}
+                  onClick={addToCart}
                 >
-                  {submitting ? <><span className="bk-spinner" /> Submitting…</> : 'Submit Booking'}
+                  Add to cart
                 </button>
               </div>
             </div>
@@ -1987,29 +1681,6 @@ export function BookingPage() {
             </ol>
             <div style={{ marginTop: '1.5rem', textAlign: 'right' }}>
               <button className="bk-btn primary" onClick={() => { setTermsAgreed(true); setShowTerms(false); }}>I Agree</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ LEAVE CONFIRMATION ═══════════
-          Only reachable via the in-app intercept, which is why it can carry the real
-          wording — a tab-close warning can't (the browser overrides it). */}
-      {pendingLeaveHref && (
-        <div className="bk-overlay" role="dialog" aria-modal="true" aria-label="Leave booking?" onClick={() => setPendingLeaveHref(null)}>
-          <div className="bk-modal" onClick={(e) => e.stopPropagation()}>
-            <h3 className="bk-modal-title">Leave this page?</h3>
-            <p className="bk-modal-body">
-              If you leave this page, all your entered information will be lost and this
-              booking will be discarded.
-            </p>
-            <div className="bk-modal-actions">
-              <button type="button" className="bk-btn outline" onClick={() => setPendingLeaveHref(null)}>
-                Stay on this page
-              </button>
-              <button type="button" className="bk-btn danger" onClick={() => void confirmLeave()}>
-                Leave and discard
-              </button>
             </div>
           </div>
         </div>
