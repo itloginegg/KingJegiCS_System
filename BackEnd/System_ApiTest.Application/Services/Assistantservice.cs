@@ -53,6 +53,20 @@ namespace System_ApiTest.Application.Services
         public bool PublicChatEnabled { get; set; } = true;
 
         /// <summary>
+        /// Whether signed-out visitors can hold a spoken conversation. Separate from
+        /// PublicChatEnabled: a voice turn costs a streamed model call AND speech
+        /// synthesis, so it is the half worth switching off first if the bill bites.
+        /// </summary>
+        public bool PublicVoiceEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Spoken turns per guest address per hour, on its own counter. Lower than the
+        /// typed allowance because each turn costs more, and separate from it so a talkative
+        /// visitor doesn't silence their own ability to type a question.
+        /// </summary>
+        public int PublicMaxVoiceTurnsPerHourPerIp { get; set; } = 5;
+
+        /// <summary>
         /// Hourly cap per guest IP. Friction, not a control: X-Forwarded-For is accepted
         /// from the platform, so a determined caller can present a fresh address per
         /// request. PublicMaxMessagesPerDay is what actually bounds the spend.
@@ -100,6 +114,14 @@ namespace System_ApiTest.Application.Services
         public static AssistantStreamEvent Status(string text) => new(KindStatus, text);
         public static AssistantStreamEvent Completed(Guid id, string reply, IReadOnlyList<ProposalDto>? proposals)
             => new(KindCompleted, reply, id, proposals);
+
+        /// <summary>
+        /// A finished GUEST turn. No conversation id, because no thread was written — see
+        /// PublicChatStreamAsync. The hub sends Guid.Empty on the wire and the client reads
+        /// that as "no thread to continue".
+        /// </summary>
+        public static AssistantStreamEvent CompletedGuest(string reply, IReadOnlyList<ProposalDto>? proposals)
+            => new(KindCompleted, reply, null, proposals);
     }
 
     /// <summary>
@@ -420,7 +442,7 @@ namespace System_ApiTest.Application.Services
             {
                 var calls = new List<(string Name, JsonNode? Args, string? ThoughtSignature)>();
 
-                await foreach (var part in StreamGeminiAsync(contents, seedContext, ct))
+                await foreach (var part in StreamGeminiAsync(SystemPrompt, ToolDeclarationsJson, contents, seedContext, ct))
                 {
                     if (part.CallName is not null)
                     {
@@ -882,9 +904,10 @@ namespace System_ApiTest.Application.Services
         /// </para>
         /// </summary>
         private async IAsyncEnumerable<GeminiStreamPart> StreamGeminiAsync(
-            JsonArray contents, string? seedContext, [EnumeratorCancellation] CancellationToken ct)
+            string systemPrompt, string toolDeclarationsJson, JsonArray contents, string? seedContext,
+            [EnumeratorCancellation] CancellationToken ct)
         {
-            var system = SystemPrompt;
+            var system = systemPrompt;
             if (!string.IsNullOrWhiteSpace(seedContext))
                 system += "\n\nEarlier you proactively messaged this customer: \"" + seedContext.Trim() +
                           "\" Continue that conversation and help them.";
@@ -896,7 +919,7 @@ namespace System_ApiTest.Application.Services
                     ["parts"] = new JsonArray(new JsonObject { ["text"] = system })
                 },
                 ["contents"] = contents.DeepClone(),
-                ["tools"] = JsonNode.Parse(ToolDeclarationsJson),
+                ["tools"] = JsonNode.Parse(toolDeclarationsJson),
                 ["generationConfig"] = new JsonObject { ["maxOutputTokens"] = _options.MaxOutputTokens }
             };
 
@@ -1381,6 +1404,89 @@ namespace System_ApiTest.Application.Services
                 "Sorry, I couldn't answer that one. Please try the budget form.", ct);
 
             return new PublicChatResponse(loop.Text, sink.ProposalsOrNull, sink.Context);
+        }
+
+        /// <summary>
+        /// One spoken guest turn: the streaming twin of <see cref="PublicChatAsync"/>.
+        ///
+        /// <para>Same three tools, same guest prompt, same caps on replayed history — and
+        /// the same absence of a customer id, which is what keeps the two private tools
+        /// unreachable. Persists nothing: a guest has no thread, spoken or typed.</para>
+        ///
+        /// <para>It keeps its own copy of the loop for the reason ChatStreamAsync does: a
+        /// yielding iterator emits deltas and a status line between the model turn and the
+        /// tool call, which RunToolLoopAsync's shape cannot express.</para>
+        /// </summary>
+        public async IAsyncEnumerable<AssistantStreamEvent> PublicChatStreamAsync(
+            IReadOnlyList<PublicChatTurnDto>? history, string message,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            if (!_options.IsConfigured || !_options.PublicChatEnabled)
+                throw new AssistantUnavailableException(
+                    "The assistant is currently unavailable. Please use the budget form to get suggestions.");
+
+            var contents = BuildPublicContents(history, message);
+            var sink = new ProposalSink();
+            var dispatch = PublicTools(sink);
+            var spoken = new StringBuilder();
+
+            for (var iteration = 0; iteration < MaxToolIterations; iteration++)
+            {
+                var calls = new List<(string Name, JsonNode? Args, string? ThoughtSignature)>();
+
+                await foreach (var part in StreamGeminiAsync(
+                                   PublicSystemPrompt, PublicToolDeclarationsJson, contents, seedContext: null, ct))
+                {
+                    if (part.CallName is not null)
+                    {
+                        calls.Add((part.CallName, part.CallArgs, part.ThoughtSignature));
+                    }
+                    else if (!string.IsNullOrEmpty(part.Text))
+                    {
+                        spoken.Append(part.Text);
+                        yield return AssistantStreamEvent.Delta(part.Text);
+                    }
+                }
+
+                if (calls.Count == 0)
+                {
+                    var reply = spoken.ToString().Trim();
+                    if (reply.Length == 0)
+                        reply = "Sorry, I couldn't answer that one. Please try the budget form.";
+
+                    yield return AssistantStreamEvent.CompletedGuest(reply, sink.ProposalsOrNull);
+                    yield break;
+                }
+
+                // Same bookkeeping as the signed-in stream, including re-emitting each
+                // call's opaque thoughtSignature verbatim, which Gemini 3.x requires.
+                var callsArray = new JsonArray();
+                foreach (var call in calls)
+                {
+                    var callObj = new JsonObject
+                    {
+                        ["name"] = call.Name,
+                        ["args"] = call.Args?.DeepClone() ?? new JsonObject()
+                    };
+                    if (call.ThoughtSignature is not null)
+                        callObj["thoughtSignature"] = call.ThoughtSignature;
+                    callsArray.Add(callObj);
+                }
+                contents.Add(ModelFunctionCallContent(callsArray));
+
+                yield return AssistantStreamEvent.Status(StatusFor(calls[0].Name));
+
+                var resultsArray = new JsonArray();
+                foreach (var call in calls)
+                {
+                    var response = await dispatch(call.Name, call.Args, ct);
+                    resultsArray.Add(new JsonObject { ["name"] = call.Name, ["response"] = response });
+                }
+                contents.Add(ToolResponseContent(resultsArray));
+            }
+
+            throw new AssistantUnavailableException(
+                "The assistant took too many steps to answer. Please try the budget form.");
         }
 
         /// <summary>

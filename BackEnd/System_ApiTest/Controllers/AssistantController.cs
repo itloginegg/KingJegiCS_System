@@ -73,7 +73,10 @@ namespace System_ApiTest.Controllers
         /// instead of opening a hub connection only to discover it's unconfigured.
         /// </summary>
         [HttpGet("voice/capabilities")]
-        [Authorize(Roles = "Customer")]
+        /* Anonymous: it reports only whether the assistant and speech are configured —
+           no customer data — and a signed-out widget needs the answer to decide whether
+           to offer a mic at all. */
+        [AllowAnonymous]
         public IActionResult VoiceCapabilities() => Ok(new VoiceCapabilitiesDto(
             // IsConfigured, not Enabled: Enabled defaults to true even with no API key, so
             // reporting it here offered a mic that failed on every single turn.

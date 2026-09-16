@@ -128,6 +128,15 @@ export interface VisemeCue {
 
 export type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking';
 
+/** One replayed turn of a guest conversation, as PublicVoiceHub.Converse takes them. */
+export interface VoiceHistoryTurn {
+  role: 'user' | 'model';
+  text: string;
+}
+
+/** What the server sends as the conversation id when there is no thread to continue. */
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
 export interface UseVoiceSessionArgs {
   /** PCM sample rate reported by /voice/capabilities. */
   sampleRate: number;
@@ -135,12 +144,19 @@ export interface UseVoiceSessionArgs {
   serverTtsAvailable: boolean;
   /** The thread to continue. Read at send time, so it can change between turns. */
   conversationId: string | null;
+  /**
+   * Signed-out mode: connect to the guest hub and send the transcript the browser still
+   * holds instead of a thread id, because no thread was ever written for a visitor.
+   */
+  guest?: boolean;
+  /** The transcript to replay, for a guest turn. Capped by the caller and again by the server. */
+  getHistory?: () => VoiceHistoryTurn[];
   /** A completed customer utterance, ready to show as a sent message. */
   onUserUtterance: (text: string) => void;
   /** The reply so far, cumulative — call sites can render it as it grows. */
   onReplyProgress: (replySoFar: string) => void;
-  /** Terminal success for one turn. */
-  onReplyDone: (conversationId: string, reply: string, proposals: Proposal[] | null) => void;
+  /** Terminal success for one turn. The id is null for a guest, who has no thread. */
+  onReplyDone: (conversationId: string | null, reply: string, proposals: Proposal[] | null) => void;
   /** Terminal failure. The widget should surface this and stay in text mode. */
   onFailure: (message: string) => void;
 
@@ -339,9 +355,13 @@ export function useVoiceSession(args: UseVoiceSessionArgs): VoiceSession {
       let receivedAudio = false;
 
       const method = argsRef.current.hubMethod ?? 'Converse';
+      /* A guest turn carries the transcript itself; a customer's carries the thread id the
+         server keeps. Same method name on either hub, same chunks back. */
       const stream = method === 'Diagnose'
         ? connection.stream<VoiceChunk>('Diagnose', true)
-        : connection.stream<VoiceChunk>(method, argsRef.current.conversationId, text);
+        : argsRef.current.guest
+          ? connection.stream<VoiceChunk>(method, argsRef.current.getHistory?.() ?? [], text)
+          : connection.stream<VoiceChunk>(method, argsRef.current.conversationId, text);
 
       subscriptionRef.current = stream.subscribe({
         next: (chunk) => {
@@ -388,9 +408,12 @@ export function useVoiceSession(args: UseVoiceSessionArgs): VoiceSession {
 
             case 'done': {
               const reply = chunk.text ?? replyTextRef.current;
-              if (chunk.conversationId) {
-                argsRef.current.onReplyDone(chunk.conversationId, reply, chunk.proposals ?? null);
-              }
+              /* An all-zero id means "no thread" — the guest hub sends it because nothing
+                 was written. The turn still completed, so the reply is still committed. */
+              const threadId = chunk.conversationId && chunk.conversationId !== EMPTY_GUID
+                ? chunk.conversationId
+                : null;
+              argsRef.current.onReplyDone(threadId, reply, chunk.proposals ?? null);
               // Speak locally when the server didn't. Keyed on what actually ARRIVED, not
               // on what the capability endpoint promised — otherwise a configured-but-
               // failing Azure resource produces a completely silent reply with no fallback,

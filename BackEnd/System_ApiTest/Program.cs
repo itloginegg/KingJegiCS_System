@@ -258,6 +258,9 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<PaymentHub>("/hubs/payment");
 app.MapHub<VoiceHub>("/hubs/voice");
+// Signed-out voice. Its own hub because VoiceHub's class-level [Authorize] gates the
+// handshake, so an anonymous method there would never be reached.
+app.MapHub<PublicVoiceHub>("/hubs/public-voice");
 
 // Unauthenticated diagnostics hub, routed ONLY in Development. The route registration is
 // the security boundary — on a deployed server this endpoint does not exist.

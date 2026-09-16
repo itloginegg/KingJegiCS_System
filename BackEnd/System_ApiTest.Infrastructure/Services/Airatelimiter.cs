@@ -23,6 +23,13 @@ namespace System_ApiTest.Infrastructure.Services
     public const string PublicChatKey = "public-chat";
 
     /// <summary>
+    /// DI key for the signed-out VOICE counter. Its own instance again, and deliberately
+    /// not shared with PublicChatKey: a spoken turn costs more than a typed one, so it
+    /// gets a smaller allowance, and spending it must not stop a visitor typing.
+    /// </summary>
+    public const string PublicVoiceKey = "public-voice";
+
+    /// <summary>
     /// DI key for the support-drafting counter. Keyed by the CUSTOMER whose message
     /// triggered the draft, even though the draft is generated for staff — that is the
     /// only id that bounds the cost, so one customer spamming a thread cannot drain the

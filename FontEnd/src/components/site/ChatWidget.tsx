@@ -452,9 +452,10 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   const streamingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const session = readSession();
-    if (!session || !voiceInputSupported) return;
-    getVoiceCapabilities(session.token)
+    if (!voiceInputSupported) return;
+    /* Anonymous now: the endpoint reports only whether the assistant and speech are
+       configured, and a signed-out visitor needs that answer to be offered a mic at all. */
+    getVoiceCapabilities(readSession()?.token ?? '')
       .then(setCaps)
       .catch(() => { /* voice simply stays hidden */ });
   }, []);
@@ -478,6 +479,13 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
     sampleRate: caps?.sampleRate ?? 24000,
     serverTtsAvailable: caps?.serverTtsAvailable ?? false,
     conversationId,
+    /* Signed out talks to the guest hub, which holds no customer id and offers the same
+       three read-only tools the typed guest endpoint does. */
+    guest: !isAuthenticated,
+    hubPath: isAuthenticated ? undefined : '/hubs/public-voice',
+    getHistory: () => messages
+      .slice(-PUBLIC_HISTORY_TURNS)
+      .map((m) => ({ role: (m.role === 'me' ? 'user' : 'model') as 'user' | 'model', text: m.text.slice(0, PUBLIC_TURN_CHARS) })),
     onUserUtterance: (text) => {
       setMessages((prev) => [...prev, { id: `me-${Date.now()}`, role: 'me', text }]);
       streamingIdRef.current = `a-${Date.now()}`;
@@ -487,7 +495,8 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
       if (streamingIdRef.current) upsertAssistant(streamingIdRef.current, replySoFar);
     },
     onReplyDone: (cid, reply, proposals) => {
-      setConversationId(cid);
+      // Null for a guest: there is no thread to continue.
+      if (cid) setConversationId(cid);
       upsertAssistant(streamingIdRef.current ?? `a-${Date.now()}`, reply, proposals);
       streamingIdRef.current = null;
     },

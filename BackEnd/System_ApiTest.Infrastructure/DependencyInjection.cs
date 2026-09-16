@@ -39,6 +39,7 @@ public static class DependencyInjection
         // Guest chat counts against its own instance (IP-hash keys, not customer ids),
         // and against one service-wide daily ceiling.
         services.AddKeyedSingleton<Airatelimiter>(Airatelimiter.PublicChatKey);
+        services.AddKeyedSingleton<Airatelimiter>(Airatelimiter.PublicVoiceKey);
         services.AddSingleton<Aidailyceiling>();
         // A third counter for support drafting, keyed by the customer whose message
         // triggered it: drafting happens for staff but is PAID FOR by whoever keeps
