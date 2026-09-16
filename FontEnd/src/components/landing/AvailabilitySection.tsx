@@ -85,8 +85,12 @@ export function AvailabilitySection(props: AvailabilityCalendarProps) {
        tinted, plain, tinted, plain, band. */
     <section
       id="availability"
+      /* Focus target for the hero's "Check a date" link, not a tab stop. */
+      tabIndex={-1}
       className="ui-section amb-host lp-photo-ground"
-      style={{ background: 'var(--bg-subtle)' }}
+      /* scroll-margin clears the sticky navbar, which would otherwise sit over the
+         section's heading when the page scrolls it to the top. */
+      style={{ background: 'var(--bg-subtle)', scrollMarginTop: 'var(--nav-h, 74px)', outline: 'none' }}
     >
       {/* Every hero photograph in turn as the section's ground, lightly blurred.
           --bg-subtle stays on the section itself underneath, so a failed load

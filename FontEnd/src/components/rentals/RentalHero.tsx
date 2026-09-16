@@ -81,7 +81,9 @@ export function RentalHero({
           same allowance MenuPage's hero makes. */}
       {/* Left-aligned at every width, like MenuPage's hero. Centring below md put the
           two catalog pages on different axes at the same viewport. */}
-      <div className="relative z-10 mx-auto w-full max-w-[1200px] px-6 pt-[calc(4rem+80px)] pb-16 sm:px-10">
+      {/* kj-hero-in: the shared hero entrance (routes/pageTransition.css), the same
+          rise the Menus and Packages heroes use. */}
+      <div className="kj-hero-in relative z-10 mx-auto w-full max-w-[1200px] px-6 pt-[calc(4rem+80px)] pb-16 sm:px-10">
         <p
           className="mb-4 text-[0.6875rem] font-semibold tracking-[0.14em] text-[var(--accent)] uppercase"
           style={{ fontFamily: 'var(--font-body)' }}

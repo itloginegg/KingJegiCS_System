@@ -5,7 +5,7 @@ import { Navbar } from '../components/site/Navbar';
 import { PackageCarousel } from '../components/packages/PackageCarousel';
 import { AmbientCanvas } from '../components/site/AmbientCanvas';
 import { readSession } from '../lib/tokenStorage';
-import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
+import { fetchPackages, getFullImageUrl, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuTrays } from '../api/menuAdminApi';
 import { SiteFooter } from '../components/site/SiteFooter';
 
@@ -21,20 +21,19 @@ const fmtPHP = (n: number) =>
 
 /* ─────────────────────────────────────────────────────────────────────────
    Live catalog from /api/MenuPackages — same anonymous-GET pattern MenuPage
-   already uses. Only the per-card photography remains static: the card art
-   backs the details modal, and is drawn from this pool rather than invented
-   per package.
+   already uses. The card art backs the details modal.
 ───────────────────────────────────────────────────────────────────────── */
 
-
-
-/** Card art pool, assigned round-robin — the catalog has no per-package photo. */
-const PKG_CARD_IMAGES = [
-  'https://images.unsplash.com/photo-1530103862676-de8c9debad1d?auto=format&fit=crop&w=1200&q=80',
-  'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1200&q=80',
-  'https://images.unsplash.com/photo-1555244162-803834f70033?auto=format&fit=crop&w=1200&q=80',
-  'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1200&q=80',
-];
+/**
+ * The details-modal art, picked exactly as the landing page's PackagesPreview
+ * picks it: the package's first uploaded photo, else the priciest package gets
+ * /hero/1.jpg and every other one /hero/2.jpg. Same rule, so a package opened
+ * from "View details" shows the photo the visitor just clicked on.
+ */
+const PKG_HERO_FALLBACK = '/hero/1.jpg';
+const PKG_SIDE_FALLBACK = '/hero/2.jpg';
+const artFor = (p: AdminPackage, priceRank: number) =>
+  getFullImageUrl(p.images[0]?.url) ?? (priceRank === 0 ? PKG_HERO_FALLBACK : PKG_SIDE_FALLBACK);
 
 type Pkg = {
   id: string;
@@ -58,7 +57,7 @@ type Pkg = {
  * `highlight` marks the priciest package, since the design uses it for emphasis
  * and the catalog has no "featured" flag.
  */
-const toCard = (p: AdminPackage, index: number, isTopPriced: boolean): Pkg => {
+const toCard = (p: AdminPackage, priceRank: number, isTopPriced: boolean): Pkg => {
   const details: string[] = [`Serves ${p.minPax}–${p.maxPax} guests`];
   if (p.pricePerExtraPax > 0) details.push(`${fmtPHP(p.pricePerExtraPax)} per guest beyond ${p.minPax}`);
   if (p.fixedItems.length > 0) details.push(`Always included: ${p.fixedItems.map((f) => f.itemName).join(', ')}`);
@@ -72,7 +71,7 @@ const toCard = (p: AdminPackage, index: number, isTopPriced: boolean): Pkg => {
     price: fmtPHPNoDecimals(p.basePrice),
     unit: `Serves ${p.minPax}–${p.maxPax} guests`,
     highlight: isTopPriced,
-    image: PKG_CARD_IMAGES[index % PKG_CARD_IMAGES.length],
+    image: artFor(p, priceRank),
     description: p.description,
     features: p.inclusions,
     details,
@@ -204,7 +203,10 @@ export function PackagePage() {
       const rows = await fetchPackages(token);
       const topPrice = rows.reduce((max, p) => Math.max(max, p.basePrice), 0);
       const topIndex = rows.findIndex((p) => p.basePrice === topPrice);
-      const mapped = rows.map((p, i) => toCard(p, i, i === topIndex && rows.length > 1));
+      // Rank by price the way PackagesPreview sorts (stable, descending), so the
+      // fallback art lands on the same package on both pages.
+      const byPrice = [...rows].sort((a, b) => b.basePrice - a.basePrice);
+      const mapped = rows.map((p, i) => toCard(p, byPrice.indexOf(p), i === topIndex && rows.length > 1));
       mapped.push({
         id: 'custom-package',
         name: 'Custom Package',
@@ -425,7 +427,10 @@ export function PackagePage() {
         <section
           style={{
             ...sectionPad,
-            paddingTop: 'calc(6rem + 80px)',
+            /* The navbar's measured height plus a little air, rather than a fixed
+               6rem + 80px: that left ~120px of empty ground under the bar and pushed
+               the package cards below the fold. */
+            paddingTop: 'calc(var(--nav-h, 74px) + 2.5rem)',
             paddingBottom: '4rem',
             overflow: 'hidden',
             /* The solid fill moved into the overlay below so the backdrop can show
@@ -464,10 +469,10 @@ export function PackagePage() {
 
           {/* ── centered copy block ── */}
           <div
-            className="fade-up"
-            style={{ maxWidth: 800, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center', position: 'relative', zIndex: 1, marginBottom: '4rem' }}
+            className="kj-hero-in"
+            style={{ maxWidth: 800, margin: '0 auto', padding: '0 2.5rem', textAlign: 'center', position: 'relative', zIndex: 1, marginBottom: '2.5rem' }}
           >
-            <div className="inline-block border border-border-accent bg-accent-muted text-accent rounded-full px-4 py-1.5 text-[0.65rem] font-bold tracking-widest uppercase mb-6">
+            <div className="inline-block border border-border-accent bg-accent-muted text-accent rounded-full px-4 py-1.5 text-[0.65rem] font-bold tracking-widest uppercase mb-4">
               What we offer
             </div>
             <h2 className="text-text-primary text-3xl md:text-4xl lg:text-[2.5rem] font-display font-medium leading-[1.2] max-w-[700px] mx-auto tracking-tight">

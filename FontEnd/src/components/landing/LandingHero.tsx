@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AmbientCanvas } from '../site/AmbientCanvas';
+import { settleReveal } from '../../routes/reveal';
 
 const STATS = [
   { value: '500+', label: 'Events Served' },
@@ -58,6 +59,21 @@ export function LandingHero({ media }: LandingHeroProps) {
   const videoRefs = useRef<Array<HTMLVideoElement | null>>([]);
 
   const count = media.length;
+
+  /* "Check a date" scrolls to the calendar on this page rather than leaving for /book:
+     the calendar is where a date gets checked, and picking one there already opens the
+     reserve flow. A real #availability href keeps it working without JavaScript; the
+     handler only adds the smooth scroll (instant under reduced motion) and moves focus
+     to the section, so keyboard and screen-reader users land where they were sent. */
+  const goToAvailability = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    const section = document.getElementById('availability');
+    if (!section) return;
+    e.preventDefault();
+    // In its final place first, or the scroll lines up its lowered, unrevealed position.
+    settleReveal(section);
+    section.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    section.focus({ preventScroll: true });
+  };
   /* One layer has nothing to cross-fade to, and reduced motion holds frame one. */
   const cycles = count > 1 && !reduced;
 
@@ -193,7 +209,7 @@ export function LandingHero({ media }: LandingHeroProps) {
         </p>
 
         <div className="lp-hero-actions">
-          <Link to="/book" className="ui-btn ui-btn-accent">Check a date</Link>
+          <a href="#availability" onClick={goToAvailability} className="ui-btn ui-btn-accent">Check a date</a>
           <Link to="/packages" className="ui-btn ui-btn-outline">Browse packages</Link>
         </div>
 

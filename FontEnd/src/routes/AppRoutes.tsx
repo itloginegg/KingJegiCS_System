@@ -5,6 +5,7 @@ import { ChatWidget } from '../components/site/ChatWidget';
 import { AuthProvider } from '../context/AuthContext';
 import { CartProvider } from '../context/CartContext';
 import { ThemeProvider } from '../context/ThemeContext';
+import { PageTransition } from './PageTransition';
 import { ProtectedRoute } from './ProtectedRoute';
 import { RouteErrorBoundary } from './RouteErrorBoundary';
 import { LandingPage } from '../pages/LandingPage';
@@ -129,6 +130,9 @@ export function AppRoutes() {
         <RouteErrorBoundary>
         <Suspense fallback={<RouteFallback />}>
         <Routes>
+          {/* Every page sits inside one layout route that fades it in, reveals its
+              sections on scroll, and opens it at the top. See PageTransition. */}
+          <Route element={<PageTransition />}>
           {/* Public site */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/packages" element={<PackagePage />} />
@@ -174,6 +178,7 @@ export function AppRoutes() {
           <Route path="/admin/dashboard" element={<Navigate to="/admin" replace />} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
         </Routes>
         </Suspense>
         </RouteErrorBoundary>

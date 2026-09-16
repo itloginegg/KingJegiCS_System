@@ -600,7 +600,7 @@ export function MenuPage() {
           </div>
 
           <Navbar activePage="menus" placement="sticky" />
-          <div className="fade-up" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
+          <div className="kj-hero-in" style={{ position: 'relative', zIndex: 1, maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem' }}>
             <p className="ui-kicker">Full menu</p>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.375rem, 5vw, 3.875rem)', fontWeight: 600, lineHeight: 0.98, letterSpacing: '-0.04em', color: 'var(--text-primary)', textWrap: 'balance', margin: '0 0 1rem' }}>
               Everything we cook,<br />in one place.
