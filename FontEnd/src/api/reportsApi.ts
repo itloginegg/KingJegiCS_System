@@ -4,6 +4,7 @@
  * Endpoint inventory:
  *   GET /api/Reports/monthly-sales?months=          → net collected sales per month
  *   GET /api/Reports/monthly-sales/summary?months=  → short AI read of the same window
+ *   GET /api/Reports/demand-forecast?horizon=       → booking demand history + forecast
  *
  * The two are separate calls on purpose: the figures must render immediately, while the
  * summary may take a round trip to Gemini or be unavailable entirely.
@@ -63,6 +64,42 @@ export interface MonthlySalesSummary {
   generatedAt: string;
 }
 
+/**
+ * Matches DemandForecastPointDto. History months carry `actual`, `movingAverage` and
+ * `fitted`; forecast months carry `forecast`, its `low`–`high` range and `onTheBooks`
+ * (bookings already made for that month). Counts are events, by event date.
+ */
+export interface DemandForecastPoint {
+  year: number;
+  month: number;
+  label: string;
+  isForecast: boolean;
+  actual: number | null;
+  movingAverage: number | null;
+  fitted: number | null;
+  forecast: number | null;
+  low: number | null;
+  high: number | null;
+  onTheBooks: number;
+}
+
+/**
+ * Matches DemandForecastDto. `confidence` is 'none' when there are under three finished
+ * months of history, in which case every `forecast` is null and `method` says why.
+ */
+export interface DemandForecast {
+  historyFrom: string | null;
+  historyTo: string | null;
+  historyMonths: number;
+  confidence: 'none' | 'low' | 'medium' | 'high';
+  method: string;
+  trendPerMonth: number | null;
+  typicalError: number | null;
+  /** Calendar month numbers (1–12), busiest first. Empty until a year of history exists. */
+  peakMonths: number[];
+  months: DemandForecastPoint[];
+}
+
 async function readErrorMessage(res: Response): Promise<string | null> {
   try {
     const body = (await res.json()) as any;
@@ -109,6 +146,11 @@ async function request<T>(path: string, token: string): Promise<T> {
 /** Net collected sales for the last `months` whole months, ending with the current one. */
 export function getMonthlySales(token: string, months = 6): Promise<MonthlySalesReport> {
   return request<MonthlySalesReport>(`/api/Reports/monthly-sales?months=${months}`, token);
+}
+
+/** Booking demand history and a forecast for the next `horizon` months, starting with this one. */
+export function getDemandForecast(token: string, horizon = 3): Promise<DemandForecast> {
+  return request<DemandForecast>(`/api/Reports/demand-forecast?horizon=${horizon}`, token);
 }
 
 /** The AI read of the same window. Always resolves — check `generated` before trusting the prose. */

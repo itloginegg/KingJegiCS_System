@@ -115,6 +115,100 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
+        /// Booking demand: finished months of history plus a forecast for the next
+        /// <paramref name="horizon"/> months, starting with the month containing
+        /// <paramref name="today"/>.
+        ///
+        /// History counts Confirmed and Completed bookings by EVENT date, because that is the
+        /// demand the kitchen and crew actually served; Pending, Draft and Cancelled bookings
+        /// never became events. It starts at the first month that had one (capped at
+        /// <paramref name="maxHistoryMonths"/>), not at an arbitrary date, so the months before
+        /// the business used this system don't read as months of zero demand and drag the
+        /// trend down. It ends with last month: the current month is still filling up, so
+        /// counting it would look like a slump.
+        ///
+        /// The arithmetic is Demandforecaster's; this method only gathers the counts.
+        /// </summary>
+        public async Task<DemandForecastDto> GetDemandForecastAsync(
+            int horizon, DateOnly today, int maxHistoryMonths = 36, CancellationToken ct = default)
+        {
+            horizon = Math.Clamp(horizon, 1, 12);
+            maxHistoryMonths = Math.Clamp(maxHistoryMonths, 1, 60);
+
+            var currentMonth = new DateOnly(today.Year, today.Month, 1);
+            var earliestAllowed = currentMonth.AddMonths(-maxHistoryMonths);
+            var forecastEnd = currentMonth.AddMonths(horizon);
+
+            var rows = await _db.Bookings.AsNoTracking()
+                .Where(b => b.EventDate >= earliestAllowed && b.EventDate < forecastEnd
+                            && b.Status != BookingStatus.Draft && b.Status != BookingStatus.Cancelled)
+                .Select(b => new { b.EventDate, b.Status })
+                .ToListAsync(ct);
+
+            static int Key(DateOnly d) => d.Year * 12 + d.Month - 1;
+            static string Label(DateOnly d) => d.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+
+            var served = rows
+                .Where(r => r.EventDate < currentMonth &&
+                            (r.Status == BookingStatus.Confirmed || r.Status == BookingStatus.Completed))
+                .GroupBy(r => Key(r.EventDate))
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var onTheBooks = rows
+                .Where(r => r.EventDate >= currentMonth)
+                .GroupBy(r => Key(r.EventDate))
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var historyStart = served.Count == 0
+                ? (DateOnly?)null
+                : new DateOnly(served.Keys.Min() / 12, served.Keys.Min() % 12 + 1, 1);
+
+            var history = new List<Demandforecaster.MonthCount>();
+            if (historyStart is DateOnly start)
+                for (var m = start; m < currentMonth; m = m.AddMonths(1))
+                    history.Add(new(m.Year, m.Month, served.GetValueOrDefault(Key(m))));
+
+            var future = Enumerable.Range(0, horizon).Select(i => currentMonth.AddMonths(i)).ToList();
+            var result = Demandforecaster.Forecast(history, future.Select(f => f.Month).ToList());
+
+            var points = new List<DemandForecastPointDto>(history.Count + horizon);
+            for (var i = 0; i < history.Count; i++)
+            {
+                var m = new DateOnly(history[i].Year, history[i].Month, 1);
+                points.Add(new DemandForecastPointDto(
+                    m.Year, m.Month, Label(m), false,
+                    history[i].Count, result.MovingAverage[i], result.Fitted[i],
+                    null, null, null, 0));
+            }
+            for (var k = 0; k < horizon; k++)
+            {
+                var m = future[k];
+                var value = result.Forecast[k];
+                decimal? low = null, high = null;
+                if (value is decimal v && result.TypicalError is decimal err)
+                {
+                    low = Math.Max(0m, v - err);
+                    high = v + err;
+                }
+                points.Add(new DemandForecastPointDto(
+                    m.Year, m.Month, Label(m), true,
+                    null, null, null, value, low, high,
+                    onTheBooks.GetValueOrDefault(Key(m))));
+            }
+
+            return new DemandForecastDto(
+                historyStart,
+                history.Count == 0 ? null : currentMonth.AddDays(-1),
+                history.Count,
+                result.Confidence,
+                result.Method,
+                result.TrendPerMonth,
+                result.TypicalError,
+                result.PeakMonths,
+                points);
+        }
+
+        /// <summary>
         /// A short plain-English read of the report, written by the existing Gemini-backed
         /// assistant over the REAL aggregated numbers (never invented).
         ///

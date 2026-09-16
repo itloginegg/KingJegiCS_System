@@ -48,6 +48,48 @@ namespace System_ApiTest.Application.DTOs
         string Summary,
         bool Generated,
         DateTime GeneratedAt);
+
+    /// <summary>
+    /// One month on the demand-forecast chart: a finished month of history, or a month
+    /// ahead. Counts are events (bookings by event date), not payments.
+    ///
+    /// History months carry Actual (Confirmed + Completed bookings), the 3-month
+    /// MovingAverage once three months exist, and Fitted — what the model would have
+    /// said for that month. Forecast months carry Forecast with its Low–High range, and
+    /// OnTheBooks: bookings already made for that month (Pending, Confirmed or Completed),
+    /// so the owner can see how much of the forecast is already spoken for.
+    /// </summary>
+    public record DemandForecastPointDto(
+        int Year,
+        int Month,
+        string Label,
+        bool IsForecast,
+        int? Actual,
+        decimal? MovingAverage,
+        decimal? Fitted,
+        decimal? Forecast,
+        decimal? Low,
+        decimal? High,
+        int OnTheBooks);
+
+    /// <summary>
+    /// Booking demand forecast. Confidence is "none" (under 3 finished months — no
+    /// forecast values at all), "low" (under 12), "medium" (under 24, trend only) or
+    /// "high" (24+, seasonality applied). Method says in words what was fitted.
+    /// TrendPerMonth is the change in bookings per month; TypicalError is the ± range
+    /// used for Low/High. PeakMonths are calendar month numbers (1–12), busiest first,
+    /// and only appear once a full year of history exists.
+    /// </summary>
+    public record DemandForecastDto(
+        DateOnly? HistoryFrom,
+        DateOnly? HistoryTo,
+        int HistoryMonths,
+        string Confidence,
+        string Method,
+        decimal? TrendPerMonth,
+        decimal? TypicalError,
+        IReadOnlyList<int> PeakMonths,
+        IReadOnlyList<DemandForecastPointDto> Months);
 }
 
 

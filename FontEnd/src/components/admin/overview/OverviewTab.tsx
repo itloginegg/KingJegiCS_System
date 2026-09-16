@@ -38,6 +38,7 @@ import { fmt, fmtDate, fmtTime } from '../../../lib/format';
 import { FieldLabel, StatusBadge } from '../shared/StatusBadge';
 import { RES_STATUS, type ResStatus } from '../shared/statusMeta';
 import { OvIcon } from '../shared/AdminChrome';
+import { DemandForecastPanel } from './DemandForecastPanel';
 
 /** How many whole months the Revenue Trend chart covers. */
 const SALES_MONTHS = 6;
@@ -396,6 +397,9 @@ export function OverviewTab({
           )}
         </div>
       </div>
+
+      {/* ── demand forecast — booking history and the months ahead ── */}
+      <DemandForecastPanel />
 
       {/* ── event calendar — spans the full width beneath both ── */}
       <div className="adm-ov-surface adm-ov-cal">

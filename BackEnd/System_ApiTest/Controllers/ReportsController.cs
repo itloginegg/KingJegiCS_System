@@ -46,6 +46,19 @@ namespace System_ApiTest.Controllers
             var report = await _reports.GetMonthlySalesAsync(months, today, ct);
             return Ok(await _reports.GetMonthlySalesSummaryAsync(report, ct));
         }
+
+        /// <summary>
+        /// Booking demand forecast: finished months of history (Confirmed + Completed
+        /// bookings by event date) and the next <paramref name="horizon"/> months, starting
+        /// with the current one. With under three finished months the body still comes back
+        /// 200, with Confidence "none" and no forecast values, so the dashboard can say why.
+        /// </summary>
+        [HttpGet("demand-forecast")]
+        public async Task<IActionResult> DemandForecast([FromQuery] int horizon = 3, CancellationToken ct = default)
+        {
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            return Ok(await _reports.GetDemandForecastAsync(horizon, today, ct: ct));
+        }
     }
 }
 

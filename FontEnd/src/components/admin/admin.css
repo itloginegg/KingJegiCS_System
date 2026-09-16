@@ -488,6 +488,18 @@ select.adm-input { cursor: pointer; font-weight: 400; }
 }
 .adm-ov-bar.net { background: repeating-linear-gradient(135deg, var(--ov-lime) 0 5px, var(--ov-lime-2) 5px 10px); }
 .adm-ov-bar.ref { background: var(--ov-charcoal); }
+/* Demand forecast (DemandForecastPanel). A month ahead holds two bars: the forecast,
+   hatched with its likely range as a faint band behind it, and the bookings already
+   made. The slot is a positioning box, so the band can sit behind the bar without
+   taking a flex slot of its own. */
+.adm-fc-slot { position: relative; height: 100%; width: clamp(9px, 26%, 19px); display: flex; align-items: flex-end; }
+.adm-fc-slot .adm-ov-bar { width: 100%; position: relative; }
+.adm-fc-range { position: absolute; left: -3px; right: -3px; border-radius: 4px; background: color-mix(in srgb, var(--ov-lime) 22%, transparent); }
+.adm-ov-bar.adm-fc-forecast, .adm-fc-swatch-forecast { background: repeating-linear-gradient(135deg, var(--ov-lime) 0 4px, transparent 4px 8px); outline: 1px solid var(--ov-lime); outline-offset: -1px; }
+.adm-ov-bar.adm-fc-booked { background: var(--ov-lime-soft); outline: 1px solid var(--ov-lime); outline-offset: -1px; }
+.adm-fc-ahead { background: color-mix(in srgb, var(--ov-lime) 6%, transparent); border-radius: 8px; }
+.adm-fc-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.adm-fc-line polyline { fill: none; stroke: var(--ov-lime); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .adm-ov-months { grid-column: 2; display: flex; margin-top: 0.55rem; }
 .adm-ov-months span {
   flex: 1; text-align: center;
