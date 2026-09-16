@@ -3,6 +3,7 @@
  *
  * Endpoint inventory:
  *   POST /api/assistant/chat                     → send a message, get a reply (+ proposals)
+ *   POST /api/assistant/public-chat              → the same, signed out: three read-only tools
  *   GET  /api/assistant/conversations            → the customer's threads (newest first)
  *   GET  /api/assistant/conversations/{id}       → one thread's visible turns
  *
@@ -47,11 +48,44 @@ export interface ChatRequest {
   message: string;
 }
 
+/**
+ * Matches PlanContextDto: what the budget tool was asked for. Needed to open a proposal
+ * in the plan editor, which prices it against that event — a proposal on its own carries
+ * lines and totals but not the date or guest count behind them.
+ */
+export interface PlanContext {
+  bookingType: 'FullService' | 'FoodDelivery';
+  eventDate: string;
+  eventType: string | null;
+  guestCount: number;
+  budget: number;
+}
+
 /** Matches AssistantChatResponse. `proposals` is populated when the model used the budget tool. */
 export interface ChatResponse {
   conversationId: string;
   reply: string;
   proposals: Proposal[] | null;
+  planContext: PlanContext | null;
+}
+
+/** One replayed turn of a guest thread. Guest chats are not stored server-side. */
+export interface PublicChatTurn {
+  role: 'user' | 'model';
+  text: string;
+}
+
+/** Matches PublicChatRequest. No conversationId: there is no server-side thread. */
+export interface PublicChatRequest {
+  message: string;
+  history?: PublicChatTurn[];
+}
+
+/** Matches PublicChatResponse. */
+export interface PublicChatResponse {
+  reply: string;
+  proposals: Proposal[] | null;
+  planContext: PlanContext | null;
 }
 
 /** Matches ConversationSummaryDto. */
@@ -147,6 +181,39 @@ async function request<T>(
 /** Send one chat turn. Omit conversationId to start a new thread; pass it to continue. */
 export function sendChat(token: string, req: ChatRequest): Promise<ChatResponse> {
   return request<ChatResponse>('/api/assistant/chat', 'POST', token, req);
+}
+
+/**
+ * Send one turn as a signed-out visitor.
+ *
+ * Deliberately not routed through `request`: that helper always attaches an
+ * Authorization header and signs the user out on a 401, neither of which makes sense
+ * without a session. The endpoint answers with three read-only tools; anything needing
+ * an account is refused by the server, not hidden here.
+ */
+export async function publicChat(req: PublicChatRequest): Promise<PublicChatResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/assistant/public-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+  } catch {
+    throw new AssistantApiError(
+      'Unable to reach the server. Make sure the backend is running, then try again.',
+    );
+  }
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res);
+    throw new AssistantApiError(
+      message ?? `The server responded with an error (HTTP ${res.status}).`,
+      res.status,
+    );
+  }
+
+  return (await res.json()) as PublicChatResponse;
 }
 
 /** List the customer's conversations, newest activity first. */

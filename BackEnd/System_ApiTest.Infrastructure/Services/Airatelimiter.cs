@@ -15,6 +15,14 @@ namespace System_ApiTest.Infrastructure.Services
     public const string ReadAloudKey = "read-aloud";
 
     /// <summary>
+    /// DI key for the signed-out chat counter. A SEPARATE instance, because its keys are
+    /// hashes of client IPs rather than customer ids: mixing the two keyspaces in one
+    /// dictionary would let a guest's window and a customer's collide, and would make
+    /// "whose allowance is this?" unanswerable from the map alone.
+    /// </summary>
+    public const string PublicChatKey = "public-chat";
+
+    /// <summary>
     /// DI key for the support-drafting counter. Keyed by the CUSTOMER whose message
     /// triggered the draft, even though the draft is generated for staff — that is the
     /// only id that bounds the cost, so one customer spamming a thread cannot drain the

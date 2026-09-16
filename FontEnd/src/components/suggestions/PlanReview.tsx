@@ -52,6 +52,9 @@ const toHms = (t: string) => (t.length === 5 ? `${t}:00` : t);
 
 type LineType = 'MenuItem' | 'MenuTray' | 'Rental' | 'Service';
 
+/** Matches the EventType enum the booking rules validate against. */
+const EVENT_TYPES = ['Wedding', 'Corporate', 'Birthday', 'Debut', 'Others'] as const;
+
 const LINE_LABEL: Record<string, string> = {
   Package: 'Package',
   MenuItem: 'Dish',
@@ -169,7 +172,7 @@ function initialFrom(source: PlanReviewSource) {
 export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewProps) {
   const { addPlan, updatePlan } = useCart();
   const [init] = useState(() => initialFrom(source));
-  const { editing, bookingType, eventType, guestCount, budget, tier, packageName } = init;
+  const { editing, bookingType, guestCount, budget, tier, packageName } = init;
   const isFull = bookingType === 'FullService';
   const isRental = bookingType === 'RentalService';
   /** Events and rentals both run over a window (a rental's is its return); a delivery doesn't. */
@@ -188,6 +191,11 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
   const [endDate, setEndDate] = useState(init.endDate);
   const [endTime, setEndTime] = useState(init.endTime);
   const [contact, setContact] = useState(init.contact);
+  /* Empty only for a plan the assistant proposed: the budget form always asks for an
+     event type, but a visitor can say "full service" in chat without naming the
+     occasion — and full service can't be booked without one. Editable here rather than
+     fixed at the source, because this is where the plan is completed. */
+  const [eventType, setEventType] = useState(init.eventType ?? '');
   const [formError, setFormError] = useState('');
 
   const recipeProposal = useMemo<MaterializeProposal>(
@@ -214,7 +222,7 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
             startTime: toHms(startTime),
             endDate: hasWindow ? endDate || eventDate : null,
             endTime: hasWindow ? toHms(endTime) : null,
-            eventType: hasWindow ? eventType : null,
+            eventType: hasWindow ? eventType || null : null,
             eventDetails: init.eventDetails,
           }
         : {}),
@@ -393,6 +401,7 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
         return isRental ? 'The return must be after the start.' : 'The event must end after it starts.';
       }
     }
+    if (isFull && !eventType) return 'Choose an event type.';
     if (contact.trim() !== '' && !isCompletePhPhone(contact)) return "That contact number doesn't look complete.";
     return null;
   })();
@@ -412,7 +421,7 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
       startTime: toHms(startTime),
       endDate: hasWindow ? endDate || eventDate : null,
       endTime: hasWindow ? toHms(endTime) : null,
-      eventType: hasWindow ? eventType : null,
+      eventType: hasWindow ? eventType || null : null,
       venueAddress: composeVenueAddress(venue),
       guestCount: init.recipeGuestCount,
       contactNumber: contact.trim() || null,
@@ -422,7 +431,7 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
     const input: CartPlanInput = {
       title:
         editing?.title ??
-        (isFull ? `${eventType ?? 'Event'} · ${guestCount} guests` : `Food delivery · ${guestCount} guests`),
+        (isFull ? `${eventType || 'Event'} · ${guestCount} guests` : `Food delivery · ${guestCount} guests`),
       recipe,
       snap: snapFromQuote(quote),
       imageNames: editing?.imageNames,
@@ -634,6 +643,21 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
             labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
           />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.9rem' }}>
+            {/* Shown only when the plan arrived without one — see the eventType state. */}
+            {hasWindow && !init.eventType && (
+              <label>
+                <span className="pbg-label">Event type{isRental ? ' (optional)' : ''}</span>
+                <select
+                  className="pbg-input"
+                  value={eventType}
+                  onChange={(e) => setEventType(e.target.value)}
+                  required={isFull}
+                >
+                  <option value="">Select…</option>
+                  {EVENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+            )}
             <label>
               <span className="pbg-label">{isFull ? 'Event date' : isRental ? 'Start date' : 'Delivery date'}</span>
               <input className="pbg-input" type="date" value={eventDate} min={earliest} onChange={(e) => changeEventDate(e.target.value)} required />

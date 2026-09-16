@@ -1,8 +1,11 @@
 using System_ApiTest.Application.Common.Interfaces;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using System_ApiTest.Application.DTOs;
 using System_ApiTest.Application.Services;
 using System_ApiTest.Infrastructure.Services;
@@ -16,21 +19,53 @@ namespace System_ApiTest.Controllers
     /// action at /api/suggestions/materialize. Degrades to 503 when the assistant is
     /// unavailable, pointing the customer at the budget form.
     /// </summary>
+    /// <para>
+    /// Authorization sits on each ACTION rather than on the class. One action here is
+    /// deliberately anonymous (<see cref="PublicChat"/>), and a class-level attribute plus
+    /// one [AllowAnonymous] reads as "everything is protected" while being exactly one
+    /// attribute away from silently exposing the next action somebody adds.
+    /// </para>
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "Customer")]
     public class AssistantController : ControllerBase
     {
         private readonly Assistantservice _assistant;
         private readonly Airatelimiter _rateLimiter;
+        private readonly Airatelimiter _publicRateLimiter;
+        private readonly Aidailyceiling _publicDailyCeiling;
         private readonly Speechservice _speech;
+        private readonly IOptions<AiOptions> _ai;
+        private readonly ILogger<AssistantController> _log;
 
-        public AssistantController(Assistantservice assistant, Airatelimiter rateLimiter, Speechservice speech)
+        public AssistantController(
+            Assistantservice assistant,
+            Airatelimiter rateLimiter,
+            [FromKeyedServices(Airatelimiter.PublicChatKey)] Airatelimiter publicRateLimiter,
+            Aidailyceiling publicDailyCeiling,
+            Speechservice speech,
+            IOptions<AiOptions> ai,
+            ILogger<AssistantController> log)
         {
             _assistant = assistant;
             _rateLimiter = rateLimiter;
+            _publicRateLimiter = publicRateLimiter;
+            _publicDailyCeiling = publicDailyCeiling;
             _speech = speech;
+            _ai = ai;
+            _log = log;
         }
+
+        /// <summary>
+        /// A stable, non-reversible key for a guest's address, so the counter map holds
+        /// hashes rather than a log of who visited. Salted per process: the windows are
+        /// in-memory and die with the process anyway, so the salt has nothing to outlive.
+        ///
+        /// <para>
+        /// Guid-shaped because Airatelimiter keys on Guid — but written into its own
+        /// keyed instance (Airatelimiter.PublicChatKey), never into the customer map.
+        /// </para>
+        /// </summary>
+        private static readonly byte[] IpKeySalt = RandomNumberGenerator.GetBytes(16);
 
         /// <summary>
         /// What the voice pipeline can actually do right now, so the widget can decide
@@ -38,6 +73,7 @@ namespace System_ApiTest.Controllers
         /// instead of opening a hub connection only to discover it's unconfigured.
         /// </summary>
         [HttpGet("voice/capabilities")]
+        [Authorize(Roles = "Customer")]
         public IActionResult VoiceCapabilities() => Ok(new VoiceCapabilitiesDto(
             // IsConfigured, not Enabled: Enabled defaults to true even with no API key, so
             // reporting it here offered a mic that failed on every single turn.
@@ -47,6 +83,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>Sends one message. Omit conversationId to start a new thread; include it to continue.</summary>
         [HttpPost("chat")]
+        [Authorize(Roles = "Customer")]
         public async Task<IActionResult> Chat([FromBody] AssistantChatRequest req, CancellationToken ct)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -85,6 +122,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>Lists the customer's conversations (including any proactively seeded by the notifier).</summary>
         [HttpGet("conversations")]
+        [Authorize(Roles = "Customer")]
         public async Task<IActionResult> ListConversations(CancellationToken ct)
         {
             var customerId = CurrentUserId();
@@ -94,6 +132,7 @@ namespace System_ApiTest.Controllers
 
         /// <summary>Reads one conversation's visible dialogue. 404 if it isn't the caller's.</summary>
         [HttpGet("conversations/{id:guid}")]
+        [Authorize(Roles = "Customer")]
         public async Task<IActionResult> GetConversation(Guid id, CancellationToken ct)
         {
             var customerId = CurrentUserId();
@@ -102,6 +141,79 @@ namespace System_ApiTest.Controllers
             var detail = await _assistant.GetConversationAsync(customerId.Value, id, ct);
             if (detail is null) return NotFound();
             return Ok(detail);
+        }
+
+        /// <summary>
+        /// One turn for a signed-out visitor: availability, budget tiers and the catalog.
+        ///
+        /// <para>
+        /// This action never calls <see cref="CurrentUserId"/>, and never can usefully:
+        /// PublicChatAsync takes no customer id, so there is nothing to pass it. The two
+        /// customer tools are unreachable from that path rather than merely hidden.
+        /// </para>
+        ///
+        /// <para>
+        /// Two limits, because neither suffices alone. Per-IP stops casual repeat use but
+        /// leans on X-Forwarded-For, which the platform sets and a caller can therefore
+        /// present freshly each request; the daily ceiling is the one a spoofer still
+        /// meets. Both degrade to the same 503 fallback the signed-in path uses.
+        /// </para>
+        /// </summary>
+        [HttpPost("public-chat")]
+        [AllowAnonymous]
+        public async Task<IActionResult> PublicChat([FromBody] PublicChatRequest req, CancellationToken ct)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var options = _ai.Value;
+            var ipKey = GuestKey();
+
+            if (!_publicRateLimiter.TryConsume(ipKey, options.PublicMaxMessagesPerHourPerIp, out var retryAfter))
+            {
+                _log.LogInformation("Public assistant chat rate-limited for guest {GuestKey}.", ipKey);
+                Response.Headers.RetryAfter = retryAfter.ToString();
+                return StatusCode(StatusCodes.Status429TooManyRequests, new
+                {
+                    message = "You've reached the hourly limit for questions. Please try again later, or use the budget form."
+                });
+            }
+
+            if (!_publicDailyCeiling.TryConsume(options.PublicMaxMessagesPerDay, out var dailyRetryAfter))
+            {
+                _log.LogWarning(
+                    "Public assistant chat hit its daily ceiling of {Ceiling}; refusing guest {GuestKey} until reset.",
+                    options.PublicMaxMessagesPerDay, ipKey);
+                Response.Headers.RetryAfter = dailyRetryAfter.ToString();
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    message = "The assistant is busy for today. Please use the budget form to get suggestions."
+                });
+            }
+
+            try
+            {
+                var result = await _assistant.PublicChatAsync(req.History, req.Message, ct);
+                _log.LogInformation(
+                    "Public assistant chat answered guest {GuestKey} ({SpentToday} today).",
+                    ipKey, _publicDailyCeiling.SpentToday);
+                return Ok(result);
+            }
+            catch (AssistantUnavailableException ex)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = ex.Message });
+            }
+            catch (BookingRuleException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>Salted hash of the caller's address. See <see cref="IpKeySalt"/>.</summary>
+        private Guid GuestKey()
+        {
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            var hash = SHA256.HashData([.. IpKeySalt, .. Encoding.UTF8.GetBytes(ip)]);
+            return new Guid(hash.AsSpan(0, 16));
         }
 
         private Guid? CurrentUserId() =>

@@ -22,7 +22,68 @@ namespace System_ApiTest.Application.DTOs
     public record AssistantChatResponse(
         Guid ConversationId,
         string Reply,
-        IReadOnlyList<ProposalDto>? Proposals);
+        IReadOnlyList<ProposalDto>? Proposals,
+        PlanContextDto? PlanContext);
+
+    /// <summary>
+    /// What the budget tool was asked for, echoed back beside the proposals it produced.
+    ///
+    /// A proposal is only a list of priced lines; turning one into a plan needs the event
+    /// it was priced for — the date, the guests, the type — and in chat those live in the
+    /// model's tool arguments, where the browser can't see them. Without this, a chat
+    /// proposal can be read but not used.
+    /// </summary>
+    public record PlanContextDto(
+        string BookingType,
+        string EventDate,
+        string? EventType,
+        int GuestCount,
+        decimal Budget);
+
+    /// <summary>
+    /// One replayed turn of a guest conversation. Guest threads are not stored server
+    /// side, so the client sends back what it has — which makes this untrusted input:
+    /// Role is honoured only as "model" or "user", and both the count and the length are
+    /// capped by the service.
+    /// </summary>
+    public class PublicChatTurnDto
+    {
+        /// <summary>"user" or "model". Anything else is read as "user".</summary>
+        [MaxLength(10)]
+        public string Role { get; set; } = "user";
+
+        /// <summary>
+        /// Generous on purpose: the real cap is the service's, which TRUNCATES a replayed
+        /// turn rather than refusing the request. A model reply can run past a thousand
+        /// characters, and a visitor whose own transcript contains one must not have their
+        /// next message rejected for quoting it back. This length only stops nonsense.
+        /// </summary>
+        [MaxLength(4000)]
+        public string Text { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// A signed-out visitor's message, with as much of the thread as their browser still
+    /// has. No ConversationId: there is no server-side thread to continue.
+    /// </summary>
+    public class PublicChatRequest
+    {
+        [Required]
+        [MaxLength(1000, ErrorMessage = "Message is too long.")]
+        public string Message { get; set; } = string.Empty;
+
+        [MaxLength(20)]
+        public List<PublicChatTurnDto>? History { get; set; }
+    }
+
+    /// <summary>
+    /// The guest reply. Proposals come from the budget tool and can be added to the cart,
+    /// which is where a visitor signs in — at checkout, not before.
+    /// </summary>
+    public record PublicChatResponse(
+        string Reply,
+        IReadOnlyList<ProposalDto>? Proposals,
+        PlanContextDto? PlanContext);
 
     /// <summary>A conversation in a list view (no messages). MessageCount counts visible turns.</summary>
     public record ConversationSummaryDto(

@@ -3,13 +3,17 @@ import { AlertCircle, Mic, Paperclip, Send, Volume2, VolumeX, X } from 'lucide-r
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { readSession } from '../../lib/tokenStorage';
+import { useNavigate } from 'react-router-dom';
 import {
-  sendChat, listConversations, getConversation, getVoiceCapabilities, AssistantApiError,
+  sendChat, publicChat, listConversations, getConversation, getVoiceCapabilities, AssistantApiError,
 } from '../../api/assistantApi';
-import type { VoiceCapabilities } from '../../api/assistantApi';
+import type { ChatResponse, PlanContext, VoiceCapabilities } from '../../api/assistantApi';
 import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from '../../api/supportApi';
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
+import { PlanReview } from '../suggestions/PlanReview';
+import { PlanByBudgetStyles } from '../suggestions/PlanByBudget';
+import { fetchMenuTrays } from '../../api/menuAdminApi';
 import { useVoiceSession, voiceInputSupported } from '../../hooks/useVoiceSession';
 import type { VoiceState } from '../../hooks/useVoiceSession';
 import {
@@ -29,7 +33,20 @@ import { AvatarStage } from '../avatar/AvatarStage';
  * tools are [Authorize(Roles = "Customer")] only. Self-contained `cw-` styles.
  */
 
-type ChatMsg = { id: string; role: 'me' | 'assistant'; text: string; proposals?: Proposal[] };
+type ChatMsg = {
+  id: string;
+  role: 'me' | 'assistant';
+  text: string;
+  proposals?: Proposal[];
+  /** The ask behind `proposals`, so a tier can be opened in the plan editor. */
+  planContext?: PlanContext | null;
+};
+
+/** How many prior turns a signed-out visitor replays. The server caps this again. */
+const PUBLIC_HISTORY_TURNS = 10;
+
+/** And how much of each. Well inside what the endpoint accepts. */
+const PUBLIC_TURN_CHARS = 2000;
 
 /* Read-aloud for TYPED replies. Separate from voice mode below, which is a full spoken
    conversation over /hubs/voice — this is just the browser reading a message you typed. */
@@ -222,11 +239,18 @@ export function ChatWidget({ greetKey }: { greetKey?: string }) {
           left to make room for the avatar column without every panel component needing
           to know the avatar exists. */}
       <div className={showStanding ? 'cw-dock cw-dock--with-avatar' : 'cw-dock'}>
+        {/* A signed-out visitor now gets the real assistant, not an invitation to sign
+            in: the public endpoint answers dates, budgets and the catalogue without an
+            account (AssistantController.PublicChat). Staff accounts still get the teaser
+            — the assistant is a customer's tool, and its customer half is theirs alone.
+            Support stays behind sign-in, because a support thread belongs to somebody. */}
         {open && (isCustomer
           ? (mode === 'assistant'
               ? <ChatPanel onClose={() => setOpen(false)} onSwitch={() => setMode('support')} />
               : <SupportPanel onClose={() => setOpen(false)} onSwitch={() => setMode('assistant')} />)
-          : <TeaserPanel loggedIn={!!user} onClose={() => setOpen(false)} />)}
+          : user
+            ? <TeaserPanel loggedIn onClose={() => setOpen(false)} />
+            : <ChatPanel onClose={() => setOpen(false)} onSwitch={() => setMode('support')} />)}
       </div>
 
       {showStanding && (
@@ -382,6 +406,8 @@ function TeaserPanel({ loggedIn, onClose }: { loggedIn: boolean; onClose: () => 
 }
 
 function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () => void }) {
+  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -389,6 +415,11 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [showBudgetCta, setShowBudgetCta] = useState(false);
+  /* A tier the visitor chose to open in the plan editor, with the ask it was priced
+     against. Editing and adding to the cart happen there, exactly as they do from the
+     budget form — signing in is still only asked for at checkout. */
+  const [chosen, setChosen] = useState<{ proposal: Proposal; context: PlanContext } | null>(null);
+  const [trayDishes, setTrayDishes] = useState<Record<string, string[]>>({});
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const [speak, setSpeak] = useState(false);
@@ -426,6 +457,16 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
     getVoiceCapabilities(session.token)
       .then(setCaps)
       .catch(() => { /* voice simply stays hidden */ });
+  }, []);
+
+  /* Tray contents for the editor's rows. Anonymous, like the rest of the catalog: a
+     signed-out visitor gets the same names a customer sees. */
+  useEffect(() => {
+    fetchMenuTrays(readSession()?.token ?? '')
+      .then((trays) => setTrayDishes(
+        Object.fromEntries(trays.map((t) => [t.id, t.dishes.map((d) => d.itemName)])),
+      ))
+      .catch(() => { /* the editor falls back to bare tray names */ });
   }, []);
 
   const upsertAssistant = (id: string, text: string, proposals?: Proposal[] | null) =>
@@ -514,19 +555,45 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
     const text = input.trim();
     if (!text || sending) return;
     const session = readSession();
-    if (!session) return;
+
+    /* Signed out goes to a different endpoint, not the same one with the token left
+       off: that path holds no customer id to hand its tools, which is what keeps it
+       from reading anybody's bookings. The transcript it replays lives in this
+       component and nowhere else — a refresh starts over, deliberately. */
+    const history = messages
+      .slice(-PUBLIC_HISTORY_TURNS)
+      .map((m) => ({
+        role: (m.role === 'me' ? 'user' : 'model') as 'user' | 'model',
+        /* Trimmed here too: a long tier listing can run past what the endpoint accepts,
+           and the server truncates replayed turns anyway. */
+        text: m.text.slice(0, PUBLIC_TURN_CHARS),
+      }));
 
     setMessages((prev) => [...prev, { id: `me-${Date.now()}`, role: 'me', text }]);
     setInput('');
     setSending(true);
     setShowBudgetCta(false);
     try {
-      const res = await sendChat(session.token, { conversationId: conversationId ?? undefined, message: text });
-      setConversationId(res.conversationId);
-      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: res.reply, proposals: res.proposals ?? undefined }]);
+      /* Branched rather than narrowed from a union: only the signed-in reply carries a
+         conversation id, because only that side has a thread to continue. */
+      const res = session
+        ? await sendChat(session.token, { conversationId: conversationId ?? undefined, message: text })
+        : await publicChat({ message: text, history });
+      if (session) setConversationId((res as ChatResponse).conversationId);
+      setMessages((prev) => [...prev, {
+        id: `a-${Date.now()}`,
+        role: 'assistant',
+        text: res.reply,
+        proposals: res.proposals ?? undefined,
+        planContext: res.planContext,
+      }]);
       if (speak) speakText(res.reply);
     } catch (err) {
-      if (err instanceof AssistantApiError && err.isUnavailable) {
+      if (err instanceof AssistantApiError && err.status === 429) {
+        // Out of questions for now: the budget form needs no allowance at all.
+        setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: err.message }]);
+        setShowBudgetCta(true);
+      } else if (err instanceof AssistantApiError && err.isUnavailable) {
         setMessages((prev) => [...prev, {
           id: `a-${Date.now()}`, role: 'assistant',
           text: "I'm unavailable right now. You can still plan your event by budget — I'll suggest kitchen-priced options you can turn into a Draft.",
@@ -581,7 +648,9 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
                 : 'Connecting'}
             </div>
           ) : (
-            <button type="button" className="cw-switch" onClick={onSwitch}>Talk to staff →</button>
+            isAuthenticated
+              ? <button type="button" className="cw-switch" onClick={onSwitch}>Talk to staff →</button>
+              : <div className="cw-head-sub">Ask about dates, budgets and the menu</div>
           )}
         </div>
 
@@ -614,7 +683,17 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
             <div className={`cw-bubble ${m.role}`}>{m.text}</div>
             {m.proposals && m.proposals.length > 0 && (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
-                {m.proposals.map((p) => <ProposalCard key={p.tier} proposal={p} />)}
+                {m.proposals.map((p) => (
+                  <ProposalCard
+                    key={p.tier}
+                    proposal={p}
+                    trayDishes={trayDishes}
+                    /* Only with the ask behind it: the editor prices the plan against
+                       that event, and there is nothing to price without it. */
+                    onUse={m.planContext ? (proposal) => setChosen({ proposal, context: m.planContext! }) : undefined}
+                    actionLabel="Add to cart"
+                  />
+                ))}
                 <a href="/book" className="cw-btn outline" style={{ alignSelf: 'flex-start' }}>Plan by Budget to book →</a>
               </div>
             )}
@@ -626,6 +705,14 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
       </div>
 
       {voice.active && <VoiceBar state={voice.state} interim={voice.interim} status={voice.status} />}
+
+      {!isAuthenticated && (
+        <p className="cw-guestnote">
+          Dates, budgets and the menu — no account needed.{' '}
+          <button type="button" className="cw-guestlink" onClick={() => navigate('/login')}>Sign in</button>{' '}
+          for your own bookings and payments.
+        </p>
+      )}
 
       <form onSubmit={send} className="cw-foot">
         {voiceOffered && (
@@ -647,6 +734,26 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
           {sending ? <span className="cw-sending" aria-hidden="true" /> : <Send size={16} strokeWidth={1.75} aria-hidden="true" />}
         </button>
       </form>
+
+      {chosen && (
+        <>
+          <PlanByBudgetStyles />
+          <PlanReview
+            source={{
+              kind: 'proposal',
+              proposal: chosen.proposal,
+              bookingType: chosen.context.bookingType,
+              eventDate: chosen.context.eventDate,
+              eventType: chosen.context.eventType,
+              guestCount: chosen.context.guestCount,
+              budget: chosen.context.budget,
+            }}
+            trayDishes={trayDishes}
+            onClose={() => setChosen(null)}
+            onDone={() => { setChosen(null); navigate('/cart'); }}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -948,6 +1055,8 @@ function ChatStyles() {
       .cw-bubble.assistant, .cw-bubble.me { position: static; width: auto; height: auto; max-width: 82%; padding: 0.6875rem 0.875rem; border-radius: 16px; font-family: var(--font-body); font-size: 0.8125rem; font-weight: 400; line-height: 1.5; box-shadow: none; display: block; white-space: pre-wrap; }
       .cw-bubble.assistant { align-self: flex-start; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: 4px; }
       .cw-bubble.me { align-self: flex-end; background: var(--accent); color: var(--accent-text); border: 1px solid transparent; border-bottom-right-radius: 4px; }
+      .cw-guestnote { margin: 0; padding: 0.5rem 1rem 0; font-family: var(--font-body); font-size: 0.68rem; line-height: 1.45; color: var(--text-muted); }
+      .cw-guestlink { border: 0; background: none; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
       .cw-foot { display: flex; align-items: center; gap: 0.5rem; padding: 0.875rem 1rem; border-top: 1px solid var(--border); }
       .cw-input { flex: 1; min-width: 0; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--r-full); padding: 0.7rem 1rem; font-family: var(--font-body); font-size: 0.8125rem; color: var(--text-primary); outline: none; }
       .cw-input:focus, .cw-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
