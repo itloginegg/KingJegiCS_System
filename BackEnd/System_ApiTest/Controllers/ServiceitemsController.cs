@@ -60,7 +60,8 @@ namespace System_ApiTest.Controllers
             var s = new Serviceitem
             {
                 ServiceName = dto.ServiceName.Trim(),
-                UnitCost = dto.UnitCost
+                UnitCost = dto.UnitCost,
+                Category = dto.Category
             };
             _db.ServiceItems.Add(s);
             await _db.SaveChangesAsync();
@@ -80,6 +81,7 @@ namespace System_ApiTest.Controllers
 
             s.ServiceName = dto.ServiceName.Trim();
             s.UnitCost = dto.UnitCost;
+            s.Category = dto.Category;
             s.IsActive = dto.IsActive;
             await _db.SaveChangesAsync();
             await _audit.LogAsync(User, AuditAction.UPDATE, "SERVICE_ITEM", s.Id.ToString(), old, ToDto(s));
@@ -89,7 +91,7 @@ namespace System_ApiTest.Controllers
         private bool IsAdmin() => User.IsInRole("Owner") || User.IsInRole("Assistant");
 
         private static ServiceItemResponseDto ToDto(Serviceitem s) =>
-            new(s.Id, s.ServiceName, s.UnitCost, s.IsActive);
+            new(s.Id, s.ServiceName, s.UnitCost, s.IsActive, s.Category?.ToString());
     }
 
 }

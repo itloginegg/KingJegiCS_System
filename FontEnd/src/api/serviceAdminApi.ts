@@ -3,6 +3,7 @@
  */
 
 import { notifyUnauthorized } from '../lib/authEvents';
+import type { ServiceCategory } from '../lib/serviceScope';
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
@@ -13,11 +14,18 @@ export interface AdminServiceItem {
   serviceName: string;
   unitCost: number;
   isActive: boolean;
+  /** Null when nobody has sorted it yet; it is then offered on every kind of event. */
+  category: ServiceCategory | null;
 }
 
 export interface AdminServiceItemCreate {
   serviceName: string;
   unitCost: number;
+  /**
+   * Always send it, null included: the update endpoint writes whatever arrives, so a
+   * payload that leaves it out clears the category.
+   */
+  category: ServiceCategory | null;
 }
 
 export interface AdminServiceItemUpdate extends AdminServiceItemCreate {

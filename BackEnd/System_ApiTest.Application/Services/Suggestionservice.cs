@@ -479,7 +479,13 @@ namespace System_ApiTest.Application.Services
             var lines = new List<QuoteLineDto>();
 
             // Never attached to the context, so nothing built on it can be saved by accident.
-            var draft = new Booking { BookingType = req.BookingType, GuestCount = req.GuestCount };
+            var draft = new Booking
+            {
+                BookingType = req.BookingType,
+                GuestCount = req.GuestCount,
+                // So a line can be judged against the scope, as AddServiceAsync will judge it.
+                ServiceScope = req.EventDetails?.ServiceScope,
+            };
 
             Menupackage? package = null;
             if (req.Proposal.PackageId is Guid packageId)
@@ -630,6 +636,8 @@ namespace System_ApiTest.Application.Services
                     var svc = await _db.ServiceItems.AsNoTracking().FirstOrDefaultAsync(s => s.Id == line.RefId);
                     if (svc is null) return Refused("Service", "No longer offered.");
                     if (!svc.IsActive) return Refused(svc.ServiceName, "No longer available.");
+                    if (svc.Category == ServiceCategory.FoodService && draft.ServiceScope == ServiceScope.StylingOnly)
+                        return Refused(svc.ServiceName, BookingServiceDetails.NoFoodServiceOnStylingOnly);
 
                     var service = new Service { ServiceItemId = svc.Id, ServiceItem = svc, Quantity = line.Quantity };
                     draft.Services.Add(service);

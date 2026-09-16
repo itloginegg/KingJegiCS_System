@@ -1428,6 +1428,10 @@ namespace System_ApiTest.Application.Services
                     if (serviceDetails.ServiceScope == ServiceScope.StylingOnly &&
                         (menuPackageId is not null || await HasFoodLinesAsync(bookingId)))
                         throw new BookingRuleException(BookingServiceDetails.NoFoodOnStylingOnly);
+                    if (serviceDetails.ServiceScope == ServiceScope.StylingOnly &&
+                        await _db.Services.AnyAsync(x => x.BookingId == bookingId &&
+                                                         x.ServiceItem.Category == ServiceCategory.FoodService))
+                        throw new BookingRuleException(BookingServiceDetails.NoFoodServiceOnStylingOnly);
                     serviceDetails.ApplyTo(b, b.BookingType);
                 }
                 else if (b.ServiceScope == ServiceScope.StylingOnly && menuPackageId is not null)
@@ -1455,6 +1459,9 @@ namespace System_ApiTest.Application.Services
                 ?? throw new BookingRuleException("Service not found.");
             if (!serviceItem.IsActive)
                 throw new BookingRuleException("This service is inactive and cannot be added.");
+            if (serviceItem.Category == ServiceCategory.FoodService &&
+                await _db.Bookings.AnyAsync(b => b.Id == bookingId && b.ServiceScope == ServiceScope.StylingOnly))
+                throw new BookingRuleException(BookingServiceDetails.NoFoodServiceOnStylingOnly);
 
             var svc = new Service { BookingId = bookingId, ServiceItemId = serviceItemId, Quantity = quantity };
             _db.Services.Add(svc);

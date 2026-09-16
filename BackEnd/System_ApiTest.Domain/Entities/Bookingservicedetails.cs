@@ -19,6 +19,9 @@ namespace System_ApiTest.Domain.Entities
         public const string NoFoodOnStylingOnly =
             "A styling-only booking can't include food. Switch to Full Event Catering to add a menu.";
 
+        public const string NoFoodServiceOnStylingOnly =
+            "A styling-only booking has no food to serve, so it can't include food service. Switch to Full Event Catering to add it.";
+
         /// <summary>
         /// Copies these onto a booking. Every field is assigned, including to null, so an
         /// edit that switches a booking to StylingOnly clears a stale serving style rather

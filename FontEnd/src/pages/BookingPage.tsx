@@ -36,12 +36,22 @@ import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules }
 import {
   SERVICE_SCOPES,
   SERVING_STYLES,
+  SERVICE_CATEGORIES,
+  categoryFitsScope,
   scopeIncludesFood,
   scopeLabel,
   servingStyleLabel,
+  type ServiceCategory,
   type ServiceScope,
   type ServingStyle,
 } from '../lib/serviceScope';
+
+/* Services show one tab per category. 'OtherServices' holds the ones nobody has
+   sorted yet, which are offered on every kind of event. */
+type ServiceTab = ServiceCategory | 'OtherServices';
+type AlacarteTab = 'dishes' | 'trays' | 'rentals' | ServiceTab;
+const isServiceTab = (tab: AlacarteTab): tab is ServiceTab =>
+  tab !== 'dishes' && tab !== 'trays' && tab !== 'rentals';
 import { SiteFooter } from '../components/site/SiteFooter';
 
 /* ── constants ────────────────────────────────────────────────────────── */
@@ -208,7 +218,7 @@ export function BookingPage() {
   const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>({});
   const [rentalQty, setRentalQty] = useState<Record<string, number>>({});
   const [serviceQty, setServiceQty] = useState<Record<string, number>>({});
-  const [alacarteTab, setAlacarteTab] = useState<'dishes' | 'trays' | 'rentals' | 'services'>(
+  const [alacarteTab, setAlacarteTab] = useState<AlacarteTab>(
     /* A rentals booking has no Dishes tab to click, and the tab CONTENT is not
        gated on the flow — so defaulting to 'dishes' there rendered the whole dish
        catalog under a bar whose only button was "Rentals". */
@@ -440,12 +450,29 @@ export function BookingPage() {
   /* A Styling Only plan can't carry food (the server refuses it), so food arriving on
      one (left over from "← Change Service", or a preset package) makes it Full Event
      Catering, out loud, rather than failing at the quote. */
+  /* A waiter or a buffet table on the plan counts as food here too: the server refuses
+     food service on a styling-only event just as it refuses dishes. */
+  const hasFoodServiceSelections = Object.keys(serviceQty).some(
+    (id) => serviceItems.find((s) => s.id === id)?.category === 'FoodService',
+  );
   useEffect(() => {
     if (serviceFlow !== 'event' || serviceScope !== 'StylingOnly') return;
-    if (!hasFoodSelections && !selectedPackageId) return;
+    if (!hasFoodSelections && !hasFoodServiceSelections && !selectedPackageId) return;
     setServiceScope('FullEvent');
     setScopeSwitched(true);
-  }, [serviceFlow, serviceScope, hasFoodSelections, selectedPackageId]);
+  }, [serviceFlow, serviceScope, hasFoodSelections, hasFoodServiceSelections, selectedPackageId]);
+
+  /* The service tabs this plan can use: a category with at least one active service
+     that fits the scope, in the order the admin form lists them, then the unsorted. */
+  const serviceTabs = useMemo(() => {
+    if (serviceFlow !== 'event') return [] as { key: ServiceTab; label: string }[];
+    const active = serviceItems.filter((s) => s.isActive);
+    const tabs: { key: ServiceTab; label: string }[] = SERVICE_CATEGORIES
+      .filter((c) => categoryFitsScope(c.value, serviceScope) && active.some((s) => s.category === c.value))
+      .map((c) => ({ key: c.value, label: c.label }));
+    if (active.some((s) => !s.category)) tabs.push({ key: 'OtherServices', label: 'Other services' });
+    return tabs;
+  }, [serviceFlow, serviceScope, serviceItems]);
 
 
   /* Keep the open tab reachable. The tab CONTENT below is not gated on the flow,
@@ -453,8 +480,12 @@ export function BookingPage() {
      under a bar that no longer contains its button. */
   useEffect(() => {
     if (!showFoodTabs && (alacarteTab === 'dishes' || alacarteTab === 'trays')) setAlacarteTab('rentals');
-    else if (serviceFlow !== 'event' && alacarteTab === 'services') setAlacarteTab('rentals');
-  }, [showFoodTabs, serviceFlow, alacarteTab]);
+    else if (serviceFlow !== 'event' && isServiceTab(alacarteTab)) setAlacarteTab('rentals');
+    // A category tab this scope can't take, or one with nothing in it. Only once the
+    // catalog has loaded, or every service tab would look empty on the way in.
+    else if (isServiceTab(alacarteTab) && serviceItems.length > 0 && !serviceTabs.some((t) => t.key === alacarteTab))
+      setAlacarteTab(serviceTabs[0]?.key ?? 'rentals');
+  }, [showFoodTabs, serviceFlow, alacarteTab, serviceItems.length, serviceTabs]);
 
   const dishCategories = useMemo(() =>
     [...new Set(menuItems.map(m => m.itemCategory))].filter(Boolean),
@@ -675,7 +706,7 @@ export function BookingPage() {
     setScopeMode(false);
     setStylingOpen(false);
     // Open step 3 on the tab this scope is about.
-    setAlacarteTab(scope === 'StylingOnly' ? 'services' : 'dishes');
+    setAlacarteTab(scope === 'StylingOnly' ? 'Decor' : 'dishes');
     if (!scopeIncludesFood(scope)) { setServingStyle(null); setDietaryRequirements(''); }
     setStep(1);
   };
@@ -1578,9 +1609,9 @@ export function BookingPage() {
                         {(serviceFlow === 'event' || serviceFlow === 'rentals') && (
                           <button className={`bk-tab${alacarteTab === 'rentals' ? ' active' : ''}`} onClick={() => setAlacarteTab('rentals')}>Rentals</button>
                         )}
-                        {serviceFlow === 'event' && (
-                          <button className={`bk-tab${alacarteTab === 'services' ? ' active' : ''}`} onClick={() => setAlacarteTab('services')}>Services</button>
-                        )}
+                        {serviceTabs.map((t) => (
+                          <button key={t.key} className={`bk-tab${alacarteTab === t.key ? ' active' : ''}`} onClick={() => setAlacarteTab(t.key)}>{t.label}</button>
+                        ))}
                       </div>
 
                       {/* Dishes tab */}
@@ -1678,10 +1709,12 @@ export function BookingPage() {
                         </div>
                       )}
 
-                      {/* Services tab */}
-                      {alacarteTab === 'services' && (
+                      {/* Service tabs, one per category */}
+                      {isServiceTab(alacarteTab) && (
                         <div className="bk-catalog-grid">
-                          {serviceItems.filter(s => s.isActive).map(item => (
+                          {serviceItems
+                            .filter(s => s.isActive && (alacarteTab === 'OtherServices' ? !s.category : s.category === alacarteTab))
+                            .map(item => (
                             <div key={item.id} className="bk-catalog-card" style={{ cursor: 'default' }}>
                               <div className="bk-catalog-name">{item.serviceName}</div>
                               <div className="bk-catalog-price">{fmtPHP(item.unitCost)}</div>

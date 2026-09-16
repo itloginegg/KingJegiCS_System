@@ -1,5 +1,6 @@
 using System_ApiTest.Application.Common.Interfaces;
 using System.ComponentModel.DataAnnotations;
+using System_ApiTest.Domain.Entities;
 
 namespace System_ApiTest.Application.DTOs
 {
@@ -14,6 +15,10 @@ namespace System_ApiTest.Application.DTOs
 
         [Range(0, double.MaxValue, ErrorMessage = "Unit cost cannot be negative.")]
         public decimal UnitCost { get; set; }
+
+        /// <summary>Optional. Null offers the service on every kind of event.</summary>
+        [EnumDataType(typeof(ServiceCategory))]
+        public ServiceCategory? Category { get; set; }
     }
 
     public class ServiceItemUpdateDto : ServiceItemCreateDto
@@ -25,7 +30,9 @@ namespace System_ApiTest.Application.DTOs
         Guid Id,
         string ServiceName,
         decimal UnitCost,
-        bool IsActive);
+        bool IsActive,
+        /// <summary>"FoodService", "Decor", "SoundAndEntertainment", or null when unsorted.</summary>
+        string? Category = null);
 
     // ===== Service (booking line) =====
     // A Service is always a line on a Booking, created via "add to booking" by

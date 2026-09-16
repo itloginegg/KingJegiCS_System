@@ -21,6 +21,7 @@ import {
 } from '../../../api/serviceAdminApi';
 import { readSession } from '../../../lib/tokenStorage';
 import { fmt } from '../../../lib/format';
+import { SERVICE_CATEGORIES, serviceCategoryLabel, type ServiceCategory } from '../../../lib/serviceScope';
 import { FieldLabel } from '../shared/StatusBadge';
 import { AdmErrorCard, AdminTabHeader } from '../shared/AdminChrome';
 import { matchesQuery } from '../shared/catalogSearch';
@@ -39,6 +40,7 @@ export function ServiceItemsTab() {
   const [serviceFormItem, setServiceFormItem] = useState<AdminServiceItemCreate | AdminServiceItemUpdate>({
     serviceName: '',
     unitCost: 0,
+    category: null,
     isActive: true,
   });
   const [serviceEditId, setServiceEditId] = useState<string | null>(null);
@@ -85,11 +87,12 @@ export function ServiceItemsTab() {
       setServiceFormItem({
         serviceName: item.serviceName,
         unitCost: item.unitCost,
+        category: item.category,
         isActive: item.isActive,
       });
       setServiceEditId(item.id);
     } else {
-      setServiceFormItem({ serviceName: '', unitCost: 0, isActive: true });
+      setServiceFormItem({ serviceName: '', unitCost: 0, category: null, isActive: true });
       setServiceEditId(null);
     }
     setServiceFormOpen(true);
@@ -99,7 +102,7 @@ export function ServiceItemsTab() {
     setServiceFormOpen(false);
     setServiceEditId(null);
     setServiceFormError(null);
-    setServiceFormItem({ serviceName: '', unitCost: 0, isActive: true });
+    setServiceFormItem({ serviceName: '', unitCost: 0, category: null, isActive: true });
   };
 
   const saveServiceItem = async () => {
@@ -130,13 +133,14 @@ export function ServiceItemsTab() {
         const payload: AdminServiceItemUpdate = {
           serviceName,
           unitCost,
+          category: serviceFormItem.category,
           isActive: Boolean((serviceFormItem as AdminServiceItemUpdate).isActive),
         };
         const updated = await updateServiceItem(session.token, serviceEditId, payload);
         setServiceItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
         setServiceFeedback(`Updated service "${updated.serviceName}".`);
       } else {
-        const payload: AdminServiceItemCreate = { serviceName, unitCost };
+        const payload: AdminServiceItemCreate = { serviceName, unitCost, category: serviceFormItem.category };
         const created = await createServiceItem(session.token, payload);
         setServiceItems((prev) => [created, ...prev]);
         setServiceFeedback(`Created service "${created.serviceName}".`);
@@ -168,6 +172,8 @@ export function ServiceItemsTab() {
       const updated = await updateServiceItem(session.token, item.id, {
         serviceName: item.serviceName,
         unitCost: item.unitCost,
+        // Sent back unchanged: leaving it out would clear it on every toggle.
+        category: item.category,
         isActive: !item.isActive,
       });
       setServiceItems((prev) => prev.map((current) => (current.id === updated.id ? updated : current)));
@@ -262,17 +268,23 @@ export function ServiceItemsTab() {
             </p>
           ) : (
               <div style={{ overflowX: 'auto' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 100px 90px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 170px 140px 100px 90px', gap: '10px', padding: '11px 26px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
                   <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Service Name</span>
+                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Category</span>
                   <span style={{ textAlign: 'right', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Unit Cost</span>
                   <span style={{ textAlign: 'center', fontFamily: 'var(--font-body)', fontSize: '9px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Active</span>
                   <span></span>
                 </div>
                 <div>
                   {visibleServiceItems.map((item) => (
-                    <div key={item.id} className="adm-datarow" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 140px 100px 90px', gap: '10px', padding: '16px 26px', alignItems: 'center', borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
+                    <div key={item.id} className="adm-datarow" style={{ display: 'grid', gridTemplateColumns: 'minmax(280px,2fr) 170px 140px 100px 90px', gap: '10px', padding: '16px 26px', alignItems: 'center', borderBottom: '1px solid var(--border)', opacity: item.isActive ? 1 : 0.6 }}>
                       <div>
                         <h4 style={{ margin: '0', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 500, lineHeight: 1.15, color: 'var(--text-primary)' }}>{item.serviceName}</h4>
+                      </div>
+                      {/* Unsorted services are offered on every kind of event, so say so
+                          rather than leave the cell looking blank by mistake. */}
+                      <div style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: item.category ? 'var(--text-secondary)' : 'var(--text-dim)' }}>
+                        {serviceCategoryLabel(item.category) ?? 'Uncategorized'}
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <span style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 600, lineHeight: 1, color: 'var(--text-primary)' }}>{fmt(item.unitCost)}</span>
@@ -345,6 +357,21 @@ export function ServiceItemsTab() {
                   value={serviceFormItem.unitCost}
                   onChange={(e) => setServiceFormItem((prev) => ({ ...prev, unitCost: Number(e.target.value) || 0 }))}
                 />
+              </div>
+              <div className="form-row">
+                <label htmlFor="service-item-category">Category</label>
+                <select
+                  id="service-item-category"
+                  className="adm-input"
+                  value={serviceFormItem.category ?? ''}
+                  onChange={(e) => setServiceFormItem((prev) => ({ ...prev, category: (e.target.value || null) as ServiceCategory | null }))}
+                >
+                  <option value="">Uncategorized (offered on every event)</option>
+                  {SERVICE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 'normal' }}>
+                  Food service is hidden from Event Styling Only bookings, which have no food.
+                </span>
               </div>
               {serviceFormMode === 'edit' && (
                 <div className="form-row" style={{ alignItems: 'center' }}>

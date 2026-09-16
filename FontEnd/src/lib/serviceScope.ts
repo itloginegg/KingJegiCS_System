@@ -44,6 +44,26 @@ export const SERVING_STYLES: { value: ServingStyle; label: string; description: 
 
 export const scopeIncludesFood = (scope: ServiceScope | null | undefined) => scope !== 'StylingOnly';
 
+/** Matches the backend ServiceCategory enum. Null = not sorted yet, offered everywhere. */
+export type ServiceCategory = 'FoodService' | 'Decor' | 'SoundAndEntertainment';
+
+export const SERVICE_CATEGORIES: { value: ServiceCategory; label: string }[] = [
+  { value: 'Decor', label: 'Decor' },
+  { value: 'FoodService', label: 'Food service' },
+  { value: 'SoundAndEntertainment', label: 'Sound & entertainment' },
+];
+
+export const serviceCategoryLabel = (category: string | null | undefined) =>
+  SERVICE_CATEGORIES.find((c) => c.value === category)?.label ?? null;
+
+/**
+ * Whether a service of this category can go on this scope. Food service needs food, so
+ * a styling-only event takes none (the server refuses it too). Every other category,
+ * and an unsorted service, fits every scope.
+ */
+export const categoryFitsScope = (category: string | null | undefined, scope: ServiceScope | null | undefined) =>
+  category !== 'FoodService' || scopeIncludesFood(scope);
+
 /** Null (a booking made before scope existed) reads as Full Event. */
 export const scopeLabel = (scope: string | null | undefined) =>
   SERVICE_SCOPES.find((s) => s.value === scope)?.label ?? 'Full Event Catering';

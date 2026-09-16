@@ -217,6 +217,7 @@ namespace System_ApiTest.Infrastructure.Persistence
             {
                 e.Property(s => s.UnitCost).HasPrecision(18, 2);
                 e.Property(s => s.IsActive).HasDefaultValue(true);
+                e.Property(s => s.Category).HasConversion<string>().HasMaxLength(30);
                 e.ToTable(t => t.HasCheckConstraint("CK_ServiceItem_UnitCostNonNeg", "[UnitCost] >= 0"));
             });
             b.Entity<Service>(e =>
