@@ -1154,6 +1154,11 @@ function ChatStyles() {
       @media (max-width: ${AVATAR_UI.minViewportWidth - 1}px) {
         .cw-standing { display: none; }
         .cw-dock--with-avatar .cw-panel { right: 1.5rem; }
+        /* A full-width bottom bar (the rentals cart strip) publishes its height as
+           --kj-bottom-bar-h; the launcher and its panel sit above it instead of on it.
+           button.cw-bubble, because message bubbles reuse the .cw-bubble name. */
+        button.cw-bubble { bottom: calc(1.5rem + var(--kj-bottom-bar-h, 0px)); }
+        .cw-panel { bottom: calc(5.5rem + var(--kj-bottom-bar-h, 0px)); }
       }
 
       /* Same clamp as .cw-avatar so the monogram occupies exactly the box the 3D

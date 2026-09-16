@@ -326,7 +326,12 @@ export function AmbientAudio({ active = true }: { active?: boolean }) {
                overlapped BOTH. From 640px up the cart bar becomes a pill on the
                right and the plan bar's centred box clears the left corner (22px of
                gap at 768px), so the corner is free and it drops back down. */
-            @media (max-width: 640px) { .amb-toggle { bottom: 5.5rem; } }
+            /* Below 768px the rentals cart bar is a full-width strip and publishes its
+               height as --kj-bottom-bar-h, so the toggle sits just above it however
+               many lines it wraps to. Below 640px the old fixed lift stays as a floor,
+               for MenuPage's plan bar, which doesn't publish a height. */
+            @media (max-width: 767px) { .amb-toggle { bottom: calc(1.5rem + var(--kj-bottom-bar-h, 0px)); } }
+            @media (max-width: 640px) { .amb-toggle { bottom: max(5.5rem, calc(1.5rem + var(--kj-bottom-bar-h, 0px))); } }
 
             /* Slow breathing ring while sound is actually coming out — the one cue
                that separates "playing" from "muted" once the text label is gone. */
