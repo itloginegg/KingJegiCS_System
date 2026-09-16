@@ -40,6 +40,7 @@ interface Column {
 
 const BASE_COLUMNS: Column[] = [
   { key: 'bookingType', label: 'Booking Type', sort: 'bookingType' },
+  { key: 'serviceScope', label: 'Service', sort: 'serviceScope' },
   { key: 'eventType', label: 'Event Type', sort: 'eventType' },
   { key: 'bookingName', label: 'Booking Name', sort: 'bookingName' },
   { key: 'contactNumber', label: 'Phone Number', sort: 'contactNumber' },
@@ -61,6 +62,13 @@ const columnsFor = (group: BookingGroupKey): Column[] =>
     : [...BASE_COLUMNS, ACTION_COLUMN];
 
 /**
+ * The Service cell. Only a full-service booking has a scope; one made before scope
+ * existed (or by a path that doesn't ask) reads as Full Event, like everywhere else.
+ */
+const serviceCell = (b: BookingResponse): string | null =>
+  b.bookingType === 'FullService' ? scopeLabel(b.serviceScope) : null;
+
+/**
  * Sort comparator. Nulls always sink, in both directions — a missing end date is
  * absent rather than early, and floating them to the top on `desc` would bury every
  * row that actually has one.
@@ -79,6 +87,12 @@ function compare(a: BookingResponse, b: BookingResponse, key: SortKey): number {
     case 'guestCount': {
       const n = nullsLast(a.guestCount, b.guestCount);
       return n ?? (a.guestCount! - b.guestCount!);
+    }
+    case 'serviceScope': {
+      /* By what the cell shows, so a booking with no recorded scope sorts with Full
+         Event rather than apart from it. Deliveries and rentals have no service and sink. */
+      const n = nullsLast(serviceCell(a), serviceCell(b));
+      return n ?? serviceCell(a)!.localeCompare(serviceCell(b)!);
     }
     case 'depositStatus': {
       const rank = (s: string) => {
@@ -402,15 +416,11 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
 
                           <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {BOOKING_TYPE_LABELS[b.bookingType as BookingTypeName] ?? b.bookingType}
-                            {/* Only the scopes that change the day's work get a badge: a
-                                styling-only job needs no kitchen, a catering-only job no
-                                styling crew. Full Event (and the null of every booking
-                                made before scope existed) is the unremarkable case. */}
-                            {(b.serviceScope === 'StylingOnly' || b.serviceScope === 'CateringOnly') && (
-                              <div className="mt-1 inline-flex rounded-full bg-[var(--primary-muted)] px-2 py-0.5 text-[0.625rem] font-medium tracking-wide text-[var(--primary)]">
-                                {scopeLabel(b.serviceScope)}
-                              </div>
-                            )}
+                          </td>
+                          {/* Deliveries and rentals have no service scope, so the cell is
+                              empty for them, the same way Guest Count is for a delivery. */}
+                          <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
+                            {serviceCell(b) ?? ''}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {eventTypeLabel(b.eventType) ?? '—'}

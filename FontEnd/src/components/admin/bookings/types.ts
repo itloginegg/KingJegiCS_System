@@ -37,6 +37,7 @@ export const COLLAPSED_BY_DEFAULT: readonly BookingGroupKey[] = ['Completed', 'C
  */
 export type SortKey =
   | 'bookingType'
+  | 'serviceScope'
   | 'eventType'
   | 'bookingName'
   | 'contactNumber'
