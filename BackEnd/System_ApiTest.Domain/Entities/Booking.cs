@@ -46,6 +46,35 @@ namespace System_ApiTest.Domain.Entities
         RentalService
     }
 
+    /// <summary>
+    /// Which half of a full-service event the customer asked for: food and styling,
+    /// styling only, or catering only. A fact about the booking's LINES, not its type —
+    /// all three are still BookingType.FullService, with the same lead time, calendar
+    /// slot and deposit, so nothing that branches on BookingType has to learn about it.
+    ///
+    /// Null on every booking made before it existed, and on the paths that don't ask
+    /// (admin walk-ins, Plan by Budget, the assistant); the UI reads null as FullEvent.
+    /// Stored as a string (see AppDbContext).
+    /// </summary>
+    public enum ServiceScope
+    {
+        FullEvent,
+        StylingOnly,
+        CateringOnly
+    }
+
+    /// <summary>
+    /// How the food is served on site. Drop-off is deliberately absent: food with no
+    /// on-site service is BookingType.FoodDelivery, which has its own lead time and
+    /// deposit. Stored as a string (see AppDbContext).
+    /// </summary>
+    public enum ServingStyle
+    {
+        Buffet,
+        Plated,
+        FamilyStyle
+    }
+
     /// <summary>Lifecycle status of a booking. New bookings start as Draft.</summary>
     public enum BookingStatus
     {
@@ -218,6 +247,20 @@ namespace System_ApiTest.Domain.Entities
         /// <summary>Relative URL of the theme reference image, or null if none was uploaded.</summary>
         [MaxLength(500)]
         public string? ThemeImageUrl { get; set; }
+
+        // ---- Service scope ----
+        // Full-service bookings only; written through BookingServiceDetails.ApplyTo,
+        // which clears all three on any other booking type.
+
+        /// <summary>Food and styling, styling only, or catering only. Null reads as FullEvent.</summary>
+        public ServiceScope? ServiceScope { get; set; }
+
+        /// <summary>Buffet, plated or family style. Always null on a StylingOnly booking.</summary>
+        public ServingStyle? ServingStyle { get; set; }
+
+        /// <summary>What this party needs, free text (e.g. "two coeliacs, one halal"). Null on StylingOnly.</summary>
+        [MaxLength(500)]
+        public string? DietaryRequirements { get; set; }
 
         // ---- Status fields ----
 

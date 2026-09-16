@@ -16,6 +16,7 @@
  */
 
 import { notifyUnauthorized } from '../lib/authEvents';
+import type { ServiceScope, ServingStyle } from '../lib/serviceScope';
 
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5258'
@@ -79,6 +80,20 @@ export interface BookingCreatePayload {
   eventName?: string | null;
   motif?: string | null;
   theme?: string | null;
+  /**
+   * Service scope, serving style and dietary requirements. Optional, and when sent on
+   * an UPDATE it replaces all three — leave it out to keep what the booking has
+   * (BookingUpdateDto.Service). Serving style is required once a scope that includes
+   * food is sent, and must be absent on a styling-only booking.
+   */
+  service?: BookingServiceDetailsPayload | null;
+}
+
+/** Matches BookingServiceDetailsDto. */
+export interface BookingServiceDetailsPayload {
+  serviceScope?: ServiceScope | null;
+  servingStyle?: ServingStyle | null;
+  dietaryRequirements?: string | null;
 }
 
 /** Matches BookingUpdateDto on the backend. */
@@ -101,6 +116,8 @@ export interface BookingUpdatePayload {
   eventName?: string | null;
   motif?: string | null;
   theme?: string | null;
+  /** Omitted leaves scope, serving style and dietary needs unchanged; see the create payload. */
+  service?: BookingServiceDetailsPayload | null;
 }
 
 /** Matches BookingResponseDto. */
@@ -144,6 +161,17 @@ export interface BookingResponse {
   motifImageUrl: string | null;
   theme: string | null;
   themeImageUrl: string | null;
+
+  /**
+   * Which half of the event was booked. Null on bookings made before scope existed,
+   * and on the paths that don't ask (walk-ins, Plan by Budget, the assistant) — read
+   * null as Full Event (lib/serviceScope's scopeLabel does).
+   */
+  serviceScope: string | null;
+  /** 'Buffet' | 'Plated' | 'FamilyStyle'. Always null on a styling-only booking. */
+  servingStyle: string | null;
+  /** What this party needs, free text. Operationally critical — show it, don't bury it. */
+  dietaryRequirements: string | null;
 
   /**
    * Resource-plan summary, for the admin list's "Edit Resources" affordance.

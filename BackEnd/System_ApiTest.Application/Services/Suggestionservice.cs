@@ -543,6 +543,20 @@ namespace System_ApiTest.Application.Services
                     headerProblem ??= message;
                     if (!problems.Contains(message)) problems.Add(message);
                 }
+
+                // Service scope: a styling-only plan with food on it, or a catering plan
+                // with no serving style. Food is judged from what was sent, not what
+                // priced, so a dish that's no longer offered still counts.
+                var hasFood = req.Proposal.PackageId is not null ||
+                              req.Proposal.Lines.Any(l => l.Type is "MenuItem" or "MenuTray");
+                foreach (var rule in ServiceScopeRules.Validate(
+                             req.BookingType, details.ServiceScope, details.ServingStyle,
+                             details.DietaryRequirements, hasFood))
+                {
+                    var message = rule.ErrorMessage ?? "This plan doesn't fit the service chosen.";
+                    headerProblem ??= message;
+                    if (!problems.Contains(message)) problems.Add(message);
+                }
             }
 
             var subtotal = Bookingservice.ComputeTotal(draft);
@@ -723,7 +737,8 @@ namespace System_ApiTest.Application.Services
                 req.EventDate, req.StartTime, req.EndDate, req.EndTime,
                 req.EventType, req.VenueAddress, req.GuestCount,
                 req.Proposal.PackageId, req.ContactNumber,
-                details: req.EventDetails?.ToDomain());
+                details: req.EventDetails?.ToDomain(),
+                serviceDetails: req.EventDetails?.ToServiceDetails());
 
             try
             {
@@ -811,7 +826,8 @@ namespace System_ApiTest.Application.Services
                 req.EventDate, req.StartTime, req.EndDate, req.EndTime,
                 req.EventType, req.VenueAddress, req.GuestCount,
                 req.Proposal.PackageId, req.ContactNumber,
-                details: req.EventDetails?.ToDomain());
+                details: req.EventDetails?.ToDomain(),
+                serviceDetails: req.EventDetails?.ToServiceDetails());
 
             var dropped = new List<DroppedLineDto>();
             var added = 0;

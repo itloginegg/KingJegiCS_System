@@ -33,6 +33,15 @@ import {
   type QuoteResponse,
 } from '../api/suggestionsApi';
 import { getCalendarDays, getBookingRules, type CalendarDay, type BookingRules } from '../api/calendarApi';
+import {
+  SERVICE_SCOPES,
+  SERVING_STYLES,
+  scopeIncludesFood,
+  scopeLabel,
+  servingStyleLabel,
+  type ServiceScope,
+  type ServingStyle,
+} from '../lib/serviceScope';
 import { SiteFooter } from '../components/site/SiteFooter';
 
 /* ── constants ────────────────────────────────────────────────────────── */
@@ -109,11 +118,26 @@ export function BookingPage() {
      where signing in happens — places it. */
   const { addPlan } = useCart();
 
-  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService);
-  const [step, setStep] = useState(presetService ? 1 : 0);
+  /* An 'event' preset still stops at step 0: the visitor chose catering, but not yet
+     which kind, and a scope-less event would reach step 3 with nothing to key off. */
+  const [serviceFlow, setServiceFlow] = useState<ServiceFlow | null>(presetService === 'rentals' ? 'rentals' : null);
+  const [step, setStep] = useState(presetService === 'rentals' ? 1 : 0);
   // Step-0 "Plan by Budget" card. Opens straight away when the landing page's
   // reserve modal sent us here with that path chosen.
   const [planMode, setPlanMode] = useState(preset.presetFlow === 'plan');
+
+  /* Which kind of event service. Set only on the 'event' flow, by the scope picker the
+     Full Event card opens in place of the card grid. Kept apart from ServiceFlow on
+     purpose: every `serviceFlow === 'event'` check below stays true for all three. */
+  const [scopeMode, setScopeMode] = useState(presetService === 'event');
+  const [serviceScope, setServiceScope] = useState<ServiceScope | null>(null);
+  const [servingStyle, setServingStyle] = useState<ServingStyle | null>(null);
+  const [dietaryRequirements, setDietaryRequirements] = useState('');
+  /* Styling is collapsed by default on Catering Alone, but never removed. */
+  const [stylingOpen, setStylingOpen] = useState(false);
+  /* Set when a Styling Only plan picked up food and became Full Event, so step 3 can
+     say so and ask for the serving style it now needs. */
+  const [scopeSwitched, setScopeSwitched] = useState(false);
 
   // Step 1 — Contact
   const [fullName, setFullName] = useState('');
@@ -379,6 +403,12 @@ export function BookingPage() {
      with details still missing so that admin walk-ins (often just a date and a type
      over the phone) aren't blocked. A customer going through the wizard, though,
      knows these answers, so asking up front saves a follow-up call. */
+  const eventScope = serviceFlow === 'event' ? serviceScope : null;
+  const hasFood = serviceFlow === 'event' && scopeIncludesFood(serviceScope);
+  /* Serving style is the one scope answer the server insists on, and only once a scope
+     that includes food is sent. Dietary requirements stay optional. */
+  const servingComplete = !hasFood || servingStyle !== null;
+
   const detailsComplete = serviceFlow === 'rentals' ? true :
     detailGroup === 'couple' ? Boolean(groomName.trim() && brideName.trim())
       : detailGroup === 'celebrant'
@@ -388,13 +418,14 @@ export function BookingPage() {
 
   const eventComplete =
     (serviceFlow === 'rentals' ? true : (eventType && guests >= 1)) &&
-    eventDate && startTime && endDate && endTime && !dateTooSoon && detailsComplete;
+    eventDate && startTime && endDate && endTime && !dateTooSoon && detailsComplete && servingComplete;
 
   const stepLabels = useMemo(() => {
+    if (serviceFlow === 'event' && serviceScope === 'StylingOnly') return ['Contact', 'Event Details', 'Styling & Add‑ons', 'Review'];
     if (serviceFlow === 'event') return ['Contact', 'Event Details', 'Package & Add‑ons', 'Review'];
     if (serviceFlow === 'rentals') return ['Contact', 'Event Details', 'Rentals & Add‑ons', 'Review'];
     return [];
-  }, [serviceFlow]);
+  }, [serviceFlow, serviceScope]);
 
   /* Dishes and trays are an event-flow surface, but a rentals booking can still
      be carrying food: the customer may have used "← Change Service" after the
@@ -404,7 +435,18 @@ export function BookingPage() {
      once saved. So the tabs follow the selections, not the flow. */
   const hasFoodSelections =
     Object.keys(menuItemQty).length > 0 || Object.keys(menuTrayQty).length > 0;
-  const showFoodTabs = serviceFlow === 'event' || hasFoodSelections;
+  const showFoodTabs = hasFood || hasFoodSelections;
+
+  /* A Styling Only plan can't carry food (the server refuses it), so food arriving on
+     one (left over from "← Change Service", or a preset package) makes it Full Event
+     Catering, out loud, rather than failing at the quote. */
+  useEffect(() => {
+    if (serviceFlow !== 'event' || serviceScope !== 'StylingOnly') return;
+    if (!hasFoodSelections && !selectedPackageId) return;
+    setServiceScope('FullEvent');
+    setScopeSwitched(true);
+  }, [serviceFlow, serviceScope, hasFoodSelections, selectedPackageId]);
+
 
   /* Keep the open tab reachable. The tab CONTENT below is not gated on the flow,
      so a tab that stops being rendered would otherwise keep showing its catalog
@@ -511,7 +553,7 @@ export function BookingPage() {
       Object.entries(qty)
         .filter(([, q]) => q > 0)
         .map(([refId, quantity]) => ({ type, refId, quantity }));
-    const packageId = serviceFlow === 'event' ? selectedPackageId : null;
+    const packageId = hasFood ? selectedPackageId : null;
 
     return {
       bookingType,
@@ -534,6 +576,11 @@ export function BookingPage() {
         eventName: detailGroup === 'named' ? clean(eventName) : null,
         motif: clean(motif),
         theme: clean(theme),
+        /* Event flow only. Styling Only carries no serving style or dietary needs: the
+           server refuses them there rather than dropping them. */
+        serviceScope: eventScope,
+        servingStyle: hasFood ? servingStyle : null,
+        dietaryRequirements: hasFood ? clean(dietaryRequirements) : null,
       },
       proposal: {
         packageId,
@@ -549,7 +596,7 @@ export function BookingPage() {
       },
     };
   }, [
-    bookingType, serviceFlow, selectedPackageId, eventDate, startTime, endDate, endTime, eventType, venue,
+    bookingType, hasFood, eventScope, servingStyle, dietaryRequirements, selectedPackageId, eventDate, startTime, endDate, endTime, eventType, venue,
     guests, phone, detailGroup, groomName, brideName, celebrantName, celebrantSex, celebrantAge, eventName,
     motif, theme, menuItemQty, menuTrayQty, rentalQty, serviceQty, slotSelections,
   ]);
@@ -600,7 +647,7 @@ export function BookingPage() {
     const key = addPlan({
       title: serviceFlow === 'rentals'
         ? `Equipment rental${typeLabel ? ` · ${typeLabel}` : ''}`
-        : `${typeLabel || 'Event'} · ${guests} guests`,
+        : `${typeLabel || 'Event'} · ${guests} guests${eventScope && eventScope !== 'FullEvent' ? ` · ${scopeLabel(eventScope)}` : ''}`,
       recipe: planRecipe,
       snap: snapFromQuote(quote),
       imageNames: motifImage || themeImage ? { motif: motifImage?.name, theme: themeImage?.name } : undefined,
@@ -612,7 +659,33 @@ export function BookingPage() {
   };
 
   /* ── navigation helpers ── */
-  const pickService = (flow: ServiceFlow) => { setServiceFlow(flow); setStep(1); };
+  const pickService = (flow: ServiceFlow) => {
+    /* Catering is a question first: which kind. The picker swaps in for the card grid,
+       the same way Plan by Budget does, and pickScope finishes the choice. */
+    if (flow === 'event') { setScopeMode(true); return; }
+    setServiceFlow(flow);
+    setServiceScope(null);
+    setStep(1);
+  };
+
+  const pickScope = (scope: ServiceScope) => {
+    setServiceFlow('event');
+    setServiceScope(scope);
+    setScopeSwitched(false);
+    setScopeMode(false);
+    setStylingOpen(false);
+    // Open step 3 on the tab this scope is about.
+    setAlacarteTab(scope === 'StylingOnly' ? 'services' : 'dishes');
+    if (!scopeIncludesFood(scope)) { setServingStyle(null); setDietaryRequirements(''); }
+    setStep(1);
+  };
+
+  /* Styling Only becomes Full Event from step 3's "Add food" button. */
+  const addFoodToStylingOnly = () => {
+    setServiceScope('FullEvent');
+    setScopeSwitched(true);
+    setAlacarteTab('dishes');
+  };
 
   /* Hero card dispatch. 'plan' is deliberately NOT a pickService call — it swaps
      the card grid for <PlanByBudget /> and leaves `step` at 0. */
@@ -632,7 +705,28 @@ export function BookingPage() {
     || Object.keys(serviceQty).length > 0;
 
   const canProceedStep3 =
-    (selectedPackageId ? allSlotsComplete : true) && (hasAlacarteItems || !!selectedPackageId);
+    (selectedPackageId ? allSlotsComplete : true) && (hasAlacarteItems || !!selectedPackageId) && servingComplete;
+
+  /* Serving style as a radio group. Rendered on step 2, and again in step 3's notice
+     when a Styling Only plan has just become Full Event and still needs one. */
+  const renderServingStyle = (name: string) => (
+    <div className="bk-serve-grid" role="radiogroup" aria-label="Serving style">
+      {SERVING_STYLES.map((s) => (
+        <label key={s.value} className={`bk-serve-card${servingStyle === s.value ? ' active' : ''}`}>
+          <input
+            type="radio"
+            name={name}
+            value={s.value}
+            checked={servingStyle === s.value}
+            onChange={() => setServingStyle(s.value)}
+            className="sr-only"
+          />
+          <span className="bk-serve-title">{s.label}</span>
+          <span className="bk-serve-desc">{s.description}</span>
+        </label>
+      ))}
+    </div>
+  );
 
   /* ── render ──────────────────────────────────────────────────────────── */
   return (
@@ -816,6 +910,22 @@ export function BookingPage() {
         .bk-flow-card:hover .bk-flow-icon{transform:scale(1.12)}
         .bk-flow-title{font-family:var(--font-display);font-size:1.2rem;font-weight:600;color:var(--text-primary);margin-bottom:.4rem}
         .bk-flow-desc{font-family:var(--font-body);font-size:.78rem;color:var(--text-muted);line-height:1.6}
+        .bk-flow-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+        .bk-flow-note{font-family:var(--font-body);font-size:.72rem;color:var(--text-dim);line-height:1.5;margin-top:.6rem}
+
+        /* ── serving style ── */
+        .bk-serve-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}
+        @media(max-width:600px){.bk-serve-grid{grid-template-columns:1fr}}
+        .bk-serve-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);padding:.9rem 1rem;display:flex;flex-direction:column;gap:.25rem;cursor:pointer;transition:border-color .25s,box-shadow .25s}
+        .bk-serve-card:hover{border-color:var(--border-accent)}
+        .bk-serve-card:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+        .bk-serve-card.active{border-color:var(--primary);background:var(--primary-muted);box-shadow:0 0 0 3px var(--primary-muted)}
+        .bk-serve-title{font-family:var(--font-body);font-size:.875rem;font-weight:600;color:var(--text-primary)}
+        .bk-serve-desc{font-family:var(--font-body);font-size:.72rem;line-height:1.45;color:var(--text-muted)}
+        .bk-hint{font-family:var(--font-body);font-size:.72rem;line-height:1.5;color:var(--text-muted);margin:.4rem 0 0}
+        .bk-link{background:none;border:none;padding:0;font:inherit;color:var(--primary);text-decoration:underline;cursor:pointer}
+        .bk-disclosure{border:1px solid var(--border);border-radius:var(--r-xl);padding:.85rem 1rem;margin-bottom:1.2rem;background:var(--surface)}
+        .bk-disclosure-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;padding:0;cursor:pointer;font-family:var(--font-body);font-size:.8125rem;font-weight:600;color:var(--text-primary)}
 
         /* ── error/feedback ── */
         /* Tinted panel with a 28% edge, per artboard 3d — it was a hairline danger
@@ -897,7 +1007,31 @@ export function BookingPage() {
                 leaves the card descriptions too narrow to read. 1200 matches the
                 container the menu and rentals pages use. */}
             <div className="fade-up" style={{ maxWidth: 1200, margin: '0 auto', padding: '0 2.5rem', position: 'relative' }}>
-              {!planMode ? (
+              {scopeMode ? (
+                <div>
+                  <h2 className="bk-heading" style={{ fontSize: '1.9rem' }}>What should we take care of?</h2>
+                  <p className="bk-sub" style={{ marginBottom: 0 }}>
+                    Pick the part of your event you need us for. You can still add the other half later.
+                  </p>
+                  <div className="bk-flow-grid">
+                    {SERVICE_SCOPES.map((s) => (
+                      <button key={s.value} type="button" className="bk-flow-card" onClick={() => pickScope(s.value)}>
+                        <span className="bk-flow-icon" aria-hidden="true">{s.icon}</span>
+                        <span className="bk-flow-title">{s.label}</span>
+                        <span className="bk-flow-desc">{s.includes}</span>
+                        <span className="bk-flow-note">{s.excludes}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="bk-hint" style={{ textAlign: 'center' }}>
+                    Just need food delivered, with no staff on site?{' '}
+                    <button type="button" className="bk-link" onClick={() => navigate('/menus')}>Order from our menu</button>.
+                  </p>
+                  <div className="bk-nav" style={{ justifyContent: 'center' }}>
+                    <button type="button" className="bk-btn outline" onClick={() => setScopeMode(false)}>← Back to services</button>
+                  </div>
+                </div>
+              ) : !planMode ? (
                 <HeroLayout
                   cards={HERO_CARDS}
                   onSelect={pickHeroCard}
@@ -968,6 +1102,12 @@ export function BookingPage() {
                     <div className="bk-summary-kicker">Estimated total</div>
                     <div className="bk-summary-total">{fmtPHP(grandTotal)}</div>
                     <dl className="bk-summary-list">
+                      {eventScope && (
+                        <div>
+                          <dt>Service</dt>
+                          <dd>{scopeLabel(eventScope)}</dd>
+                        </div>
+                      )}
                       <div>
                         <dt>Event type</dt>
                         <dd>{EVENT_TYPES.find(t => t.value === eventType)?.label ?? (eventType || 'not set')}</dd>
@@ -981,6 +1121,8 @@ export function BookingPage() {
                         <dd>
                           {serviceFlow === 'rentals'
                             ? (rentalTotal > 0 ? 'selected' : 'none yet')
+                            : !hasFood
+                            ? 'none (styling only)'
                             : (selectedPkg?.packageName ?? 'not chosen')}
                         </dd>
                       </div>
@@ -1027,7 +1169,7 @@ export function BookingPage() {
               </div>
 
               <div className="bk-nav">
-                <button className="bk-btn outline" onClick={() => { setStep(0); setServiceFlow(null); }}>← Change Service</button>
+                <button className="bk-btn outline" onClick={() => { setStep(0); setServiceFlow(null); setServiceScope(null); }}>← Change Service</button>
                 <button className="bk-btn primary" disabled={!contactComplete} onClick={() => setStep(2)}>
                   Next → Event Details
                 </button>
@@ -1114,8 +1256,25 @@ export function BookingPage() {
               )}
 
               {/* Motif & theme. Optional throughout — a customer who hasn't decided yet
-                  can leave these blank and the events team follows up. */}
-              {detailGroup !== 'none' && (
+                  can leave these blank and the events team follows up. Open for Full
+                  Event and Styling Only; collapsed, never removed, for Catering Alone. */}
+              {detailGroup !== 'none' && eventScope === 'CateringOnly' && (
+                <div className="bk-disclosure">
+                  <button
+                    type="button"
+                    className="bk-disclosure-toggle"
+                    aria-expanded={stylingOpen || Boolean(motif || theme)}
+                    onClick={() => setStylingOpen((o) => !o)}
+                  >
+                    <span>Add styling (motif &amp; theme)</span>
+                    <span aria-hidden="true">{stylingOpen || motif || theme ? '−' : '+'}</span>
+                  </button>
+                  {!(stylingOpen || motif || theme) && (
+                    <p className="bk-hint">Catering Alone leaves styling out. Open this if you'd still like a motif or backdrop.</p>
+                  )}
+                </div>
+              )}
+              {detailGroup !== 'none' && (eventScope !== 'CateringOnly' || stylingOpen || Boolean(motif || theme)) && (
                 <div className="bk-grid" style={{ marginBottom: '1.2rem' }}>
                   <div className="bk-field">
                     <label htmlFor="booking-motif-optional" className="bk-label">Motif (optional)</label>
@@ -1160,6 +1319,35 @@ export function BookingPage() {
                 <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', color: 'var(--danger)', marginBottom: '1rem' }}>
                   {imageError}
                 </p>
+              )}
+
+              {/* Serving style and dietary needs: catering scopes only. Serving style is
+                  required (the server refuses a catering plan without one); drop-off is
+                  not a style, it's the delivery order on the menu page. */}
+              {hasFood && (
+                <div style={{ marginBottom: '1.2rem', display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+                  <div className="bk-field full">
+                    <span className="bk-label" id="booking-serving-style">Serving Style</span>
+                    {renderServingStyle('serving-style-step2')}
+                    <p className="bk-hint">
+                      Need the food dropped off with no staff?{' '}
+                      <button type="button" className="bk-link" onClick={() => navigate('/menus')}>Order a delivery from the menu</button> instead.
+                    </p>
+                  </div>
+                  <div className="bk-field full">
+                    <label htmlFor="booking-dietary" className="bk-label">Dietary Requirements (optional)</label>
+                    <textarea
+                      id="booking-dietary"
+                      className="bk-input"
+                      rows={3}
+                      maxLength={500}
+                      value={dietaryRequirements}
+                      onChange={(e) => setDietaryRequirements(e.target.value)}
+                      placeholder="e.g. two guests with coeliac disease, one halal, no pork for the head table"
+                      style={{ resize: 'vertical' }}
+                    />
+                  </div>
+                </div>
               )}
 
               <div className="bk-grid">
@@ -1220,7 +1408,7 @@ export function BookingPage() {
                   disabled={!eventComplete}
                   onClick={() => setStep(3)}
                 >
-                  {serviceFlow === 'event' ? 'Next → Package & Add‑ons' : 'Next → Rentals & Add‑ons'}
+                  {serviceFlow === 'event' ? `Next → ${stepLabels[2]}` : 'Next → Rentals & Add‑ons'}
                 </button>
               </div>
             </div>
@@ -1230,10 +1418,12 @@ export function BookingPage() {
           {step === 3 && (
             <div className="bk-card">
               <h2 className="bk-heading">
-                {serviceFlow === 'event' ? 'Package & Add‑ons' : 'Rentals & Add‑ons'}
+                {stepLabels[2]}
               </h2>
               <p className="bk-sub">
-                {serviceFlow === 'event'
+                {serviceFlow === 'event' && !hasFood
+                  ? 'Choose the decor, furniture and services for your event.'
+                  : serviceFlow === 'event'
                   ? 'Choose a curated package or build your own à la carte selection.'
                   : serviceFlow === 'rentals'
                   ? 'Select the items you need for your event.'
@@ -1261,8 +1451,29 @@ export function BookingPage() {
               ) : (
                 <>
 
+                  {/* Styling Only has no food; adding some makes it Full Event, and says so. */}
+                  {serviceFlow === 'event' && !hasFood && (
+                    <p className="bk-cart-note">
+                      <AlertCircle size={16} strokeWidth={1.75} aria-hidden="true" />
+                      <span>
+                        Event Styling Only doesn't include food.{' '}
+                        <button type="button" className="bk-link" onClick={addFoodToStylingOnly}>Add food to this event</button>
+                        {' '}to switch to Full Event Catering.
+                      </span>
+                    </p>
+                  )}
+                  {scopeSwitched && hasFood && (
+                    <div className="bk-cart-note" role="status" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                      <span>
+                        This is now <strong>Full Event Catering</strong>: food and styling.
+                        {!servingStyle && ' Choose how the food will be served:'}
+                      </span>
+                      {!servingStyle && renderServingStyle('serving-style-step3')}
+                    </div>
+                  )}
+
                   {/* ── PACKAGE PATH ── */}
-                  {serviceFlow === 'event' && (
+                  {hasFood && (
                     <div style={{ marginBottom: '2rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', margin: 0 }}>Select a Package</h3>
@@ -1543,6 +1754,18 @@ export function BookingPage() {
               {/* Event Summary */}
               <div className="bk-review-section">
                 <div className="bk-review-title">Event Details</div>
+                {eventScope && (
+                  <div className="bk-review-row"><span className="bk-review-label">Service</span><span className="bk-review-value">{scopeLabel(eventScope)}</span></div>
+                )}
+                {hasFood && servingStyle && (
+                  <div className="bk-review-row"><span className="bk-review-label">Serving Style</span><span className="bk-review-value">{servingStyleLabel(servingStyle)}</span></div>
+                )}
+                {hasFood && dietaryRequirements.trim() && (
+                  <div className="bk-review-row"><span className="bk-review-label">Dietary Requirements</span><span className="bk-review-value" style={{ whiteSpace: 'pre-wrap' }}>{dietaryRequirements.trim()}</span></div>
+                )}
+                {(motif.trim() || theme.trim()) && (
+                  <div className="bk-review-row"><span className="bk-review-label">Motif / Theme</span><span className="bk-review-value">{[motif.trim(), theme.trim()].filter(Boolean).join(' · ')}</span></div>
+                )}
                 <div className="bk-review-row"><span className="bk-review-label">Event Type</span><span className="bk-review-value">{eventType}</span></div>
                 <div className="bk-review-row"><span className="bk-review-label">Guests</span><span className="bk-review-value">{guests}</span></div>
                 <div className="bk-review-row"><span className="bk-review-label">Date</span><span className="bk-review-value">{eventDate}</span></div>

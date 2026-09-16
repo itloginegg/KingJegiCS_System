@@ -11,6 +11,7 @@
  * is rendered exactly as the backend returned it — never recomputed client-side.
  */
 
+import type { ServiceScope, ServingStyle } from '../lib/serviceScope';
 import { notifyUnauthorized } from '../lib/authEvents';
 
 const API_BASE_URL = (
@@ -125,6 +126,11 @@ export interface PlanEventDetails {
   eventName?: string | null;
   motif?: string | null;
   theme?: string | null;
+  /* Optional: a plan saved to the cart before these existed has none, and the server
+     only demands a serving style once a scope is sent. */
+  serviceScope?: ServiceScope | null;
+  servingStyle?: ServingStyle | null;
+  dietaryRequirements?: string | null;
 }
 
 /** Matches MaterializeRequest — also the recipe a planned booking keeps in the cart. */

@@ -110,7 +110,10 @@ namespace System_ApiTest.Application.Services
             BookingSource source = BookingSource.Customer,
             // Null means "no event details supplied" — valid for a walk-in that is so
             // far only a date and an event type. ApplyTo drops whatever doesn't fit.
-            BookingEventDetails? details = null)
+            BookingEventDetails? details = null,
+            // Service scope, serving style and dietary needs. Null means none recorded,
+            // which older callers (admin walk-in, Plan by Budget, assistant) rely on.
+            BookingServiceDetails? serviceDetails = null)
         {
             var customer = await _db.Customers.FindAsync(customerId)
                 ?? throw new BookingRuleException("Customer not found.");
@@ -121,6 +124,10 @@ namespace System_ApiTest.Application.Services
             var header = await ValidateNewHeaderAsync(
                 bookingType, eventDate, start, endDate, end, type, guestCount, menuPackageId);
             (endDate, end, type, guestCount) = (header.EndDate, header.End, header.Type, header.GuestCount);
+
+            // The DTOs refuse this first; kept here so no caller can create one directly.
+            if (serviceDetails?.ServiceScope == ServiceScope.StylingOnly && menuPackageId is not null)
+                throw new BookingRuleException(BookingServiceDetails.NoFoodOnStylingOnly);
 
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
 
@@ -185,6 +192,7 @@ namespace System_ApiTest.Application.Services
                 // After `type` has been forced to null for a delivery above, so the details
                 // are dropped for exactly the bookings that can't carry them.
                 (details ?? BookingEventDetails.None).ApplyTo(created, type);
+                (serviceDetails ?? BookingServiceDetails.None).ApplyTo(created, bookingType);
 
                 _db.Bookings.Add(created);
                 await _db.SaveChangesAsync();
@@ -1288,7 +1296,10 @@ namespace System_ApiTest.Application.Services
             Guid bookingId, Guid? changedByAdminId,
             string bookingName, DateOnly eventDate, TimeOnly start, DateOnly? endDate, TimeOnly? end,
             EventType? type, string venueAddress, int? guestCount, Guid? menuPackageId, string? contactNumber,
-            BookingEventDetails? details = null)
+            BookingEventDetails? details = null,
+            // Null leaves scope, serving style and dietary needs as they are; a value
+            // replaces all three. See BookingUpdateDto.Service.
+            BookingServiceDetails? serviceDetails = null)
         {
             if (string.IsNullOrWhiteSpace(bookingName))
                 throw new BookingRuleException("Booking name cannot be blank.");
@@ -1412,6 +1423,18 @@ namespace System_ApiTest.Application.Services
                 // details belonging to the old one rather than orphaning them.
                 (details ?? BookingEventDetails.None).ApplyTo(b, type);
 
+                if (serviceDetails is not null)
+                {
+                    if (serviceDetails.ServiceScope == ServiceScope.StylingOnly &&
+                        (menuPackageId is not null || await HasFoodLinesAsync(bookingId)))
+                        throw new BookingRuleException(BookingServiceDetails.NoFoodOnStylingOnly);
+                    serviceDetails.ApplyTo(b, b.BookingType);
+                }
+                else if (b.ServiceScope == ServiceScope.StylingOnly && menuPackageId is not null)
+                {
+                    throw new BookingRuleException(BookingServiceDetails.NoFoodOnStylingOnly);
+                }
+
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
                 return b;
@@ -1441,6 +1464,20 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
+        /// Refuses food on a styling-only booking, so its scope keeps describing what is
+        /// actually on it. Package assignment checks the same rule.
+        /// </summary>
+        public async Task EnsureNotStylingOnlyAsync(Guid bookingId)
+        {
+            if (await _db.Bookings.AnyAsync(b => b.Id == bookingId && b.ServiceScope == ServiceScope.StylingOnly))
+                throw new BookingRuleException(BookingServiceDetails.NoFoodOnStylingOnly);
+        }
+
+        private async Task<bool> HasFoodLinesAsync(Guid bookingId) =>
+            await _db.BookingMenuItems.AnyAsync(x => x.BookingId == bookingId) ||
+            await _db.BookingMenuTrays.AnyAsync(x => x.BookingId == bookingId);
+
+        /// <summary>
         /// Adds a freely-chosen menu item, capturing its current standalone per-tray
         /// price. Package-only items (no price) can't be added individually.
         /// Quantity: optional on a FULL-SERVICE booking — when omitted it defaults to
@@ -1449,6 +1486,7 @@ namespace System_ApiTest.Application.Services
         public async Task<BookingMenuItem> AddMenuItemAsync(Guid bookingId, Guid itemId, int? quantity)
         {
             await EnsureEditableAsync(bookingId);
+            await EnsureNotStylingOnlyAsync(bookingId);
 
             var item = await _db.MenuItems.FindAsync(itemId)
                 ?? throw new BookingRuleException("Menu item not found.");
@@ -1483,6 +1521,7 @@ namespace System_ApiTest.Application.Services
         public async Task<BookingMenuTray> AddMenuTrayAsync(Guid bookingId, Guid trayId, int? quantity)
         {
             await EnsureEditableAsync(bookingId);
+            await EnsureNotStylingOnlyAsync(bookingId);
 
             var tray = await _db.MenuTrays.FindAsync(trayId)
                 ?? throw new BookingRuleException("Menu tray not found.");

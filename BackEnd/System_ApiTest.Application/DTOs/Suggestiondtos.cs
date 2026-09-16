@@ -107,8 +107,17 @@ namespace System_ApiTest.Application.DTOs
         [MaxLength(200)] public string? Motif { get; set; }
         [MaxLength(200)] public string? Theme { get; set; }
 
+        // Service scope. All optional: a plan saved to a cart before these existed has
+        // none of them, and still checks out (ServiceScopeRules only demands a serving
+        // style once a scope is sent).
+        [EnumDataType(typeof(ServiceScope))] public ServiceScope? ServiceScope { get; set; }
+        [EnumDataType(typeof(ServingStyle))] public ServingStyle? ServingStyle { get; set; }
+        [MaxLength(ServiceScopeRules.MaxDietaryLength)] public string? DietaryRequirements { get; set; }
+
         public BookingEventDetails ToDomain() =>
             new(GroomName, BrideName, CelebrantName, CelebrantSex, CelebrantAge, EventName, Motif, Theme);
+
+        public BookingServiceDetails ToServiceDetails() => new(ServiceScope, ServingStyle, DietaryRequirements);
     }
 
     // ---------------------------------------------------------------------------

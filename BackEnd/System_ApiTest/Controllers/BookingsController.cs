@@ -158,7 +158,8 @@ namespace System_ApiTest.Controllers
                     new BookingEventDetails(
                         dto.GroomName, dto.BrideName,
                         dto.CelebrantName, dto.CelebrantSex, dto.CelebrantAge,
-                        dto.EventName, dto.Motif, dto.Theme));
+                        dto.EventName, dto.Motif, dto.Theme),
+                    dto.Service?.ToDomain());
 
                 // No-ops for a customer booking for themselves; records the walk-in case.
                 await _audit.LogAsync(User, AuditAction.CREATE, "BOOKING", booking.Id.ToString(),
@@ -191,7 +192,8 @@ namespace System_ApiTest.Controllers
                     new BookingEventDetails(
                         dto.GroomName, dto.BrideName,
                         dto.CelebrantName, dto.CelebrantSex, dto.CelebrantAge,
-                        dto.EventName, dto.Motif, dto.Theme));
+                        dto.EventName, dto.Motif, dto.Theme),
+                    dto.Service?.ToDomain());
 
                 await _audit.LogAsync(User, AuditAction.UPDATE, "BOOKING", id.ToString(),
                     before is null ? null : ToDto(before), ToDto(booking));
@@ -515,6 +517,7 @@ namespace System_ApiTest.Controllers
 
                 if (dto.MenuPackageId is not null)
                 {
+                    await _bookings.EnsureNotStylingOnlyAsync(id);
                     var pkg = await _db.MenuPackages.FindAsync(dto.MenuPackageId.Value);
                     if (pkg is null)
                         throw new BookingRuleException($"Menu package with ID '{dto.MenuPackageId.Value}' was not found.");
@@ -685,7 +688,8 @@ namespace System_ApiTest.Controllers
             // Unlike AdminNote, these are the customer's own answers — they go back to
             // whoever can already see the booking, admin or not.
             b.GroomName, b.BrideName, b.CelebrantName, b.CelebrantSex, b.CelebrantAge, b.EventName,
-            b.Motif, b.MotifImageUrl, b.Theme, b.ThemeImageUrl);
+            b.Motif, b.MotifImageUrl, b.Theme, b.ThemeImageUrl,
+            b.ServiceScope?.ToString(), b.ServingStyle?.ToString(), b.DietaryRequirements);
 
         /// <summary>
         /// ToDto plus the navigation-backed fields: the resource-plan summary, and the

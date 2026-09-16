@@ -76,6 +76,81 @@ namespace System_ApiTest.Application.DTOs
     }
 
     /// <summary>
+    /// Which service-scope combinations are allowed. Shared by the create and update DTOs
+    /// and by the plan quote (which checkout runs first), so a cart and checkout refuse a
+    /// plan in the same words.
+    ///
+    /// Serving style is required only when a scope that includes food was actually SENT.
+    /// A null scope is the older shape — admin walk-ins, Plan by Budget, the assistant,
+    /// plans already sitting in a cart — and must keep working with no serving style.
+    /// </summary>
+    public static class ServiceScopeRules
+    {
+        public const int MaxDietaryLength = 500;
+
+        public const string NoFoodOnStylingOnly = BookingServiceDetails.NoFoodOnStylingOnly;
+
+        /// <param name="bookingType">Null when the caller can't know it (an edit, where the booking's own type applies).</param>
+        /// <param name="hasFood">Whether the payload carries a package, dish or tray.</param>
+        public static IEnumerable<ValidationResult> Validate(
+            BookingType? bookingType, ServiceScope? scope, ServingStyle? servingStyle,
+            string? dietaryRequirements, bool hasFood)
+        {
+            var anySent = scope is not null || servingStyle is not null || !string.IsNullOrWhiteSpace(dietaryRequirements);
+
+            if (bookingType is not null && bookingType != BookingType.FullService)
+            {
+                if (anySent)
+                    yield return new ValidationResult(
+                        "Service scope, serving style and dietary requirements apply to a full-service event only.",
+                        new[] { nameof(ServiceScope) });
+                yield break;
+            }
+
+            if (scope == ServiceScope.StylingOnly)
+            {
+                if (servingStyle is not null)
+                    yield return new ValidationResult(
+                        "A styling-only booking has no food, so it has no serving style.", new[] { nameof(ServingStyle) });
+                if (!string.IsNullOrWhiteSpace(dietaryRequirements))
+                    yield return new ValidationResult(
+                        "A styling-only booking has no food, so it has no dietary requirements.", new[] { "DietaryRequirements" });
+                if (hasFood)
+                    yield return new ValidationResult(NoFoodOnStylingOnly, new[] { nameof(ServiceScope) });
+            }
+            else if (scope is not null && servingStyle is null)
+            {
+                yield return new ValidationResult(
+                    "Choose a serving style: buffet, plated or family style.", new[] { nameof(ServingStyle) });
+            }
+
+            if (dietaryRequirements is { Length: > MaxDietaryLength })
+                yield return new ValidationResult(
+                    $"Dietary requirements are too long ({MaxDietaryLength} characters maximum).", new[] { "DietaryRequirements" });
+        }
+    }
+
+    /// <summary>
+    /// Service scope, serving style and dietary requirements as the admin create and edit
+    /// endpoints take them. Nested rather than flat so that on an EDIT, leaving the whole
+    /// object out means "leave these as they are" — a flat null would be indistinguishable
+    /// from "clear it", and every older client would silently wipe them.
+    /// </summary>
+    public class BookingServiceDetailsDto
+    {
+        [EnumDataType(typeof(ServiceScope))]
+        public ServiceScope? ServiceScope { get; set; }
+
+        [EnumDataType(typeof(ServingStyle))]
+        public ServingStyle? ServingStyle { get; set; }
+
+        [MaxLength(ServiceScopeRules.MaxDietaryLength)]
+        public string? DietaryRequirements { get; set; }
+
+        public BookingServiceDetails ToDomain() => new(ServiceScope, ServingStyle, DietaryRequirements);
+    }
+
+    /// <summary>
     /// Input for creating a Booking. BookingName is NOT here — it is auto-generated
     /// server-side as "{Customer full name} - {Event type}". Status, deposit status
     /// and total are server-managed, never client input.
@@ -131,6 +206,9 @@ namespace System_ApiTest.Application.DTOs
         [MaxLength(200)] public string? Motif { get; set; }
         [MaxLength(200)] public string? Theme { get; set; }
 
+        /// <summary>Service scope, serving style, dietary needs. Optional; see ServiceScopeRules.</summary>
+        public BookingServiceDetailsDto? Service { get; set; }
+
         public IEnumerable<ValidationResult> Validate(ValidationContext _)
         {
             // Applicability holds for every booking type, including FoodDelivery — which
@@ -139,6 +217,12 @@ namespace System_ApiTest.Application.DTOs
                          EventType, GroomName, BrideName,
                          CelebrantName, CelebrantSex, CelebrantAge, EventName))
                 yield return r;
+
+            if (Service is not null)
+                foreach (var r in ServiceScopeRules.Validate(
+                             BookingType, Service.ServiceScope, Service.ServingStyle,
+                             Service.DietaryRequirements, hasFood: MenuPackageId is not null))
+                    yield return r;
 
             if (BookingType == BookingType.FoodDelivery)
             {
@@ -225,6 +309,12 @@ namespace System_ApiTest.Application.DTOs
         [MaxLength(200)] public string? Motif { get; set; }
         [MaxLength(200)] public string? Theme { get; set; }
 
+        /// <summary>
+        /// Service scope, serving style, dietary needs. OMITTED means "leave unchanged";
+        /// sent means "replace all three", nulls included.
+        /// </summary>
+        public BookingServiceDetailsDto? Service { get; set; }
+
         public IEnumerable<ValidationResult> Validate(ValidationContext _)
         {
             // Applicability is checked against the event type being SET here: an edit
@@ -234,6 +324,14 @@ namespace System_ApiTest.Application.DTOs
                          EventType, GroomName, BrideName,
                          CelebrantName, CelebrantSex, CelebrantAge, EventName))
                 yield return r;
+
+            // Booking type isn't on an edit; the service applies it (and checks the food
+            // lines already on the booking against a StylingOnly scope).
+            if (Service is not null)
+                foreach (var r in ServiceScopeRules.Validate(
+                             null, Service.ServiceScope, Service.ServingStyle,
+                             Service.DietaryRequirements, hasFood: MenuPackageId is not null))
+                    yield return r;
 
             // The booking's own type decides which fields matter — the service applies
             // the per-type rules. Here we only check internal consistency of what's sent.
@@ -297,6 +395,11 @@ namespace System_ApiTest.Application.DTOs
         string? MotifImageUrl = null,
         string? Theme = null,
         string? ThemeImageUrl = null,
+        /* Service scope ("FullEvent", "StylingOnly", "CateringOnly" or null for bookings
+           made before it existed), serving style, and dietary requirements. */
+        string? ServiceScope = null,
+        string? ServingStyle = null,
+        string? DietaryRequirements = null,
         /* Whether a resource plan exists, for the admin list's "Edit Resources"
            affordance. Null means "no plan saved" OR "this response didn't load it" —
            only the read endpoints that Include the navigation property populate it, via

@@ -17,6 +17,7 @@ import {
   type InvoiceResponseDto,
 } from '../../../api/bookingApi';
 import { fmt, fmtDate, fmtTime } from '../../../lib/format';
+import { scopeLabel, servingStyleLabel } from '../../../lib/serviceScope';
 import { FieldLabel, StatusBadge } from '../shared/StatusBadge';
 import { RES_STATUS, type ResStatus } from '../shared/statusMeta';
 import { DELIVERY_ACTION_LABEL, DELIVERY_STATUS_STYLE } from '../rentals/deliveryStatus';
@@ -109,6 +110,10 @@ export function BookingDetailModal({
               {!isDelivery && <Row label="End date" value={b.endDate ? fmtDate(b.endDate) : '—'} />}
               {!isDelivery && <Row label="End time" value={fmtTime(b.endTime)} />}
               <Row label="Guests" value={b.guestCount ?? '—'} />
+              {!isDelivery && b.bookingType !== 'RentalService' && (
+                <Row label="Service" value={scopeLabel(b.serviceScope)} />
+              )}
+              {b.servingStyle && <Row label="Serving style" value={servingStyleLabel(b.servingStyle) ?? b.servingStyle} />}
               <Row label="Deposit" value={b.depositStatus} />
             </div>
             <div style={{ marginTop: '0.9rem', display: 'grid', gap: '0.9rem' }}>
@@ -116,6 +121,22 @@ export function BookingDetailModal({
               <Row label="Contact number" value={b.contactNumber || '—'} />
             </div>
           </div>
+
+          {/* Dietary requirements sit above the line items, in their own panel: the
+              kitchen has to see them, and a row in a grid of eight is where they get
+              missed. */}
+          {b.dietaryRequirements && (
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 400, color: 'var(--text-primary)', background: 'var(--accent-muted)', borderRadius: 'var(--r-lg)', padding: '0.7rem 0.9rem', borderLeft: '3px solid var(--accent)', margin: 0, whiteSpace: 'pre-wrap' }}>
+              <strong style={{ fontWeight: 600 }}>Dietary requirements:</strong> {b.dietaryRequirements}
+            </p>
+          )}
+
+          {(b.motif || b.theme) && (
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', margin: 0 }}>
+              <strong style={{ color: 'var(--text-primary)', fontWeight: 500 }}>Styling:</strong>{' '}
+              {[b.motif && `motif ${b.motif}`, b.theme && `theme ${b.theme}`].filter(Boolean).join(' · ')}
+            </p>
+          )}
 
           {b.cancellationRequested && (
             <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-muted)', background: 'var(--bg-subtle)', borderRadius: 'var(--r-lg)', padding: '0.6rem 0.85rem', borderLeft: '2px solid var(--accent)', margin: 0 }}>

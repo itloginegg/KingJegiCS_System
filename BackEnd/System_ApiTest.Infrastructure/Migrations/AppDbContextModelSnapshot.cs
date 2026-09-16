@@ -209,6 +209,10 @@ namespace System_ApiTest.Infrastructure.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<string>("DietaryRequirements")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<DateOnly?>("EndDate")
                         .HasColumnType("date");
 
@@ -243,6 +247,14 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Property<string>("MotifImageUrl")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ServiceScope")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ServingStyle")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<string>("Source")
                         .IsRequired()

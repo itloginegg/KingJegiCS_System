@@ -8,6 +8,7 @@ import {
   type ResStatus,
 } from '../shared/statusMeta';
 import { fmtDate, fmtTime } from '../../../lib/format';
+import { scopeLabel } from '../../../lib/serviceScope';
 import { RowActionMenu } from '../shared/RowActionMenu';
 import {
   BOOKING_GROUPS,
@@ -401,6 +402,15 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
 
                           <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {BOOKING_TYPE_LABELS[b.bookingType as BookingTypeName] ?? b.bookingType}
+                            {/* Only the scopes that change the day's work get a badge: a
+                                styling-only job needs no kitchen, a catering-only job no
+                                styling crew. Full Event (and the null of every booking
+                                made before scope existed) is the unremarkable case. */}
+                            {(b.serviceScope === 'StylingOnly' || b.serviceScope === 'CateringOnly') && (
+                              <div className="mt-1 inline-flex rounded-full bg-[var(--primary-muted)] px-2 py-0.5 text-[0.625rem] font-medium tracking-wide text-[var(--primary)]">
+                                {scopeLabel(b.serviceScope)}
+                              </div>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3 text-[0.75rem] text-[var(--text-secondary)]">
                             {eventTypeLabel(b.eventType) ?? '—'}

@@ -18,6 +18,13 @@ import {
   type BookingCreatePayload,
   type BookingTypeName,
 } from '../../../api/bookingApi';
+import {
+  SERVICE_SCOPES,
+  SERVING_STYLES,
+  scopeIncludesFood,
+  type ServiceScope,
+  type ServingStyle,
+} from '../../../lib/serviceScope';
 import { getBookingRules, type BookingRules } from '../../../api/calendarApi';
 import { isCompletePhPhone, toE164 } from '../../../lib/phone';
 import {
@@ -54,6 +61,11 @@ export function NewBookingModal({ onClose, onCreated, notify }: {
 
   const [bookingType, setBookingType] = useState<BookingTypeName>('FullService');
   const [eventType, setEventType] = useState('Wedding');
+  /* Service scope. '' means "not recorded", which the API accepts and reads as Full
+     Event — a phone reservation often hasn't got that far, and demanding a serving
+     style for it would block the walk-in. */
+  const [serviceScope, setServiceScope] = useState<ServiceScope | ''>('');
+  const [servingStyle, setServingStyle] = useState<ServingStyle | ''>('');
   const [guests, setGuests] = useState('100');
   const [eventDate, setEventDate] = useState('');
   const [startTime, setStartTime] = useState('');
@@ -127,6 +139,11 @@ export function NewBookingModal({ onClose, onCreated, notify }: {
         setError('The event must end after it starts.'); return;
       }
       if (!eventType || Number(guests) < 1) { setError('Pick an event type and guest count.'); return; }
+      /* The same rule the API applies: once a scope that includes food is sent, it
+         needs a serving style. Checked here so the modal says so before the round trip. */
+      if (serviceScope && scopeIncludesFood(serviceScope) && !servingStyle) {
+        setError('Pick a serving style for this service, or leave the service blank.'); return;
+      }
     }
 
     setCreating(true); setError('');
@@ -153,6 +170,11 @@ export function NewBookingModal({ onClose, onCreated, notify }: {
         venueAddress: composeVenueAddress(venue),
         guestCount: isFull ? Number(guests) : null,
         contactNumber: contact.trim() || null,
+        /* Sent only when staff actually chose a scope; otherwise the booking carries
+           none, exactly as it did before scope existed. */
+        service: isFull && serviceScope
+          ? { serviceScope, servingStyle: scopeIncludesFood(serviceScope) ? (servingStyle || null) : null }
+          : null,
       };
       await createBooking(session.token, payload);
       notify('success', 'Draft booking created. Open it to add items and submit.');
@@ -219,6 +241,30 @@ export function NewBookingModal({ onClose, onCreated, notify }: {
             <div className="form-row"><label>Event type</label>
               <select className="adm-input" value={eventType} onChange={(e) => setEventType(e.target.value)}>
                 <option>Wedding</option><option>Corporate</option><option>Birthday</option><option>Debut</option><option>Others</option>
+              </select>
+            </div>
+          )}
+          {isFull && (
+            <div className="form-row"><label>Service (optional)</label>
+              <select
+                className="adm-input"
+                value={serviceScope}
+                onChange={(e) => {
+                  const next = e.target.value as ServiceScope | '';
+                  setServiceScope(next);
+                  if (!next || !scopeIncludesFood(next)) setServingStyle('');
+                }}
+              >
+                <option value="">Not recorded</option>
+                {SERVICE_SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          )}
+          {isFull && serviceScope && scopeIncludesFood(serviceScope) && (
+            <div className="form-row"><label>Serving style</label>
+              <select className="adm-input" value={servingStyle} onChange={(e) => setServingStyle(e.target.value as ServingStyle | '')}>
+                <option value="">Select…</option>
+                {SERVING_STYLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
           )}

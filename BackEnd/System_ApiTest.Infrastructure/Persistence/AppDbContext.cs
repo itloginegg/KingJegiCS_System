@@ -157,6 +157,8 @@ namespace System_ApiTest.Infrastructure.Persistence
                 e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.DepositStatus).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.Source).HasConversion<string>().HasMaxLength(20);
+                e.Property(x => x.ServiceScope).HasConversion<string>().HasMaxLength(20);
+                e.Property(x => x.ServingStyle).HasConversion<string>().HasMaxLength(20);
                 e.Property(x => x.TotalAmount).HasPrecision(18, 2);
 
                 e.ToTable(t =>
