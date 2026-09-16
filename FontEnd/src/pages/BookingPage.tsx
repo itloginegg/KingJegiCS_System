@@ -493,6 +493,20 @@ export function BookingPage() {
 
   const selectedPkg = packages.find(p => p.id === selectedPackageId);
 
+  // Step 3 only offers packages whose pax range covers the guest count.
+  const fitsGuests = (pkg: { minPax: number; maxPax: number }) => guests >= pkg.minPax && guests <= pkg.maxPax;
+  const eligiblePackages = packages.filter(fitsGuests);
+
+  /* A package preselected (e.g. from PackagePage) or picked before the guest count
+     changed is dropped once Step 3 shows it can't host that many guests. Waits for
+     Step 3 so the preset survives until Step 2's guest count is entered. */
+  useEffect(() => {
+    if (step !== 3 || !selectedPkg || fitsGuests(selectedPkg)) return;
+    setSelectedPackageId(null);
+    setPackageTemplate(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selectedPkg, guests]);
+
   const menuItemTotal = Object.entries(menuItemQty).reduce((s, [id, q]) => {
     const item = menuItems.find(m => m.id === id);
     return s + (item?.pricePerTray ?? 0) * q;
@@ -1455,7 +1469,7 @@ export function BookingPage() {
                 {serviceFlow === 'event' && !hasFood
                   ? 'Choose the decor, furniture and services for your event.'
                   : serviceFlow === 'event'
-                  ? 'Choose a curated package or build your own à la carte selection.'
+                  ? 'Choose a curated package and any add-ons for your event.'
                   : serviceFlow === 'rentals'
                   ? 'Select the items you need for your event.'
                   : 'Pick dishes and trays for your delivery.'}
@@ -1513,23 +1527,24 @@ export function BookingPage() {
                         )}
                       </div>
 
+                      {eligiblePackages.length === 0 && (
+                        <p className="bk-hint">
+                          No package fits {guests} guests. Go back to adjust the guest count, or build your event from the add-ons below.
+                        </p>
+                      )}
                       <div className="bk-catalog-grid">
-                        {packages.map(pkg => {
-                          const isEligible = guests >= pkg.minPax;
+                        {eligiblePackages.map(pkg => {
                           return (
                             <div
                               key={pkg.id}
                               className={`bk-catalog-card${selectedPackageId === pkg.id ? ' selected' : ''}`}
-                              style={!isEligible ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
-                              onClick={() => { 
-                                if (!isEligible) return;
-                                setSelectedPackageId(pkg.id); 
-                                void loadTemplate(pkg.id); 
+                              onClick={() => {
+                                setSelectedPackageId(pkg.id);
+                                void loadTemplate(pkg.id);
                               }}
                             >
                               <div className="bk-catalog-name">{pkg.packageName}</div>
                               <div className="bk-catalog-meta">{pkg.minPax}–{pkg.maxPax} pax</div>
-                              {!isEligible && <div style={{ fontSize: '.65rem', color: 'var(--danger)', marginTop: '.25rem', fontWeight: 500 }}>Requires at least {pkg.minPax} guests</div>}
                               <div className="bk-catalog-meta" style={{ marginTop: '.2rem' }}>{pkg.description}</div>
                               <div className="bk-catalog-price">{fmtPHP(pkg.basePrice)}</div>
                               {pkg.inclusions.length > 0 && (
@@ -1590,11 +1605,11 @@ export function BookingPage() {
                     </div>
                   )}
 
-                  {/* ── À LA CARTE PATH ── */}
+                  {/* ── ADD-ONS PATH ── */}
                   <div>
                     {serviceFlow === 'event' && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', margin: 0 }}>À la Carte</h3>
+                        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', color: 'var(--text-primary)', margin: 0 }}>{hasFood ? 'Add-Ons' : 'À la Carte'}</h3>
                       </div>
                     )}
 
