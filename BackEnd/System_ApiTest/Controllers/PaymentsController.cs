@@ -2,6 +2,7 @@ using System_ApiTest.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System_ApiTest.Infrastructure.Persistence;
@@ -305,6 +306,57 @@ namespace System_ApiTest.Controllers
                 return Ok(ToDto(fresh!));
             }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        /// <summary>
+        /// Asks PayMongo directly whether a Pending online payment went through, and
+        /// settles it if so — the recovery path for a webhook that never arrived. The
+        /// payment's own customer may call it (the return page does, while it waits), as
+        /// may an owner/assistant for any payment. Throttled per payment so a polling page
+        /// can't turn into a stream of gateway calls; a throttled call just reports the
+        /// current state.
+        /// </summary>
+        [HttpPost("{id:guid}/verify")]
+        public async Task<IActionResult> Verify(
+            Guid id,
+            [FromQuery] DateOnly? today,
+            [FromServices] IMemoryCache cache)
+        {
+            var payment = await _db.Payments.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
+            if (payment is null) return NotFound();
+            if (!await CanAccessInvoice(payment.InvoiceId)) return Forbid();
+
+            string outcome;
+            var throttleKey = $"payment-verify:{id}";
+            if (payment.Status != PaymentStatus.Pending || !payment.IsGatewayPayment)
+            {
+                outcome = $"already {payment.Status}";
+            }
+            else if (cache.TryGetValue(throttleKey, out _))
+            {
+                outcome = "throttled: checked moments ago";
+            }
+            else
+            {
+                cache.Set(throttleKey, true, TimeSpan.FromSeconds(4));
+                try
+                {
+                    outcome = await _payments.ReconcileGatewayPaymentAsync(
+                        id, today ?? DateOnly.FromDateTime(DateTime.Now));
+                }
+                catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+                catch (PayMongoException ex)
+                {
+                    return StatusCode(502, new
+                    {
+                        message = "Couldn't reach the payment gateway to check this payment. Please try again shortly.",
+                        detail = ex.Message
+                    });
+                }
+            }
+
+            var fresh = await _db.Payments.AsNoTracking().FirstAsync(p => p.Id == id);
+            return Ok(new { outcome, payment = ToDto(fresh) });
         }
 
         /// <summary>Owner denies an open refund request with a reason the customer can see.</summary>

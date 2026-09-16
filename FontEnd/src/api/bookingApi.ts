@@ -688,6 +688,18 @@ export function getPaymentsByInvoice(token: string, invoiceId: string): Promise<
   return request<PaymentRecord[]>(`/api/Payments/invoice/${invoiceId}`, 'GET', token);
 }
 
+/**
+ * Asks the backend to check an online payment with PayMongo directly and settle it if
+ * it went through — the recovery path when the webhook is slow or never arrives.
+ * Throttled server-side, so calling it from a poll loop is safe.
+ */
+export function verifyPayment(
+  token: string,
+  paymentId: string,
+): Promise<{ outcome: string; payment: PaymentRecord }> {
+  return request<{ outcome: string; payment: PaymentRecord }>(`/api/Payments/${paymentId}/verify`, 'POST', token);
+}
+
 /** Customer files a refund request on their payment (omit amount = full remaining). */
 export function requestRefund(
   token: string,

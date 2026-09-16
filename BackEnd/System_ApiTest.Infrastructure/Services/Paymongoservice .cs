@@ -121,6 +121,70 @@ namespace System_ApiTest.Infrastructure.Services
         }
 
         /// <summary>
+        /// Reads a checkout session back from PayMongo (GET checkout_sessions/{id}) and
+        /// reduces it to paid / expired / still open. This is the reconciliation half of
+        /// the gateway: the webhook is the fast path, but a webhook can be lost (wrong
+        /// URL, rotated secret, downtime) and without this a captured payment would sit
+        /// Pending forever. Parsing is defensive — any missing field means "not paid".
+        /// </summary>
+        public async Task<CheckoutSessionStatus> GetCheckoutSessionStatusAsync(string sessionId)
+        {
+            EnsureConfigured();
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await _http.GetAsync($"checkout_sessions/{Uri.EscapeDataString(sessionId)}");
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new PayMongoException($"Could not reach PayMongo: {ex.Message}");
+            }
+
+            var responseText = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+                throw new PayMongoException(
+                    $"PayMongo rejected the checkout session lookup ({(int)response.StatusCode}).",
+                    (int)response.StatusCode, responseText);
+
+            using var doc = JsonDocument.Parse(responseText);
+            var attrs = doc.RootElement.GetProperty("data").GetProperty("attributes");
+
+            var sessionStatus = attrs.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String
+                ? st.GetString() ?? "unknown"
+                : "unknown";
+
+            string? paidPaymentId = null;
+            if (attrs.TryGetProperty("payments", out var pays) && pays.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var pay in pays.EnumerateArray())
+                {
+                    if (pay.TryGetProperty("attributes", out var pa) &&
+                        pa.TryGetProperty("status", out var ps) &&
+                        ps.ValueKind == JsonValueKind.String &&
+                        ps.GetString() == "paid")
+                    {
+                        paidPaymentId = pay.TryGetProperty("id", out var pid) ? pid.GetString() : null;
+                        break;
+                    }
+                }
+            }
+
+            var intentSucceeded =
+                attrs.TryGetProperty("payment_intent", out var pi) && pi.ValueKind == JsonValueKind.Object &&
+                pi.TryGetProperty("attributes", out var pia) &&
+                pia.TryGetProperty("status", out var pis) && pis.ValueKind == JsonValueKind.String &&
+                pis.GetString() == "succeeded";
+
+            var isPaid = paidPaymentId is not null || intentSucceeded;
+            return new CheckoutSessionStatus(
+                IsPaid: isPaid,
+                IsExpired: !isPaid && sessionStatus == "expired",
+                GatewayPaymentId: paidPaymentId,
+                RawStatus: sessionStatus);
+        }
+
+        /// <summary>
         /// Verifies a PayMongo webhook signature. Header shape:
         ///   Paymongo-Signature: t=&lt;timestamp&gt;,te=&lt;test-sig&gt;,li=&lt;live-sig&gt;
         /// The signed payload is "{t}.{rawBody}", HMAC-SHA256 with the webhook

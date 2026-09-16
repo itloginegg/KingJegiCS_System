@@ -198,7 +198,7 @@ Static Web Apps rebuilds automatically. ~2–4 minutes with your 3D dependencies
 
 1. Hard refresh (Ctrl+Shift+R). Your own browser is holding the previous bundle.
 2. Run the changed flow.
-3. DevTools → Network: confirm calls hit `kingjegi-api.azurewebsites.net` and the response shape
+3. DevTools → Network: confirm calls hit `kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net` and the response shape
    matches what the TS interface expects.
 4. Log stream: no new exceptions.
 5. First request after an idle period may take ~60s — the database is resuming. Not a bug.

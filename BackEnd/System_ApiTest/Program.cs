@@ -129,6 +129,10 @@ builder.Services.Configure<SupportTriageOptions>(
     builder.Configuration.GetSection(SupportTriageOptions.SectionName));
 builder.Services.AddHostedService<SupportTriageWorker>();
 
+builder.Services.Configure<GatewayReconcileOptions>(
+    builder.Configuration.GetSection(GatewayReconcileOptions.SectionName));
+builder.Services.AddHostedService<GatewayReconcileWorker>();
+
 // --- Clean Architecture layers (new features only) ---------------------------------
 // Everything above stays exactly as it was: existing Controllers and services are
 // untouched. New features live in System_ApiTest.Application / .Domain / .Infrastructure

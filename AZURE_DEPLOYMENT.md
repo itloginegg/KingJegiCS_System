@@ -20,7 +20,7 @@ Region              East Asia               (your subscription's region policy b
 SQL server          kingjegi-sql            → kingjegi-sql.database.windows.net
 Database            KingJegiDB
 App Service plan    plan-kingjegi           (B1 Basic)
-API app             kingjegi-api            → https://kingjegi-api.azurewebsites.net
+API app             kingjegi-api            → https://kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net
 Static Web App      kingjegi-web            → https://<generated>.azurestaticapps.net
 ```
 
@@ -477,7 +477,7 @@ Set it in the workflow instead. Pull the generated workflow file (`git pull`), a
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
         env:
-          VITE_API_BASE_URL: https://kingjegi-api.azurewebsites.net
+          VITE_API_BASE_URL: https://kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_... }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -489,7 +489,7 @@ Set it in the workflow instead. Pull the generated workflow file (`git pull`), a
 
 Commit and push — that triggers a rebuild with the right base URL.
 
-Verify after the build: open your site, DevTools → Network, and confirm the XHRs go to `kingjegi-api.azurewebsites.net`, not localhost.
+Verify after the build: open your site, DevTools → Network, and confirm the XHRs go to `kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net`, not localhost.
 
 ### 4.4 Close the loop
 
@@ -530,7 +530,7 @@ Everything else goes in **App settings**. Add them all, then **Apply** once — 
 | `Cors__AllowedOrigins__0` | `https://<your>.azurestaticapps.net` | **no trailing slash** |
 | `Uploads__RootPath` | `/home/site/data` | from 1.3 |
 | `JwtSettings__Key` | your 64-char random string | app crashes at startup if absent |
-| `JwtSettings__Issuer` | `https://kingjegi-api.azurewebsites.net` | changing it invalidates existing tokens |
+| `JwtSettings__Issuer` | `https://kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net` | changing it invalidates existing tokens |
 | `JwtSettings__Audience` | `https://<your>.azurestaticapps.net` | must match what the API validates |
 | `JwtSettings__ExpiryMinutes` | `120` | |
 | `Seed__OwnerEmail` | a real mailbox you control | it is the Owner's OTP second factor |
@@ -565,7 +565,7 @@ Everything else goes in **App settings**. Add them all, then **Apply** once — 
 Your webhook currently points at an ngrok tunnel. In the PayMongo dashboard, create a new webhook at:
 
 ```
-https://kingjegi-api.azurewebsites.net/api/Payments/webhook/paymongo
+https://kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net/api/Payments/webhook/paymongo
 ```
 
 PayMongo issues a **new signing secret** for the new webhook — the old `whsk_` will fail signature verification (`PaymentsController` logs exactly this: *"the secret belongs to a different/re-created webhook"*). Put the new one in `PayMongo__WebhookSecret` and delete the ngrok webhook.
@@ -586,7 +586,7 @@ Linux containers default to UTC. Your booking system does date-sensitive work (l
 
 Work down this list; each item catches a different failure from Part 1.
 
-1. **API is alive** — hit a public endpoint (whatever the landing page calls for packages) at `https://kingjegi-api.azurewebsites.net/...` and get a 200 with JSON. First hit may take ~60s while the serverless DB resumes.
+1. **API is alive** — hit a public endpoint (whatever the landing page calls for packages) at `https://kingjegi-api-b9hbg7apfnaffegz.eastasia-01.azurewebsites.net/...` and get a 200 with JSON. First hit may take ~60s while the serverless DB resumes.
 2. **Startup log is clean** — Log stream shows the `Assistant … Speech …` line with both `True`, and no `NO OWNER ACCOUNT EXISTS`.
 3. **Owner login works end to end** — log in with the seeded credentials, receive the OTP email, complete the second factor. This exercises the DB, JWT config, and SMTP in one go.
 4. **SPA deep link** — navigate to an admin route, then **hard refresh**. A 404 means `staticwebapp.config.json` didn't reach `dist/`.

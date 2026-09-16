@@ -476,6 +476,41 @@ namespace System_ApiTest.Application.Services
         }
 
         /// <summary>
+        /// Settles a Pending gateway payment by ASKING PayMongo instead of waiting for the
+        /// webhook. The webhook stays the fast path; this is what makes a lost one
+        /// recoverable — before it existed, a misregistered webhook URL left captured
+        /// money Pending indefinitely with nothing in the system able to notice.
+        ///
+        /// Deliberately routes through ApplyGatewayPaidAsync / ApplyGatewayFailedAsync, so a
+        /// payment settled here gets exactly the same guards, auto-confirm and hub broadcast
+        /// as one settled by the webhook — and both are idempotent, so a webhook and a
+        /// reconcile racing each other is harmless. An expired session with nothing paid
+        /// becomes Failed (the customer abandoned checkout). Returns a short outcome string.
+        /// Throws PayMongoException if the gateway can't be reached.
+        /// </summary>
+        public async Task<string> ReconcileGatewayPaymentAsync(Guid paymentId, DateOnly today)
+        {
+            var payment = await _db.Payments
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == paymentId)
+                ?? throw new BookingRuleException("Payment not found.");
+
+            if (payment.GatewayProvider is null || string.IsNullOrWhiteSpace(payment.GatewaySessionId))
+                return "not a gateway payment";
+            if (payment.Status != PaymentStatus.Pending)
+                return $"already {payment.Status}";
+
+            var session = await _payMongo.GetCheckoutSessionStatusAsync(payment.GatewaySessionId);
+
+            if (session.IsPaid)
+                return await ApplyGatewayPaidAsync(payment.GatewaySessionId, session.GatewayPaymentId, today);
+            if (session.IsExpired)
+                return await ApplyGatewayFailedAsync(payment.GatewaySessionId, "expired");
+
+            return $"still awaiting payment (session {session.RawStatus})";
+        }
+
+        /// <summary>
         /// Owner rejects a Pending payment (never arrived, wrong amount, duplicate).
         /// Pending -> Failed; a Failed payment never counts toward any total. This is
         /// the exit for payments that could otherwise sit Pending forever.

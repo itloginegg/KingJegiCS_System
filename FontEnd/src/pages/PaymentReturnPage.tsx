@@ -8,7 +8,7 @@ import { Check, Clock, Info, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { readSession } from '../lib/tokenStorage';
-import { API_BASE_URL, getPaymentsByInvoice } from '../api/bookingApi';
+import { API_BASE_URL, getPaymentsByInvoice, verifyPayment } from '../api/bookingApi';
 
 /**
  * Where PayMongo sends the customer back after hosted checkout — the landing pads for
@@ -23,8 +23,10 @@ import { API_BASE_URL, getPaymentsByInvoice } from '../api/bookingApi';
  *
  *   - listens for the existing PaymentHub "PaymentUpdated" broadcast, which the webhook
  *     already fires — the fast path, usually sub-second; and
- *   - polls the invoice's payments as a fallback, because a customer whose hub
- *     connection fails must not be told their payment is stuck when it isn't.
+ *   - polls as a fallback, because a customer whose hub connection fails must not be
+ *     told their payment is stuck when it isn't. Each poll asks the backend to VERIFY
+ *     with PayMongo (POST /verify), not just re-read — so a webhook that never arrives
+ *     no longer strands the payment at Pending. /verify is throttled server-side.
  *
  * Whichever wins, we then route into the dashboard with the Payments tab selected.
  */
@@ -48,13 +50,24 @@ export function PaymentReturnPage({ outcome }: { outcome: 'success' | 'cancel' }
   const checkConfirmed = useCallback(async (pending: PendingPayment): Promise<boolean> => {
     const session = readSession();
     if (!session?.token) return false;
+    const isVerified = (status: string) => status !== 'Pending' && status !== 'Failed';
+
+    if (pending.paymentId) {
+      try {
+        const { payment } = await verifyPayment(session.token, pending.paymentId);
+        return isVerified(payment.status);
+      } catch {
+        // Gateway briefly unreachable (502) — fall through to a plain read.
+      }
+    }
+
     try {
       const payments = await getPaymentsByInvoice(session.token, pending.invoiceId);
       const mine = pending.paymentId
         ? payments.find((p) => p.id === pending.paymentId)
         : // No id stashed (an older redirect): fall back to "any verified online payment".
           payments.find((p) => p.status === 'Success' || p.status === 'PartiallyRefunded');
-      return mine ? mine.status !== 'Pending' && mine.status !== 'Failed' : false;
+      return mine ? isVerified(mine.status) : false;
     } catch {
       // A failed check is inconclusive, not a failure — keep waiting.
       return false;
