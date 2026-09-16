@@ -47,9 +47,19 @@ namespace System_ApiTest.Application.DTOs
         }
     }
 
+    /// <summary>Which table an outstanding line lives in, and so which endpoint moves it.</summary>
+    public enum OutstandingLineSource
+    {
+        /// <summary>A priced line in Rentals — PUT /api/Bookings/{id}/rentals/{lineId}/delivery-status.</summary>
+        Rental,
+        /// <summary>A resource-plan line — PUT /api/Bookings/{id}/resources/lines/{lineId}/delivery-status.</summary>
+        Allocation
+    }
+
     /// <summary>
     /// One rental line still physically out, for the admin returns/check-in list.
     /// Carries the booking context an admin needs to identify it without opening the booking.
+    /// <see cref="RentalId"/> is the line's id in whichever table <see cref="Source"/> names.
     /// </summary>
     public record OutstandingRentalLineDto(
         Guid RentalId,
@@ -61,7 +71,8 @@ namespace System_ApiTest.Application.DTOs
         string ItemName,
         int Quantity,
         string DeliveryStatus,
-        string? DamageNote);
+        string? DamageNote,
+        OutstandingLineSource Source);
 }
 
 

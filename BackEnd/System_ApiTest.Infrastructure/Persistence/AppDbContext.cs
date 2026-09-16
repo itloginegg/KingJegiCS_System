@@ -449,6 +449,9 @@ namespace System_ApiTest.Infrastructure.Persistence
                  .HasForeignKey(l => l.AllocationId)
                  .OnDelete(DeleteBehavior.Cascade);
 
+                // Stored as text, matching Rental.DeliveryStatus.
+                e.Property(l => l.DeliveryStatus).HasConversion<string>().HasMaxLength(20);
+
                 // Restrict, unlike the plan: deleting a catalog item that a live event
                 // is holding stock for would silently un-reserve it. Items are
                 // deactivated (IsActive = false), not deleted, so this should never fire.

@@ -579,6 +579,33 @@ namespace System_ApiTest.Controllers
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 
+        /// <summary>
+        /// Moves a rental line on the booking's resource plan through the same delivery
+        /// lifecycle as a priced rental line. Returning it is what frees its stock.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPut("{id:guid}/resources/lines/{lineId:guid}/delivery-status")]
+        public async Task<IActionResult> UpdateAllocationDeliveryStatus(
+            Guid id, Guid lineId, [FromBody] UpdateDeliveryStatusDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            try
+            {
+                var line = await _rentals.UpdateAllocationDeliveryStatusAsync(
+                    id, lineId, dto.DeliveryStatus, dto.DamageNote);
+                return Ok(new
+                {
+                    line.Id,
+                    line.RentalItemId,
+                    itemName = line.RentalItem?.ItemName,
+                    line.Quantity,
+                    deliveryStatus = line.DeliveryStatus.ToString(),
+                    line.DamageNote
+                });
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
         /// <summary>The derived payment plan (down payment, 50% one week prior, balance on event day).</summary>
         [HttpGet("{id:guid}/payment-schedule")]
         public async Task<IActionResult> PaymentSchedule(Guid id)

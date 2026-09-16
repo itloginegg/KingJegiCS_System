@@ -52,12 +52,15 @@ namespace System_ApiTest.Controllers
                 .Select(g => new { g.Key, Qty = g.Sum(r => r.Quantity) })
                 .ToDictionaryAsync(x => x.Key, x => x.Qty);
 
-            // Resource-plan allocations hold stock too. Confirmed only, matching
-            // Rentalservice.CommittedAllocation — see there for why Completed is
-            // excluded here but not above.
+            // Resource-plan allocations hold stock too, until returned. Mirrors the
+            // windowless form of Rentalservice.CommittedAllocation.
             var allocated = await _db.BookingResourceAllocationLines
                 .Where(l => l.RentalItemId != null
-                            && l.Allocation.Booking.Status == BookingStatus.Confirmed)
+                            && l.DeliveryStatus != DeliveryStatus.Returned
+                            && (l.Allocation.Booking.Status == BookingStatus.Confirmed
+                                || (l.Allocation.Booking.Status == BookingStatus.Completed
+                                    && (l.DeliveryStatus == DeliveryStatus.Delivered
+                                        || l.DeliveryStatus == DeliveryStatus.Damaged))))
                 .GroupBy(l => l.RentalItemId!.Value)
                 .Select(g => new { g.Key, Qty = g.Sum(l => l.Quantity) })
                 .ToDictionaryAsync(x => x.Key, x => x.Qty);

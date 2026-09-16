@@ -445,7 +445,7 @@ export function RentalsTab({
           </div>
         ) : outstandingRentals.length === 0 ? (
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.82rem', fontWeight: 300, color: 'var(--text-dim)', padding: '1.75rem 0', textAlign: 'center' }}>
-            Nothing outstanding — every rental line on a confirmed booking is either back in stock or not yet due out.
+            Nothing outstanding — every rental line and resource-plan item on a confirmed booking is back in stock.
           </p>
         ) : (
           outstandingByDate.map(([eventDate, lines]) => (
@@ -474,6 +474,7 @@ export function RentalsTab({
                       <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--text-dim)' }}>
                         {line.customerName}
                         {line.endDate && line.endDate !== line.eventDate ? ` · through ${fmtDate(line.endDate)}` : ''}
+                        {line.source === 'Allocation' ? ' · resource plan' : ''}
                       </div>
                       {line.damageNote && (
                         <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 300, color: 'var(--danger)', marginTop: '0.2rem' }}>

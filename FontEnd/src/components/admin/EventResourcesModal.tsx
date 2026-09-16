@@ -8,6 +8,7 @@ import {
   saveBookingResources,
   type AllocationCatalogItem,
   type BookingResources,
+  type DeliveryStatusName,
   type SaveAllocationLine,
 } from '../../api/bookingApi';
 
@@ -34,7 +35,17 @@ interface DraftLine {
   quantity: number;
   /** Stock left for this booking's dates, excluding its own hold. null for services. */
   available: number | null;
+  /** From the returns desk; null for services and for lines not saved yet. */
+  deliveryStatus: DeliveryStatusName | null;
 }
+
+/**
+ * Goods that have left the warehouse, or come back, are tracked at the quantity they
+ * went out at, so the server refuses to resize them. Delivered/Damaged also can't be
+ * removed until they're checked back in.
+ */
+const isSizeLocked = (l: DraftLine) => l.deliveryStatus != null && l.deliveryStatus !== 'Pending';
+const isOut = (l: DraftLine) => l.deliveryStatus === 'Delivered' || l.deliveryStatus === 'Damaged';
 
 export interface EventResourcesModalProps {
   bookingId: string;
@@ -113,6 +124,7 @@ export default function EventResourcesModal({
             name: l.name,
             quantity: l.quantity,
             available: l.available,
+            deliveryStatus: l.deliveryStatus,
           })),
         );
       })
@@ -157,17 +169,23 @@ export default function EventResourcesModal({
       const qty = toCount(rawQty);
       if (qty <= 0) return;
 
+      const existing = lines.find((l) => l.kind === kind && l.itemId === item.id);
+      if (existing && isSizeLocked(existing)) {
+        setError(`${existing.name} is already ${existing.deliveryStatus?.toLowerCase()}, so more can't be added to that line.`);
+        return;
+      }
+
       setLines((prev) => {
         const at = prev.findIndex((l) => l.kind === kind && l.itemId === item.id);
         if (at === -1) {
-          return [...prev, { kind, itemId: item.id, name: item.name, quantity: qty, available: item.available }];
+          return [...prev, { kind, itemId: item.id, name: item.name, quantity: qty, available: item.available, deliveryStatus: null }];
         }
         const next = [...prev];
         next[at] = { ...next[at], quantity: next[at].quantity + qty };
         return next;
       });
     },
-    [],
+    [lines],
   );
 
   const save = useCallback(async () => {
@@ -361,6 +379,7 @@ export default function EventResourcesModal({
                             <span style={{ color: 'var(--text-dim)', fontWeight: 300 }}>
                               {' '}
                               · {l.kind === 'Rental' ? 'Rental' : 'Service'}
+                              {isSizeLocked(l) && ` · ${l.deliveryStatus}`}
                             </span>
                           </span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
@@ -375,7 +394,8 @@ export default function EventResourcesModal({
                               min={1}
                               aria-label={`Quantity for ${l.name}`}
                               value={String(l.quantity)}
-                              disabled={locked}
+                              disabled={locked || isSizeLocked(l)}
+                              title={isSizeLocked(l) ? `Already ${l.deliveryStatus?.toLowerCase()} — quantity is fixed` : undefined}
                               readOnly={readOnly}
                               style={{ width: 78 }}
                               onChange={(e) =>
@@ -392,7 +412,8 @@ export default function EventResourcesModal({
                               <button
                                 type="button"
                                 className="adm-btn outline"
-                                disabled={saving}
+                                disabled={saving || isOut(l)}
+                                title={isOut(l) ? 'Check it back in on the returns desk first' : undefined}
                                 aria-label={`Remove ${l.name}`}
                                 style={{ fontSize: '0.65rem', padding: '0.3rem 0.6rem' }}
                                 onClick={() =>

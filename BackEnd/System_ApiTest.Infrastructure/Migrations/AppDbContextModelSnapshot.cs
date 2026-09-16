@@ -380,6 +380,15 @@ namespace System_ApiTest.Infrastructure.Migrations
                     b.Property<Guid>("AllocationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("DamageNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("DeliveryStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("int");
 

@@ -22,11 +22,12 @@ namespace System_ApiTest.Application.Services
     /// inventory while staying unpriced, because the package price already covers them.
     /// Stock is validated under the same row lock the priced path uses.
     ///
-    /// The only lifecycle guard is against Cancelled — planning resources for an event
-    /// that isn't happening is meaningless. Completed is still allowed, so the record of
-    /// what was actually sent stays correctable after the fact; a Completed plan's lines
-    /// stop holding stock (see Rentalservice.CommittedAllocation), so editing one is
-    /// bookkeeping, not a reservation.
+    /// The only booking-lifecycle guard is against Cancelled — planning resources for an
+    /// event that isn't happening is meaningless. Completed is still allowed, so the
+    /// record of what was sent stays correctable after the fact. Rental lines carry a
+    /// DeliveryStatus driven from the returns desk, and hold stock until Returned (see
+    /// Rentalservice.CommittedAllocation); once a line's goods are out, this editor
+    /// refuses to change or drop it.
     /// </summary>
     public class Bookingresourceservice
     {
@@ -81,10 +82,12 @@ namespace System_ApiTest.Application.Services
                     ? new AllocationLineDto(
                         l.Id, "Rental", l.RentalItemId.Value,
                         l.RentalItem?.ItemName ?? "(removed item)", l.Quantity,
-                        l.RentalItem is null ? null : AvailableFor(l.RentalItem))
+                        l.RentalItem is null ? null : AvailableFor(l.RentalItem),
+                        l.DeliveryStatus.ToString(), l.DamageNote)
                     : new AllocationLineDto(
                         l.Id, "Service", l.ServiceItemId!.Value,
-                        l.ServiceItem?.ServiceName ?? "(removed service)", l.Quantity, null))
+                        l.ServiceItem?.ServiceName ?? "(removed service)", l.Quantity, null,
+                        null, null))
                 .OrderBy(l => l.Kind).ThenBy(l => l.Name)
                 .ToList();
 
@@ -250,6 +253,14 @@ namespace System_ApiTest.Application.Services
 
             foreach (var (itemId, quantity) in rentals)
             {
+                // A line that has already gone out (or come back) and isn't changing
+                // isn't a new claim on stock — re-checking it could refuse an unrelated
+                // edit because the warehouse has since been booked around it.
+                var current = allocation.Lines.FirstOrDefault(x => x.RentalItemId == itemId);
+                if (current is not null && current.DeliveryStatus != DeliveryStatus.Pending
+                    && current.Quantity == quantity)
+                    continue;
+
                 var item = (await _db.RentalItems
                     .FromSqlInterpolated($"SELECT * FROM [RentalItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {itemId}")
                     .ToListAsync())
@@ -282,26 +293,78 @@ namespace System_ApiTest.Application.Services
                     throw new BookingRuleException($"'{service.ServiceName}' is no longer offered and can't be added.");
             }
 
-            // Replace wholesale. Quantities are small and bounded by the catalog size, so
-            // diffing would buy nothing but a chance to get the edge cases wrong.
-            _db.BookingResourceAllocationLines.RemoveRange(allocation.Lines);
-            allocation.Lines.Clear();
+            // Update in place rather than replacing wholesale: a rental line carries its
+            // delivery status, and deleting and re-adding it would quietly reset goods
+            // that are out at the venue back to Pending.
+            //
+            // Once goods have left (Delivered/Damaged) the line is locked — the returns
+            // desk is tracking that exact quantity, so changing or dropping it here would
+            // lose track of stock that is physically out. A Returned line may be removed
+            // but not resized, since its quantity is now history.
+            foreach (var existing in allocation.Lines.ToList())
+            {
+                int? wanted = existing.RentalItemId is { } rid
+                    ? rentals.TryGetValue(rid, out var rq) ? rq : null
+                    : services.TryGetValue(existing.ServiceItemId!.Value, out var sq) ? sq : null;
+
+                if (existing.DeliveryStatus != DeliveryStatus.Pending && wanted != existing.Quantity)
+                {
+                    var name = existing.RentalItem?.ItemName
+                        ?? (await _db.RentalItems.FindAsync(existing.RentalItemId))?.ItemName
+                        ?? "this item";
+                    var outNow = existing.DeliveryStatus is DeliveryStatus.Delivered or DeliveryStatus.Damaged;
+
+                    if (outNow)
+                        throw new BookingRuleException(
+                            $"{existing.Quantity} × '{name}' is marked {existing.DeliveryStatus}. " +
+                            "Check it back in on the returns desk before changing or removing it.");
+                    if (wanted is not null)
+                        throw new BookingRuleException(
+                            $"{existing.Quantity} × '{name}' has already been returned, so its quantity can't change. " +
+                            "Remove it and add a new line if more went out.");
+                }
+
+                if (wanted is null)
+                {
+                    _db.BookingResourceAllocationLines.Remove(existing);
+                    allocation.Lines.Remove(existing);
+                }
+                else
+                {
+                    existing.Quantity = wanted.Value;
+                }
+            }
 
             foreach (var (itemId, quantity) in rentals)
-                allocation.Lines.Add(new BookingResourceAllocationLine
-                {
-                    AllocationId = allocation.Id,
-                    RentalItemId = itemId,
-                    Quantity = quantity,
-                });
+                if (!allocation.Lines.Any(x => x.RentalItemId == itemId))
+                    AddLine(allocation, new BookingResourceAllocationLine
+                    {
+                        AllocationId = allocation.Id,
+                        RentalItemId = itemId,
+                        Quantity = quantity,
+                    });
 
             foreach (var (serviceId, quantity) in services)
-                allocation.Lines.Add(new BookingResourceAllocationLine
-                {
-                    AllocationId = allocation.Id,
-                    ServiceItemId = serviceId,
-                    Quantity = quantity,
-                });
+                if (!allocation.Lines.Any(x => x.ServiceItemId == serviceId))
+                    AddLine(allocation, new BookingResourceAllocationLine
+                    {
+                        AllocationId = allocation.Id,
+                        ServiceItemId = serviceId,
+                        Quantity = quantity,
+                    });
+        }
+
+        /// <summary>
+        /// Adds a line through the DbSet, not just the navigation. The entity initialises
+        /// its Guid key in the constructor, and when DetectChanges discovers a keyed entity
+        /// only via a tracked parent's collection it assumes the row already exists and
+        /// marks it Modified — an UPDATE that affects 0 rows and throws
+        /// DbUpdateConcurrencyException. Adding explicitly pins it as Added.
+        /// </summary>
+        private void AddLine(BookingResourceAllocation allocation, BookingResourceAllocationLine line)
+        {
+            _db.BookingResourceAllocationLines.Add(line);
+            allocation.Lines.Add(line);
         }
 
         // Guarded against zero even though a DB check constraint forbids it: this would

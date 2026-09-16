@@ -11,6 +11,10 @@ namespace System_ApiTest.Application.DTOs
     /// own line excluded, so an admin editing an existing allocation sees what they can
     /// grow it to rather than what's left after their own hold. Null for services,
     /// which carry no stock.</para>
+    ///
+    /// <para><see cref="DeliveryStatus"/> and <see cref="DamageNote"/> track the goods on
+    /// the returns desk; both are null for services. A line that isn't Pending is
+    /// locked against edits here.</para>
     /// </summary>
     public record AllocationLineDto(
         Guid Id,
@@ -18,7 +22,9 @@ namespace System_ApiTest.Application.DTOs
         Guid ItemId,
         string Name,
         int Quantity,
-        int? Available);
+        int? Available,
+        string? DeliveryStatus,
+        string? DamageNote);
 
     /// <summary>
     /// A pickable catalog row. Only active items are offered; an inactive item already

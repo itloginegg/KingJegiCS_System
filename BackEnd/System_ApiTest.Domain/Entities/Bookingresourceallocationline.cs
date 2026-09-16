@@ -48,6 +48,21 @@ namespace System_ApiTest.Domain.Entities
         [Required]
         public int Quantity { get; set; }
 
+        /// <summary>
+        /// Where the goods physically are — the same lifecycle a priced Rental line walks
+        /// (Pending -> Delivered -> Returned, or Damaged until resolved), driven from the
+        /// same returns/check-in desk.
+        ///
+        /// Without it an allocation had no way to say "the chairs came back", so its stock
+        /// had to be released on a guess (the booking being Completed) rather than on the
+        /// fact of the return. Meaningless for service lines, which stay Pending.
+        /// </summary>
+        public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
+
+        /// <summary>What went wrong, captured when the line is marked Damaged. Kept after a repair.</summary>
+        [MaxLength(500)]
+        public string? DamageNote { get; set; }
+
         /// <summary>Matches CK_BookingResourceAllocationLine_QuantityInRange.</summary>
         public const int MaxQuantity = 100_000;
     }

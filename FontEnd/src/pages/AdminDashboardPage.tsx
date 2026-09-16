@@ -18,7 +18,7 @@ import {
   getBookingDetail,
   getInvoiceByBooking,
   getOutstandingRentals,
-  updateRentalDeliveryStatus,
+  updateLineDeliveryStatus,
   BookingApiError,
   type OutstandingRentalLine,
   type DeliveryStatusName,
@@ -588,7 +588,7 @@ export function AdminDashboardPage() {
     setReturnsFeedback(null);
 
     try {
-      await updateRentalDeliveryStatus(session.token, line.bookingId, line.rentalId, next, note);
+      await updateLineDeliveryStatus(session.token, line, next, note);
 
       // Returned lines drop off the desk entirely; the rest stay with a new status.
       setOutstandingRentals((prev) =>
@@ -647,6 +647,7 @@ export function AdminDashboardPage() {
     if (!detailBooking) return null;
     const b = detailBooking.booking;
     return {
+      source: 'Rental',
       rentalId: line.lineId,
       bookingId: b.id,
       customerName: b.bookingName,

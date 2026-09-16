@@ -222,8 +222,16 @@ export const DELIVERY_NEXT_STATUSES: Record<DeliveryStatusName, DeliveryStatusNa
   Returned: [],
 };
 
-/** One rental line still awaiting an admin action. Matches OutstandingRentalLineDto. */
+/**
+ * One rental line still awaiting an admin action. Matches OutstandingRentalLineDto.
+ *
+ * `source` says which table the line lives in: a priced booking rental, or a rental
+ * item on the booking's resource plan (how package bookings hold their chairs and
+ * tables). `rentalId` is the line id in that table, and the two move through different
+ * endpoints — see updateLineDeliveryStatus.
+ */
 export interface OutstandingRentalLine {
+  source: 'Rental' | 'Allocation';
   rentalId: string;
   bookingId: string;
   customerName: string;
@@ -773,6 +781,37 @@ export function updateRentalDeliveryStatus(
   );
 }
 
+/**
+ * Same lifecycle as updateRentalDeliveryStatus, for a rental item on a booking's
+ * resource plan. Returning it is what frees the stock the plan was holding.
+ */
+export function updateAllocationDeliveryStatus(
+  token: string,
+  bookingId: string,
+  lineId: string,
+  status: DeliveryStatusName,
+  damageNote?: string,
+): Promise<{ id: string; itemName: string | null; quantity: number; deliveryStatus: DeliveryStatusName; damageNote: string | null }> {
+  return request(
+    `/api/Bookings/${bookingId}/resources/lines/${lineId}/delivery-status`,
+    'PUT',
+    token,
+    { deliveryStatus: status, damageNote: damageNote ?? null },
+  );
+}
+
+/** Moves any returns-desk line through whichever endpoint owns it. */
+export function updateLineDeliveryStatus(
+  token: string,
+  line: Pick<OutstandingRentalLine, 'source' | 'bookingId' | 'rentalId'>,
+  status: DeliveryStatusName,
+  damageNote?: string,
+) {
+  return line.source === 'Allocation'
+    ? updateAllocationDeliveryStatus(token, line.bookingId, line.rentalId, status, damageNote)
+    : updateRentalDeliveryStatus(token, line.bookingId, line.rentalId, status, damageNote);
+}
+
 // ── Event resource allocation (admin) ──────────────────────────────────
 //
 // Operational planning: which rental items and services are held for one event.
@@ -809,6 +848,13 @@ export interface AllocationLine {
   quantity: number;
   /** Remaining stock EXCLUDING this booking's own hold. null for services. */
   available: number | null;
+  /**
+   * Where the goods are, driven from the returns desk. null for services. Anything but
+   * Pending is locked in the allocation editor — the server refuses to resize it, and
+   * refuses to remove a Delivered or Damaged line.
+   */
+  deliveryStatus: DeliveryStatusName | null;
+  damageNote: string | null;
 }
 
 /** A pickable catalog row. Matches AllocationCatalogItemDto. */

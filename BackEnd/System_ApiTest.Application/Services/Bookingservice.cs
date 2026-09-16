@@ -1123,6 +1123,16 @@ namespace System_ApiTest.Application.Services
                 foreach (var r in pendingRentals)
                     r.DeliveryStatus = DeliveryStatus.Delivered;
 
+                // Same for the resource plan's rental lines, which is what keeps their
+                // stock held (as physically out) until the returns desk checks them in.
+                var pendingAllocationLines = await _db.BookingResourceAllocationLines
+                    .Where(l => l.Allocation.BookingId == bookingId
+                             && l.RentalItemId != null
+                             && l.DeliveryStatus == DeliveryStatus.Pending)
+                    .ToListAsync();
+                foreach (var l in pendingAllocationLines)
+                    l.DeliveryStatus = DeliveryStatus.Delivered;
+
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             });

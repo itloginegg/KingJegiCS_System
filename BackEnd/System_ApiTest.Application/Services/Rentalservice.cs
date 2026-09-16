@@ -78,16 +78,20 @@ namespace System_ApiTest.Application.Services
         /// is typed to the Rental table. Every availability question must sum both or it
         /// will under-report what is committed.
         ///
-        /// Deliberately stricter than CommittedStock in two ways:
+        /// Allocation lines now carry the same DeliveryStatus as rental lines, so a line
+        /// holds stock until it is Returned — not until the booking happens to be
+        /// Completed. A line counts when it is not Returned AND either:
         ///
-        ///   1. Confirmed only, never Completed. A rental line tracks DeliveryStatus and
-        ///      so knows when goods came back; an allocation line has no such flag, so
-        ///      counting Completed would hold stock forever. Completing the event
-        ///      releases it, as does cancelling (a Cancelled booking is not Confirmed).
-        ///   2. With no window, every Confirmed allocation still counts. CommittedStock
-        ///      can fall back to "physically gone" (Delivered/Damaged) when it has no
-        ///      dates; an allocation has no equivalent, and silently dropping future
-        ///      commitments is exactly the double-booking this feature exists to stop.
+        ///   (a) its booking is Confirmed and, when a window is given, overlaps it. With
+        ///       no window every Confirmed line counts — stricter than CommittedStock,
+        ///       because silently dropping future commitments is exactly the
+        ///       double-booking this feature exists to stop; or
+        ///   (b) the goods are physically gone (Delivered/Damaged) on a Confirmed or
+        ///       Completed booking, whatever the dates say.
+        ///
+        /// Completing a booking moves its Pending lines to Delivered, so a Completed
+        /// booking's goods keep holding stock through (b) until the returns desk checks
+        /// them back in. A Cancelled booking holds nothing.
         /// </summary>
         /// <param name="excludeBookingId">The booking being planned, so it can't conflict with itself.</param>
         public static System.Linq.Expressions.Expression<Func<BookingResourceAllocationLine, bool>> CommittedAllocation(
@@ -102,11 +106,16 @@ namespace System_ApiTest.Application.Services
 
             return l => l.RentalItemId == rentalItemId
                         && (excludeBookingId == null || l.Allocation.BookingId != excludeBookingId)
-                        && l.Allocation.Booking.Status == BookingStatus.Confirmed
+                        && l.DeliveryStatus != DeliveryStatus.Returned
                         && (
-                             !hasWindow
-                             || (l.Allocation.Booking.EventDate <= end
-                                 && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)
+                             (l.Allocation.Booking.Status == BookingStatus.Confirmed
+                              && (!hasWindow
+                                  || (l.Allocation.Booking.EventDate <= end
+                                      && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)))
+                             || ((l.Allocation.Booking.Status == BookingStatus.Confirmed
+                                  || l.Allocation.Booking.Status == BookingStatus.Completed)
+                                 && (l.DeliveryStatus == DeliveryStatus.Delivered
+                                     || l.DeliveryStatus == DeliveryStatus.Damaged))
                            );
         }
 
@@ -147,16 +156,21 @@ namespace System_ApiTest.Application.Services
                 .Select(g => new { g.Key, Qty = g.Sum(r => r.Quantity) })
                 .ToDictionaryAsync(x => x.Key, x => x.Qty);
 
-            // Mirrors CommittedAllocation: Confirmed only, and no physically-gone escape
-            // hatch, so a windowless call still counts every outstanding commitment.
+            // Mirrors CommittedAllocation: not returned, and either Confirmed (overlapping,
+            // or any date when windowless) or physically gone on a live booking.
             var allocations = await _db.BookingResourceAllocationLines
                 .Where(l => l.RentalItemId != null
                             && (excludeBookingId == null || l.Allocation.BookingId != excludeBookingId)
-                            && l.Allocation.Booking.Status == BookingStatus.Confirmed
+                            && l.DeliveryStatus != DeliveryStatus.Returned
                             && (
-                                 !hasWindow
-                                 || (l.Allocation.Booking.EventDate <= end
-                                     && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)
+                                 (l.Allocation.Booking.Status == BookingStatus.Confirmed
+                                  && (!hasWindow
+                                      || (l.Allocation.Booking.EventDate <= end
+                                          && (l.Allocation.Booking.EndDate ?? l.Allocation.Booking.EventDate) >= start)))
+                                 || ((l.Allocation.Booking.Status == BookingStatus.Confirmed
+                                      || l.Allocation.Booking.Status == BookingStatus.Completed)
+                                     && (l.DeliveryStatus == DeliveryStatus.Delivered
+                                         || l.DeliveryStatus == DeliveryStatus.Damaged))
                                ))
                 .GroupBy(l => l.RentalItemId!.Value)
                 .Select(g => new { g.Key, Qty = g.Sum(l => l.Quantity) })
@@ -316,19 +330,7 @@ namespace System_ApiTest.Application.Services
                 .FirstOrDefaultAsync(r => r.Id == rentalId && r.BookingId == bookingId)
                 ?? throw new BookingRuleException("Rental line not found on this booking.");
 
-            var ok = (rental.DeliveryStatus, newStatus) switch
-            {
-                (DeliveryStatus.Pending, DeliveryStatus.Delivered) => true,
-                (DeliveryStatus.Delivered, DeliveryStatus.Returned) => true,
-                (DeliveryStatus.Delivered, DeliveryStatus.Damaged) => true,
-                (DeliveryStatus.Damaged, DeliveryStatus.Returned) => true,   // repaired / written off
-                _ => false
-            };
-            if (!ok)
-                throw new BookingRuleException(
-                    $"Can't move a rental from {rental.DeliveryStatus} to {newStatus}. " +
-                    "Valid moves: Pending?Delivered, Delivered?Returned/Damaged, Damaged?Returned.");
-
+            EnsureDeliveryMove(rental.DeliveryStatus, newStatus);
             rental.DeliveryStatus = newStatus;
 
             // Recorded only on the move to Damaged. A later repair (Damaged -> Returned)
@@ -338,6 +340,60 @@ namespace System_ApiTest.Application.Services
 
             await _db.SaveChangesAsync();
             return rental;
+        }
+
+        /// <summary>
+        /// The resource-plan twin of <see cref="UpdateDeliveryStatusAsync"/>: walks an
+        /// allocation line through the same lifecycle, so the returns desk treats a
+        /// package booking's chairs exactly like separately rented ones.
+        ///
+        /// Only rental lines qualify — a service line has nothing to deliver or return.
+        /// Cancelled bookings are refused, matching the returns list, which never shows them.
+        /// </summary>
+        public async Task<BookingResourceAllocationLine> UpdateAllocationDeliveryStatusAsync(
+            Guid bookingId, Guid lineId, DeliveryStatus newStatus, string? damageNote = null)
+        {
+            var line = await _db.BookingResourceAllocationLines
+                .Include(l => l.RentalItem)
+                .Include(l => l.Allocation).ThenInclude(a => a.Booking)
+                .FirstOrDefaultAsync(l => l.Id == lineId && l.Allocation.BookingId == bookingId)
+                ?? throw new BookingRuleException("Resource line not found on this booking.");
+
+            if (line.RentalItemId is null)
+                throw new BookingRuleException("Only rental items on a resource plan have a delivery status.");
+            if (line.Allocation.Booking.Status == BookingStatus.Cancelled)
+                throw new BookingRuleException("This booking was cancelled; its resource plan holds no stock.");
+
+            EnsureDeliveryMove(line.DeliveryStatus, newStatus);
+            line.DeliveryStatus = newStatus;
+
+            if (newStatus == DeliveryStatus.Damaged)
+                line.DamageNote = damageNote?.Trim();
+
+            await _db.SaveChangesAsync();
+            return line;
+        }
+
+        /// <summary>
+        /// The delivery state machine, shared by rental and allocation lines so the two
+        /// can't drift:
+        ///   Pending -> Delivered -> Returned (frees the stock) or Damaged (keeps
+        ///   holding stock until resolved) -> Returned once repaired/written off.
+        /// </summary>
+        private static void EnsureDeliveryMove(DeliveryStatus current, DeliveryStatus next)
+        {
+            var ok = (current, next) switch
+            {
+                (DeliveryStatus.Pending, DeliveryStatus.Delivered) => true,
+                (DeliveryStatus.Delivered, DeliveryStatus.Returned) => true,
+                (DeliveryStatus.Delivered, DeliveryStatus.Damaged) => true,
+                (DeliveryStatus.Damaged, DeliveryStatus.Returned) => true,   // repaired / written off
+                _ => false
+            };
+            if (!ok)
+                throw new BookingRuleException(
+                    $"Can't move a line from {current} to {next}. " +
+                    "Valid moves: Pending→Delivered, Delivered→Returned/Damaged, Damaged→Returned.");
         }
 
         /// <summary>
@@ -354,18 +410,20 @@ namespace System_ApiTest.Application.Services
         ///
         /// Drives the admin returns list, which would otherwise need one request per
         /// booking to assemble the same thing client-side.
+        ///
+        /// Includes the rental lines on resource plans as well as priced rental lines.
+        /// A package booking's chairs live only on its plan, so a desk reading only the
+        /// Rentals table showed nothing to check in for exactly the bookings that send
+        /// out the most. <see cref="OutstandingRentalLineDto.Source"/> tells the client
+        /// which endpoint moves the line.
         /// </summary>
         public async Task<List<OutstandingRentalLineDto>> GetOutstandingAsync()
         {
-            return await _db.Rentals
+            var rentals = await _db.Rentals
                 .AsNoTracking()
-                .Include(r => r.RentalItem)
-                .Include(r => r.Booking).ThenInclude(b => b.Customer)
                 .Where(r => r.DeliveryStatus != DeliveryStatus.Returned
                          && (r.Booking.Status == BookingStatus.Confirmed
                           || r.Booking.Status == BookingStatus.Completed))
-                .OrderBy(r => r.Booking.EventDate)
-                .ThenBy(r => r.RentalItem.ItemName)
                 .Select(r => new OutstandingRentalLineDto(
                     r.Id,
                     r.BookingId,
@@ -376,8 +434,34 @@ namespace System_ApiTest.Application.Services
                     r.RentalItem.ItemName,
                     r.Quantity,
                     r.DeliveryStatus.ToString(),
-                    r.DamageNote))
+                    r.DamageNote,
+                    OutstandingLineSource.Rental))
                 .ToListAsync();
+
+            var allocations = await _db.BookingResourceAllocationLines
+                .AsNoTracking()
+                .Where(l => l.RentalItemId != null
+                         && l.DeliveryStatus != DeliveryStatus.Returned
+                         && (l.Allocation.Booking.Status == BookingStatus.Confirmed
+                          || l.Allocation.Booking.Status == BookingStatus.Completed))
+                .Select(l => new OutstandingRentalLineDto(
+                    l.Id,
+                    l.Allocation.BookingId,
+                    l.Allocation.Booking.Customer.FullName,
+                    l.Allocation.Booking.EventDate,
+                    l.Allocation.Booking.EndDate,
+                    l.RentalItemId!.Value,
+                    l.RentalItem!.ItemName,
+                    l.Quantity,
+                    l.DeliveryStatus.ToString(),
+                    l.DamageNote,
+                    OutstandingLineSource.Allocation))
+                .ToListAsync();
+
+            return rentals.Concat(allocations)
+                .OrderBy(l => l.EventDate)
+                .ThenBy(l => l.ItemName)
+                .ToList();
         }
     }
 }
