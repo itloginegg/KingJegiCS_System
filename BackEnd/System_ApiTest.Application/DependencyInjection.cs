@@ -40,6 +40,7 @@ public static class DependencyInjection
         services.AddScoped<Systemsettingsservice>();
         services.AddScoped<Auditlogservice>();
         services.AddScoped<Suggestionservice>();
+        services.AddScoped<Sentimentservice>();
         services.AddScoped<Testimonialservice>();
         services.AddScoped<Notificationfeedservice>();
         services.AddScoped<Announcementservice>();

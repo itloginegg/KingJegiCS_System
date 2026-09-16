@@ -63,7 +63,18 @@ namespace System_ApiTest.Application.DTOs
         DateTime SubmittedAt,
         DateTime? ModeratedAt,
         Guid? ModeratedById,
-        string? ModerationNote);
+        string? ModerationNote,
+        /* Sentiment of the review TEXT (see Sentimentservice). All null until analyzed, and
+           always null on the customer's own "mine" list: it is a moderation aid. */
+        string? Sentiment = null,
+        decimal? SentimentScore = null,
+        string? SentimentReason = null,
+        string? SentimentSource = null,
+        /* The stars and the words disagree: 4–5 stars with negative text, or 1–2 with positive. */
+        bool RatingMismatch = false);
+
+    /// <summary>Result of analyzing the reviews that had no sentiment yet.</summary>
+    public record SentimentBackfillDto(int Analyzed, int Remaining);
 }
 
 

@@ -8,14 +8,23 @@
  *
  * REPORTED UP: the pending count, because the dashboard's sidebar badge shows it
  * while this tab is not mounted. The dashboard keeps only that number.
+ *
+ * SENTIMENT: each review carries what its TEXT says (Positive / Neutral / Negative),
+ * scored by Gemini or, when that was unavailable, by the rule-based lexicon. It is
+ * advisory: nothing is approved or hidden because of it. What it adds is the summary
+ * strip, a chip per review, and a "Needs a look" filter for reviews whose stars and
+ * words disagree.
  */
 import { useEffect, useState } from 'react';
-import { Check, RotateCw, Star, X } from 'lucide-react';
+import { AlertTriangle, Check, RotateCw, Sparkles, Star, X } from 'lucide-react';
 import {
+  analyzeMissingSentiment,
   getTestimonials,
   moderateTestimonial,
+  reanalyzeSentiment,
   TestimonialApiError,
   type Testimonial,
+  type TestimonialSentiment,
   type TestimonialStatus,
 } from '../../../api/testimonialsApi';
 import { readSession } from '../../../lib/tokenStorage';
@@ -26,6 +35,16 @@ const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> 
   Approved: { label: 'Approved', color: 'var(--status-paid)' },
   Rejected: { label: 'Rejected', color: 'var(--danger-ink)' },
 };
+
+/* Theme status tokens rather than fixed colours, so the chips keep their contrast in
+   both the light and the dark admin theme. Tinted grounds at 14%, like StatusBadge. */
+const SENTIMENT_STYLE: Record<TestimonialSentiment, { bg: string; fg: string }> = {
+  Positive: { bg: 'color-mix(in srgb, var(--status-paid) 14%, transparent)', fg: 'var(--status-paid)' },
+  Neutral: { bg: 'color-mix(in srgb, var(--warning-ink) 14%, transparent)', fg: 'var(--warning-ink)' },
+  Negative: { bg: 'color-mix(in srgb, var(--danger-ink) 14%, transparent)', fg: 'var(--danger-ink)' },
+};
+
+type TestiFilter = 'all' | TestimonialStatus | 'mismatch';
 
 export interface TestimonialsTabProps {
   notify: (kind: 'success' | 'error' | 'info', message: string) => void;
@@ -38,7 +57,9 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
   const [testiLoading, setTestiLoading] = useState(false);
   const [testiError, setTestiError] = useState<string | null>(null);
   const [testiBusyId, setTestiBusyId] = useState<string | null>(null);
-  const [testiFilter, setTestiFilter] = useState<'all' | TestimonialStatus>('Pending');
+  const [testiFilter, setTestiFilter] = useState<TestiFilter>('Pending');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
   /* Gates the badge report below. Without it the first render reports 0 before
      the fetch lands, and the sidebar badge blinks to nothing on every visit. */
   const [loadedOnce, setLoadedOnce] = useState(false);
@@ -91,6 +112,41 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
     }
   };
 
+  /* Reviews from before sentiment existed have none. Batches of 20, so one click never
+     queues more Gemini calls than the free tier comfortably takes; the button stays
+     until none are left. */
+  const analyzeMissing = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    setAnalyzing(true);
+    try {
+      const { analyzed, remaining } = await analyzeMissingSentiment(session.token, 20);
+      await loadTestimonials();
+      notify('success', remaining > 0
+        ? `Analyzed ${analyzed} review${analyzed === 1 ? '' : 's'}; ${remaining} left.`
+        : `Analyzed ${analyzed} review${analyzed === 1 ? '' : 's'}. Every review now has a sentiment.`);
+    } catch (err) {
+      notify('error', err instanceof TestimonialApiError ? err.message : 'Could not analyze the reviews.');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const reanalyze = async (id: string) => {
+    const session = readSession();
+    if (!session?.token) return;
+    setReanalyzingId(id);
+    try {
+      const r = await reanalyzeSentiment(session.token, id);
+      setTestimonials((prev) => prev.map((t) => (t.id === id ? { ...t, ...r } : t)));
+      notify('success', `Re-analyzed: ${r.sentiment ?? 'no result'}${r.sentimentSource === 'Lexicon' ? ' (rule-based; AI was unavailable)' : ''}.`);
+    } catch (err) {
+      notify('error', err instanceof TestimonialApiError ? err.message : 'Could not re-analyze this review.');
+    } finally {
+      setReanalyzingId(null);
+    }
+  };
+
   useEffect(() => {
     void loadTestimonials();
   }, []);
@@ -100,7 +156,15 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
     if (loadedOnce) onPendingCountChange(pendingTesti);
   }, [loadedOnce, pendingTesti, onPendingCountChange]);
 
-  const filteredTesti = testimonials.filter((t) => testiFilter === 'all' || t.status === testiFilter);
+  const filteredTesti = testimonials.filter((t) =>
+    testiFilter === 'all' ? true : testiFilter === 'mismatch' ? t.ratingMismatch : t.status === testiFilter);
+
+  /* Satisfaction summary over every review, whatever the filter shows. */
+  const analyzed = testimonials.filter((t) => t.sentiment !== null);
+  const countOf = (s: TestimonialSentiment) => analyzed.filter((t) => t.sentiment === s).length;
+  const unanalyzed = testimonials.length - analyzed.length;
+  const mismatches = testimonials.filter((t) => t.ratingMismatch).length;
+  const positiveShare = analyzed.length > 0 ? Math.round((countOf('Positive') / analyzed.length) * 100) : null;
 
   return (
     <div className="fade-up" style={{ background: 'var(--band-bg)', border: '1px solid var(--band-glass-border)', borderRadius: '16px', padding: '24px', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -129,9 +193,41 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
         </div>
       )}
 
+      {testimonials.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap', padding: '14px 18px', background: 'var(--band-glass)', border: '1px solid var(--band-glass-border)', borderRadius: '14px' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--band-muted)' }}>Customer sentiment</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 600, lineHeight: 1.2, color: 'var(--band-text)' }}>
+              {positiveShare === null ? '—' : `${positiveShare}% positive`}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {(['Positive', 'Neutral', 'Negative'] as const).map((s) => (
+              <span key={s} style={{ fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, padding: '8px 12px', borderRadius: '999px', background: SENTIMENT_STYLE[s].bg, color: SENTIMENT_STYLE[s].fg }}>
+                {s} {countOf(s)}
+              </span>
+            ))}
+          </div>
+          {mismatches > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, color: 'var(--danger-ink)' }}>
+              <AlertTriangle size={14} strokeWidth={2} aria-hidden="true" />
+              {mismatches} where the stars and the words disagree
+            </span>
+          )}
+          {unanalyzed > 0 && (
+            <button type="button" onClick={() => void analyzeMissing()} disabled={analyzing} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: 'var(--accent)', color: 'var(--band-bg)', border: 'none', padding: '10px 14px', borderRadius: '999px', cursor: analyzing ? 'wait' : 'pointer' }}>
+              <Sparkles size={14} strokeWidth={2} aria-hidden="true" />
+              {analyzing ? 'Analyzing…' : `Analyze ${unanalyzed} older review${unanalyzed === 1 ? '' : 's'}`}
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
-        {(['Pending', 'Approved', 'Rejected', 'all'] as const).map((k) => {
-          const count = k === 'all' ? testimonials.length : testimonials.filter((t) => t.status === k).length;
+        {(['Pending', 'Approved', 'Rejected', 'mismatch', 'all'] as const).map((k) => {
+          const count = k === 'all' ? testimonials.length
+            : k === 'mismatch' ? mismatches
+            : testimonials.filter((t) => t.status === k).length;
           const isActive = testiFilter === k;
           return (
             <span
@@ -139,7 +235,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
               onClick={() => setTestiFilter(k)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: isActive ? 600 : 500, lineHeight: 1, padding: '10px 15px', borderRadius: '999px', background: isActive ? 'var(--accent)' : 'rgba(238, 243, 234,.07)', color: isActive ? 'var(--band-bg)' : 'var(--band-muted)', cursor: 'pointer' }}
             >
-              {k === 'all' ? 'All' : TESTI_STATUS[k].label}
+              {k === 'all' ? 'All' : k === 'mismatch' ? 'Needs a look' : TESTI_STATUS[k].label}
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: isActive ? 'var(--band-bg)' : 'var(--band-muted)' }}>{count}</span>
             </span>
           );
@@ -170,13 +266,43 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
                   <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-body)', fontSize: '15px', fontWeight: 400, lineHeight: 1.6, fontStyle: 'italic', color: 'var(--band-muted)' }}>
                     "{t.body}"
                   </p>
+                  {t.ratingMismatch && (
+                    <p role="note" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', margin: '0 0 10px', padding: '9px 12px', borderRadius: '10px', background: 'var(--danger-muted)', border: '1px solid color-mix(in srgb, var(--danger) 28%, transparent)', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 500, lineHeight: 1.5, color: 'var(--danger-ink)' }}>
+                      <AlertTriangle size={14} strokeWidth={2} aria-hidden="true" style={{ flex: 'none', marginTop: '2px' }} />
+                      <span>
+                        {t.rating >= 4
+                          ? `${t.rating} stars, but the text reads negative. Worth reading before publishing.`
+                          : `${t.rating} star${t.rating === 1 ? '' : 's'}, but the text reads positive. The rating may be a slip.`}
+                      </span>
+                    </p>
+                  )}
+                  {t.sentiment && t.sentimentReason && (
+                    <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-body)', fontSize: '12px', lineHeight: 1.5, color: 'var(--band-muted)' }}>
+                      <strong style={{ fontWeight: 600, color: 'var(--band-text)' }}>
+                        {t.sentimentSource === 'Gemini' ? 'AI read:' : 'Rule-based read:'}
+                      </strong>{' '}
+                      {t.sentimentReason}
+                    </p>
+                  )}
                   <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--band-muted)' }}>
                     Submitted {fmtDate(t.submittedAt)} · {t.customerEmail} · reviewing "{t.bookingName}" ({fmtDate(t.eventDate)})
                   </span>
                 </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                {t.sentiment ? (
+                  <span
+                    title={`${t.sentimentSource === 'Gemini' ? 'Scored by AI (Gemini)' : 'Scored by the rule-based lexicon'} · score ${t.sentimentScore ?? 0}`}
+                    style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: SENTIMENT_STYLE[t.sentiment].bg, color: SENTIMENT_STYLE[t.sentiment].fg }}
+                  >
+                    {t.sentiment}
+                  </span>
+                ) : (
+                  <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: 'var(--band-muted)' }}>Not analyzed</span>
+                )}
                 <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(186, 181, 105,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#BAB569' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
                   {t.status}
                 </span>
+                </div>
               </div>
               <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap', marginTop: '16px' }}>
                 {t.status !== 'Approved' && (
@@ -184,6 +310,10 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
                     {testiBusyId === t.id ? 'Saving...' : <><Check size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> Approve — publish to landing page</>}
                   </button>
                 )}
+                <button type="button" disabled={reanalyzingId === t.id} onClick={() => void reanalyze(t.id)} title="Run the sentiment analysis again for this review" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 500, lineHeight: 1, background: 'transparent', color: 'var(--band-muted)', border: '1px solid var(--band-glass-border)', padding: '12px 16px', borderRadius: '999px', cursor: 'pointer' }}>
+                  <Sparkles size={13} strokeWidth={2} aria-hidden="true" />
+                  {reanalyzingId === t.id ? 'Analyzing…' : t.sentiment ? 'Re-analyze' : 'Analyze'}
+                </button>
                 {t.status !== 'Rejected' && (
                   <button type="button" disabled={testiBusyId === t.id} onClick={() => void setTestiStatus(t.id, 'Rejected')} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-body)', fontSize: '12px', fontWeight: 600, lineHeight: 1, background: '#DC2626', color: '#fff', border: 'none', padding: '12px 18px', borderRadius: '999px', cursor: 'pointer' }}>
                     {testiBusyId === t.id ? 'Saving...' : <><X size={14} strokeWidth={2.4} aria-hidden="true" style={{ color: '#fff' }} /> {t.status === 'Approved' ? 'Remove from landing page' : 'Reject'}</>}

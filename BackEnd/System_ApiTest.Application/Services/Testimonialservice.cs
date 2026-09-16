@@ -16,8 +16,13 @@ namespace System_ApiTest.Application.Services
     public class Testimonialservice
     {
         private readonly IApplicationDbContext _db;
+        private readonly Sentimentservice _sentiment;
 
-        public Testimonialservice(IApplicationDbContext db) => _db = db;
+        public Testimonialservice(IApplicationDbContext db, Sentimentservice sentiment)
+        {
+            _db = db;
+            _sentiment = sentiment;
+        }
 
         /// <summary>
         /// Records a Pending testimonial for one of the customer's own Completed bookings.
@@ -77,6 +82,20 @@ namespace System_ApiTest.Application.Services
                 throw new BookingRuleException("You have already reviewed this booking.");
             }
 
+            /* Sentiment, after the review is safely stored: the customer's submission must not
+               depend on it. AnalyzeAsync already falls back to the lexicon for model problems;
+               this catch is for anything else (the save itself, say). A review left without a
+               sentiment is picked up by AnalyzeMissingAsync from the moderation queue. */
+            try
+            {
+                await _sentiment.ApplyAsync(testimonial);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception)
+            {
+                // Deliberately swallowed; see above.
+            }
+
             return testimonial;
         }
 
@@ -101,7 +120,13 @@ namespace System_ApiTest.Application.Services
                     t.Id, t.CustomerId, t.AuthorName, t.Customer.Email,
                     t.BookingId, t.Booking.BookingName, t.Booking.EventDate,
                     t.Rating, t.Body, t.Status.ToString(), t.SubmittedAt,
-                    t.ModeratedAt, t.ModeratedById, t.ModerationNote))
+                    t.ModeratedAt, t.ModeratedById, t.ModerationNote,
+                    t.Sentiment == null ? null : t.Sentiment.ToString(),
+                    t.SentimentScore, t.SentimentReason, t.SentimentSource,
+                    // Same rule as Sentimentservice.IsRatingMismatch, written out so it
+                    // translates to SQL.
+                    (t.Rating >= 4 && t.Sentiment == TestimonialSentiment.Negative) ||
+                    (t.Rating <= 2 && t.Sentiment == TestimonialSentiment.Positive)))
                 .ToListAsync(ct);
         }
 

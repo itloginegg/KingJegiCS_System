@@ -13,6 +13,14 @@ namespace System_ApiTest.Domain.Entities
         Rejected
     }
 
+    /// <summary>What the review's TEXT says, as opposed to its star rating. Stored as a string.</summary>
+    public enum TestimonialSentiment
+    {
+        Positive,
+        Neutral,
+        Negative
+    }
+
     /// <summary>
     /// A customer's review of a completed booking.
     ///
@@ -68,6 +76,24 @@ namespace System_ApiTest.Domain.Entities
         /// <summary>Internal note on the decision (never shown publicly).</summary>
         [MaxLength(500)]
         public string? ModerationNote { get; set; }
+
+        // ---- Sentiment (see Sentimentservice) ----
+        // Null on reviews submitted before sentiment existed, until an admin analyzes them.
+
+        public TestimonialSentiment? Sentiment { get; set; }
+
+        /// <summary>-1 (very negative) to +1 (very positive).</summary>
+        public decimal? SentimentScore { get; set; }
+
+        /// <summary>One line on why, for the moderator. Never shown publicly.</summary>
+        [MaxLength(300)]
+        public string? SentimentReason { get; set; }
+
+        /// <summary>"Gemini" or "Lexicon": which method produced the result.</summary>
+        [MaxLength(20)]
+        public string? SentimentSource { get; set; }
+
+        public DateTime? SentimentAnalyzedAt { get; set; }
     }
 }
 

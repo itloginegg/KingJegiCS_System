@@ -645,6 +645,8 @@ namespace System_ApiTest.Infrastructure.Persistence
             b.Entity<Testimonial>(e =>
             {
                 e.Property(t => t.Status).HasConversion<string>().HasMaxLength(10);
+                e.Property(t => t.Sentiment).HasConversion<string>().HasMaxLength(10);
+                e.Property(t => t.SentimentScore).HasPrecision(3, 2);
 
                 // One review per booking — the anti-spam control, enforced in the DB so a
                 // concurrent double-submit can't slip past the service's check.

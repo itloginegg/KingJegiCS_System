@@ -56,7 +56,19 @@ export interface Testimonial {
   moderatedAt: string | null;
   moderatedById: string | null;
   moderationNote: string | null;
+  /** What the review TEXT says. Null until analyzed; always null on the customer's own list. */
+  sentiment: TestimonialSentiment | null;
+  /** -1 (very negative) to 1 (very positive). */
+  sentimentScore: number | null;
+  /** One line on why, for the moderator. */
+  sentimentReason: string | null;
+  /** 'Gemini' (AI) or 'Lexicon' (the rule-based fallback). */
+  sentimentSource: 'Gemini' | 'Lexicon' | null;
+  /** 4–5 stars with negative text, or 1–2 stars with positive text. */
+  ratingMismatch: boolean;
 }
+
+export type TestimonialSentiment = 'Positive' | 'Neutral' | 'Negative';
 
 async function readErrorMessage(res: Response): Promise<string | null> {
   try {
@@ -134,6 +146,22 @@ export function moderateTestimonial(
     status,
     note: note ?? null,
   });
+}
+
+/** Owner/Assistant: analyze up to `max` reviews that have no sentiment yet. */
+export function analyzeMissingSentiment(
+  token: string,
+  max = 20,
+): Promise<{ analyzed: number; remaining: number }> {
+  return request(`/api/Testimonials/sentiment/analyze-missing?max=${max}`, 'POST', token);
+}
+
+/** Owner/Assistant: re-run sentiment analysis for one review. */
+export function reanalyzeSentiment(
+  token: string,
+  id: string,
+): Promise<Pick<Testimonial, 'id' | 'sentiment' | 'sentimentScore' | 'sentimentReason' | 'sentimentSource' | 'ratingMismatch'>> {
+  return request(`/api/Testimonials/${id}/sentiment`, 'POST', token);
 }
 
 /** Customer: submit a review for one of their own Completed bookings. */

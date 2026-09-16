@@ -26,11 +26,13 @@ namespace System_ApiTest.Controllers
     {
         private readonly Testimonialservice _testimonials;
         private readonly Auditlogservice _audit;
+        private readonly Sentimentservice _sentiment;
 
-        public TestimonialsController(Testimonialservice testimonials, Auditlogservice audit)
+        public TestimonialsController(Testimonialservice testimonials, Auditlogservice audit, Sentimentservice sentiment)
         {
             _testimonials = testimonials;
             _audit = audit;
+            _sentiment = sentiment;
         }
 
         // ---------------- Public ----------------
@@ -90,6 +92,39 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>Approves or rejects one testimonial.</summary>
+        /// <summary>
+        /// Analyzes up to <paramref name="max"/> reviews that have no sentiment yet (ones from
+        /// before sentiment analysis existed). Returns how many were done and how many remain.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("sentiment/analyze-missing")]
+        public async Task<IActionResult> AnalyzeMissing([FromQuery] int max = 20, CancellationToken ct = default)
+        {
+            var (analyzed, remaining) = await _sentiment.AnalyzeMissingAsync(max, ct);
+            return Ok(new SentimentBackfillDto(analyzed, remaining));
+        }
+
+        /// <summary>Re-runs sentiment analysis for one review, e.g. one the lexicon scored while Gemini was down.</summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{id:guid}/sentiment")]
+        public async Task<IActionResult> Reanalyze(Guid id, CancellationToken ct = default)
+        {
+            try
+            {
+                var t = await _sentiment.ReanalyzeAsync(id, ct);
+                return Ok(new
+                {
+                    t.Id,
+                    Sentiment = t.Sentiment?.ToString(),
+                    t.SentimentScore,
+                    t.SentimentReason,
+                    t.SentimentSource,
+                    RatingMismatch = Sentimentservice.IsRatingMismatch(t.Rating, t.Sentiment),
+                });
+            }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost("{id:guid}/moderate")]
         public async Task<IActionResult> Moderate(Guid id, [FromBody] TestimonialModerateDto dto)
