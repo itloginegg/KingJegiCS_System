@@ -56,6 +56,13 @@ const BASE_COLUMNS: Column[] = [
 const NOTES_COLUMN: Column = { key: 'adminNote', label: 'Notes' };
 const ACTION_COLUMN: Column = { key: 'action', label: 'Action' };
 
+/* The Action column stays pinned to the right edge while the rest of the table scrolls
+   sideways, so a booking's actions are always one click away. It carries its own
+   background (the row and header grounds) or the scrolled cells would show through, and
+   a soft left shadow marks where the scrolling part slides under it. */
+const PINNED_RIGHT_HEAD = 'sticky right-0 z-[1] bg-[var(--bg-subtle)] shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.18)]';
+const PINNED_RIGHT_CELL = 'sticky right-0 z-[1] bg-[var(--surface)] shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.18)]';
+
 const columnsFor = (group: BookingGroupKey): Column[] =>
   group === 'Confirmed'
     ? [...BASE_COLUMNS, NOTES_COLUMN, ACTION_COLUMN]
@@ -376,7 +383,7 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
                             aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                             className={`whitespace-nowrap px-3 py-2.5 text-[0.5625rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] ${
                               col.align === 'right' ? 'text-right' : ''
-                            }`}
+                            } ${col.key === 'action' ? PINNED_RIGHT_HEAD : ''}`}
                           >
                             {col.sort ? (
                               <button
@@ -464,7 +471,7 @@ export function BookingsTable({ rows, actions, busy, onViewAll, activeGroup }: B
                             </td>
                           )}
 
-                          <td className="px-3 py-3">
+                          <td className={`px-3 py-3 ${PINNED_RIGHT_CELL}`}>
                             <RowActionMenu
                               label={`Actions for ${b.bookingName}`}
                               // Completed is terminal: the row stays readable, the menu

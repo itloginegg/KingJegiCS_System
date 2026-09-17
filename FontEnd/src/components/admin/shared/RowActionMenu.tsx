@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MoreHorizontal } from 'lucide-react';
 import type { ActionItem } from './types';
 
@@ -16,12 +17,23 @@ export interface RowActionMenuProps {
  * Roving focus with the arrow keys, Home/End, Esc to dismiss, and focus returned to
  * the trigger on close. Disabled items stay in the DOM (so the menu doesn't reshuffle
  * between rows) but are skipped when arrowing.
+ *
+ * The menu is portalled to <body> and positioned against the trigger, not rendered
+ * inside the row. Every table that uses this sits in an `overflow-x: auto` scroller
+ * inside an `overflow: hidden` card, and a horizontal scroller clips vertically too,
+ * so an in-row menu on the last rows was cut off at the table's bottom edge, or turned
+ * the table into a tiny scroll box, and its lower items couldn't be clicked. It opens
+ * below the trigger, or above when there isn't room, and closes if anything scrolls,
+ * since it would otherwise float away from its row.
  */
 export function RowActionMenu({ items, disabled = false, label }: RowActionMenuProps) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  /* Viewport position of the open menu; null until measured, so it never flashes at 0,0. */
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const menuId = useId();
 
@@ -38,8 +50,17 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
     if (!open) return;
 
     const onPointerDown = (e: PointerEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      // The menu lives in a portal now, so "inside" means the trigger OR the menu.
+      if (!wrapRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
+    /* Scrolling the page or the table moves the row out from under a fixed menu. Scroll
+       inside the menu itself is ignored. */
+    const onScroll = (e: Event) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -49,11 +70,34 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
 
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
     };
   }, [open]);
+
+  /* Place the menu once it has rendered and has a size: right edge aligned with the
+     trigger's, below it, or above it when the bottom of the window is too close. Kept
+     inside the window horizontally too. */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = triggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+    const t = trigger.getBoundingClientRect();
+    const m = menu.getBoundingClientRect();
+    const gap = 4;
+    const margin = 8;
+    const fitsBelow = t.bottom + gap + m.height <= window.innerHeight - margin;
+    const fitsAbove = t.top - gap - m.height >= margin;
+    const top = fitsBelow || !fitsAbove ? t.bottom + gap : t.top - gap - m.height;
+    const left = Math.min(Math.max(margin, t.right - m.width), window.innerWidth - m.width - margin);
+    setPos({ top: Math.max(margin, top), left });
+  }, [open, items.length]);
 
   /* Focus follows activeIndex while the menu is open. */
   useEffect(() => {
@@ -68,6 +112,8 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
     if (enabledIndexes.length > 0) {
       setActiveIndex(where === 'first' ? enabledIndexes[0] : enabledIndexes[enabledIndexes.length - 1]);
     }
+    // Only a fresh open is re-measured; Home/End inside an open menu keep their place.
+    if (!open) setPos(null);
     setOpen(true);
   };
 
@@ -100,8 +146,9 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
         <MoreHorizontal size={16} strokeWidth={2} />
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
+          ref={menuRef}
           id={menuId}
           role="menu"
           aria-label={label}
@@ -112,7 +159,10 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
             else if (e.key === 'End') { e.preventDefault(); openAt('last'); }
             else if (e.key === 'Tab') close();
           }}
-          className="absolute right-0 top-full z-30 mt-1 min-w-[190px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-[var(--shadow-lg)]"
+          /* Fixed and above the dashboard's chrome, but below its modals (z 120+), which
+             an action opens after this closes. Hidden until placed. */
+          style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden', zIndex: 110 }}
+          className="min-w-[190px] max-h-[calc(100vh-16px)] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-[var(--shadow-lg)]"
         >
           {items.map((item, i) => (
             <button
@@ -134,7 +184,8 @@ export function RowActionMenu({ items, disabled = false, label }: RowActionMenuP
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
