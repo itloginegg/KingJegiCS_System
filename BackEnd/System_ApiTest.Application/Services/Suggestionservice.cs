@@ -137,6 +137,10 @@ namespace System_ApiTest.Application.Services
 
                 foreach (var pkg in candidatePackages)
                 {
+                    // A proposal must be bookable, and the booking refuses a package that
+                    // isn't for this event type. EventTypes is a JSON column, so this is
+                    // filtered here rather than in the query.
+                    if (!pkg.SuitsEventType(req.EventType)) continue;
                     var picks = await TryAutoPickSlotsAsync(pkg.Id, req.Preferences);
                     if (picks is null) continue;   // a slot can't be filled → not submit-ready, skip
                     packages.Add(pkg);
@@ -496,6 +500,7 @@ namespace System_ApiTest.Application.Services
                     package is null ? "This package is no longer offered."
                     : req.BookingType != BookingType.FullService ? "Only a full-service event can include a menu package."
                     : guests < package.MinPax ? $"Guest count {guests} is below the package minimum of {package.MinPax}."
+                    : !package.SuitsEventType(req.EventType) ? package.EventTypeMismatchMessage(req.EventType)
                     : null;
 
                 var price = 0m;

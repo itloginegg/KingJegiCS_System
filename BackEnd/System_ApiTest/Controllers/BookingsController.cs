@@ -521,6 +521,8 @@ namespace System_ApiTest.Controllers
                     var pkg = await _db.MenuPackages.FindAsync(dto.MenuPackageId.Value);
                     if (pkg is null)
                         throw new BookingRuleException($"Menu package with ID '{dto.MenuPackageId.Value}' was not found.");
+                    if (!pkg.SuitsEventType(booking.EventType))
+                        throw new BookingRuleException(pkg.EventTypeMismatchMessage(booking.EventType));
                 }
 
                 booking.MenuPackageId = dto.MenuPackageId;

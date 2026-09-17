@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { readSession } from '../../lib/tokenStorage';
-import { fetchPackages, type AdminPackage } from '../../api/packageAdminApi';
+import { fetchPackages, packageEventTypesLabel, packageSuitsEventType, type AdminPackage } from '../../api/packageAdminApi';
 import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../../api/menuAdminApi';
 import { fetchRentalItems, type AdminRentalItem } from '../../api/rentalAdminApi';
 import { fetchServiceItems, type AdminServiceItem } from '../../api/serviceAdminApi';
@@ -220,11 +220,16 @@ export function DraftItemsEditor({ detail, onChanged, notify }: DraftItemsEditor
               }}
             >
               <option value="">No package</option>
-              {packages.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.packageName} — {fmt(p.basePrice)} (min {p.minPax} pax)
-                </option>
-              ))}
+              {/* Only packages made for this booking's event type; the server refuses the
+                  rest. One already attached stays listed so the select can show it. */}
+              {packages
+                .filter((p) => packageSuitsEventType(p, booking.eventType) || p.id === booking.menuPackageId)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.packageName} — {fmt(p.basePrice)} (min {p.minPax} pax)
+                    {!packageSuitsEventType(p, booking.eventType) ? ` · only for ${packageEventTypesLabel(p)}` : ''}
+                  </option>
+                ))}
             </select>
           </div>
 

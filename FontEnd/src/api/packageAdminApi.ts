@@ -69,6 +69,8 @@ export interface AdminPackage {
   fixedItems: MenuItemBriefDto[];
   /** The package's own uploaded gallery art, in display order. */
   images: MenuPackageImage[];
+  /** Event types this package is for, e.g. ['Birthday', 'Debut']. Empty = any event type. */
+  eventTypes: string[];
 }
 
 export interface AdminPackageCreate {
@@ -81,6 +83,34 @@ export interface AdminPackageCreate {
   inclusions: string[];
   fixedItemIds: string[];
   slots: PackageSlotDto[];
+  /** Event types this package is for. Empty = any event type. */
+  eventTypes: string[];
+}
+
+/** The event types a package can be limited to, matching the backend EventType enum. */
+export const PACKAGE_EVENT_TYPES: { value: string; label: string }[] = [
+  { value: 'Wedding', label: 'Wedding' },
+  { value: 'Birthday', label: 'Birthday' },
+  { value: 'Debut', label: 'Debut' },
+  { value: 'Corporate', label: 'Corporate' },
+  { value: 'Others', label: 'Other' },
+];
+
+/**
+ * Whether a package may be booked for this event type: the same rule the server enforces
+ * (Menupackage.SuitsEventType). A package with no event types suits any; one limited to
+ * some doesn't suit a booking with no event type yet.
+ */
+export function packageSuitsEventType(pkg: { eventTypes?: string[] | null }, eventType: string | null | undefined): boolean {
+  const types = pkg.eventTypes ?? [];
+  return types.length === 0 || (!!eventType && types.includes(eventType));
+}
+
+/** "Birthday or Debut" for display. */
+export function packageEventTypesLabel(pkg: { eventTypes?: string[] | null }): string {
+  const types = pkg.eventTypes ?? [];
+  if (types.length === 0) return 'Any event type';
+  return types.map((t) => PACKAGE_EVENT_TYPES.find((e) => e.value === t)?.label ?? t).join(' or ');
 }
 
 export class PackageApiError extends Error {

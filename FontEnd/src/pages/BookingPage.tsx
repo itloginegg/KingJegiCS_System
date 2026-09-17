@@ -13,7 +13,7 @@ import { useCart } from '../hooks/useCart';
 import { snapFromQuote } from '../context/CartContext';
 import { holdPlanImages } from '../lib/planImages';
 import { readSession } from '../lib/tokenStorage';
-import { fetchPackages, type AdminPackage } from '../api/packageAdminApi';
+import { fetchPackages, packageSuitsEventType, type AdminPackage } from '../api/packageAdminApi';
 import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
 import { fetchRentalItems, type AdminRentalItem } from '../api/rentalAdminApi';
 import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
@@ -493,19 +493,23 @@ export function BookingPage() {
 
   const selectedPkg = packages.find(p => p.id === selectedPackageId);
 
-  // Step 3 only offers packages whose pax range covers the guest count.
+  // Step 3 only offers packages whose pax range covers the guest count, and that are
+  // made for the chosen event type (a wedding package can't go on a birthday; the
+  // server refuses it too).
   const fitsGuests = (pkg: { minPax: number; maxPax: number }) => guests >= pkg.minPax && guests <= pkg.maxPax;
-  const eligiblePackages = packages.filter(fitsGuests);
+  const fitsEvent = (pkg: AdminPackage) => packageSuitsEventType(pkg, eventType || null);
+  const packagesForEvent = packages.filter(fitsEvent);
+  const eligiblePackages = packagesForEvent.filter(fitsGuests);
 
-  /* A package preselected (e.g. from PackagePage) or picked before the guest count
-     changed is dropped once Step 3 shows it can't host that many guests. Waits for
-     Step 3 so the preset survives until Step 2's guest count is entered. */
+  /* A package preselected (e.g. from PackagePage) or picked before the guest count or
+     event type changed is dropped once Step 3 shows it no longer fits. Waits for Step 3
+     so the preset survives until Step 2's answers are in. */
   useEffect(() => {
-    if (step !== 3 || !selectedPkg || fitsGuests(selectedPkg)) return;
+    if (step !== 3 || !selectedPkg || (fitsGuests(selectedPkg) && fitsEvent(selectedPkg))) return;
     setSelectedPackageId(null);
     setPackageTemplate(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, selectedPkg, guests]);
+  }, [step, selectedPkg, guests, eventType]);
 
   const menuItemTotal = Object.entries(menuItemQty).reduce((s, [id, q]) => {
     const item = menuItems.find(m => m.id === id);
@@ -1529,7 +1533,9 @@ export function BookingPage() {
 
                       {eligiblePackages.length === 0 && (
                         <p className="bk-hint">
-                          No package fits {guests} guests. Go back to adjust the guest count, or build your event from the add-ons below.
+                          {packagesForEvent.length === 0
+                            ? `We don't have a package for a ${EVENT_TYPES.find((t) => t.value === eventType)?.label.toLowerCase() ?? 'this kind of'} event yet. Build your event from the add-ons below, or go back to change the event type.`
+                            : `No ${EVENT_TYPES.find((t) => t.value === eventType)?.label.toLowerCase() ?? ''} package fits ${guests} guests. Go back to adjust the guest count, or build your event from the add-ons below.`}
                         </p>
                       )}
                       <div className="bk-catalog-grid">

@@ -859,6 +859,9 @@ namespace System_ApiTest.Application.Services
                     
                     if (guestCount < pkg.MinPax)
                         throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+
+                    if (!pkg.SuitsEventType(type))
+                        throw new BookingRuleException(pkg.EventTypeMismatchMessage(type));
                 }
             }
 
@@ -1347,6 +1350,11 @@ namespace System_ApiTest.Application.Services
                 
                 if (guestCount < pkg.MinPax)
                     throw new BookingRuleException($"Guest count {guestCount} is below the package minimum of {pkg.MinPax}.");
+
+                // Against the event type being SET, so changing a Wedding to a Birthday while
+                // it keeps a wedding-only package is refused rather than quietly allowed.
+                if (!pkg.SuitsEventType(type))
+                    throw new BookingRuleException(pkg.EventTypeMismatchMessage(type));
             }
 
             var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();

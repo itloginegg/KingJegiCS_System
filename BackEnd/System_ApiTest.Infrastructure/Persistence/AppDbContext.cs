@@ -246,6 +246,7 @@ namespace System_ApiTest.Infrastructure.Persistence
                 e.Property(p => p.BasePrice).HasPrecision(18, 2);
                 e.Property(p => p.PricePerExtraPax).HasPrecision(18, 2);
                 e.Property(p => p.Inclusions).HasConversion(stringListConverter, stringListComparer);
+                e.Property(p => p.EventTypes).HasConversion(stringListConverter, stringListComparer);
                 e.ToTable(t =>
                 {
                     t.HasCheckConstraint("CK_MenuPackage_MinPaxPositive", "[MinPax] > 0");

@@ -18,6 +18,8 @@ import {
   type AdminPackageCreate,
   type PackageSlotDto,
   type SlotCategoryDto,
+  PACKAGE_EVENT_TYPES,
+  packageEventTypesLabel,
 } from '../api/packageAdminApi';
 import { fetchMenuItems, type AdminMenuItem } from '../api/menuAdminApi';
 import { readSession } from '../lib/tokenStorage';
@@ -52,6 +54,7 @@ export function AdminPackagesTab() {
     inclusions: [],
     fixedItemIds: [],
     slots: [],
+    eventTypes: [],
   });
   const [pkgInclusionInput, setPkgInclusionInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -215,6 +218,7 @@ export function AdminPackagesTab() {
         inclusions: [...pkg.inclusions],
         fixedItemIds: pkg.fixedItems.map((f) => f.id),
         slots: pkg.slots, // Slots aren't editable via this PUT, but needed for DTO
+        eventTypes: [...(pkg.eventTypes ?? [])],
       });
       setSelectedPackageId(pkg.id);
     } else {
@@ -228,6 +232,7 @@ export function AdminPackagesTab() {
         inclusions: [],
         fixedItemIds: [],
         slots: [],
+        eventTypes: [],
       });
     }
     setPkgFormOpen(true);
@@ -651,6 +656,12 @@ export function AdminPackagesTab() {
 
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 200 }}>
+                <FieldLabel text="Event types" />
+                <div style={{ fontSize: '0.8rem', color: (selectedPackage.eventTypes ?? []).length === 0 ? 'var(--text-muted)' : 'var(--text-primary)', marginTop: '0.5rem' }}>
+                  {packageEventTypesLabel(selectedPackage)}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
                 <FieldLabel text="Inclusions" />
                 {selectedPackage.inclusions.length === 0 ? (
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No inclusions</div>
@@ -772,6 +783,31 @@ export function AdminPackagesTab() {
                 <input className="adm-input square" type="number" min={0} value={pkgFormItem.pricePerExtraPax} onChange={(e) => setPkgFormItem({ ...pkgFormItem, pricePerExtraPax: Number(e.target.value) || 0 })} id="admin-packages-price-per-extra-pax"/>
               </div>
               <div className="form-row"></div>
+
+              {/* Event types: who may book this package. Enforced by the server too. */}
+              <div className="form-row full">
+                <label>Suitable event types</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem 1.1rem' }}>
+                  {PACKAGE_EVENT_TYPES.map((t) => (
+                    <label key={t.value} style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem', cursor: 'pointer', textTransform: 'none', letterSpacing: 'normal' }}>
+                      <input
+                        type="checkbox"
+                        checked={pkgFormItem.eventTypes.includes(t.value)}
+                        onChange={(e) => setPkgFormItem((prev) => ({
+                          ...prev,
+                          eventTypes: e.target.checked
+                            ? [...prev.eventTypes, t.value]
+                            : prev.eventTypes.filter((v) => v !== t.value),
+                        }))}
+                      />
+                      {t.label}
+                    </label>
+                  ))}
+                </div>
+                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.72rem', fontWeight: 300, color: 'var(--text-dim)', textTransform: 'none', letterSpacing: 'normal' }}>
+                  Customers only see this package for the ticked event types. Leave all unticked to offer it for any event.
+                </span>
+              </div>
 
               {/* Inclusions */}
               <div className="form-row full">

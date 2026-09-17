@@ -71,6 +71,12 @@ namespace System_ApiTest.Application.DTOs
         /// <summary>Non-food inclusions for display (styling, waiters, sound & lights, …).</summary>
         public List<string> Inclusions { get; set; } = new();
 
+        /// <summary>
+        /// Event types this package is for. Empty = any event type. Real EventType values, so
+        /// an unknown name is refused at binding rather than stored.
+        /// </summary>
+        public List<EventType> EventTypes { get; set; } = new();
+
         /// <summary>Always-included dish IDs (Fish Fillet, Rice, Iced Tea, …).</summary>
         public List<Guid> FixedItemIds { get; set; } = new();
 
@@ -120,7 +126,9 @@ namespace System_ApiTest.Application.DTOs
         List<PackageSlotDto> Slots,
         List<MenuItemBriefDto> FixedItems,
         /// <summary>The package's own uploaded gallery art, in DisplayOrder.</summary>
-        List<MenuPackageImageDto> Images);
+        List<MenuPackageImageDto> Images,
+        /// <summary>Event types this package is for; empty = any.</summary>
+        List<string>? EventTypes = null);
 
     // ===== Customer-facing template (what to render on the "pick your dishes" screen) =====
 

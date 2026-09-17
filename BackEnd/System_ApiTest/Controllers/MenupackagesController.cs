@@ -86,7 +86,8 @@ namespace System_ApiTest.Controllers
                 MinPax = dto.MinPax,
                 MaxPax = dto.MaxPax,
                 PricePerExtraPax = dto.PricePerExtraPax,
-                Inclusions = dto.Inclusions
+                Inclusions = dto.Inclusions,
+                EventTypes = dto.EventTypes.Distinct().Select(t => t.ToString()).ToList()
             };
 
             foreach (var slot in dto.Slots)
@@ -144,6 +145,7 @@ namespace System_ApiTest.Controllers
             pkg.MaxPax = dto.MaxPax;
             pkg.PricePerExtraPax = dto.PricePerExtraPax;
             pkg.Inclusions = dto.Inclusions;
+            pkg.EventTypes = dto.EventTypes.Distinct().Select(t => t.ToString()).ToList();
 
             var oldFixedItems = pkg.FixedItems.ToList();
             _db.MenuPackageFixedItems.RemoveRange(oldFixedItems);
@@ -436,7 +438,8 @@ namespace System_ApiTest.Controllers
                 p.FixedItems.Select(f => Brief(f.MenuItem)).ToList(),
                 p.Images.OrderBy(i => i.DisplayOrder).ThenBy(i => i.Id)
                         .Select(i => new MenuPackageImageDto(i.Id, i.ImageUrl, i.Caption, i.DisplayOrder))
-                        .ToList());
+                        .ToList(),
+                p.EventTypes);
     }
 }
  
