@@ -203,7 +203,7 @@ export function PaymentsTab({
                   <div>
                     <h2 className="adm-title">Payments</h2>
                     <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', marginTop: '0.3rem' }}>
-                      Live from the backend — <code style={{ fontSize: '0.66rem' }}>/api/Payments/recent</code>
+                      Recent payments, refund requests and anything waiting for verification.
                     </p>
                   </div>
 

@@ -203,7 +203,7 @@ export function ServiceItemsTab() {
     <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
       <AdminTabHeader
         title="Service Items"
-        endpoints="Manage event service offerings (e.g., sound systems, DJs, photo booths) and sync with the C# backend."
+        subtitle="Event services such as decor, sound and lights, hosts and serving staff."
         searchPlaceholder="Search service name…"
         searchValue={serviceSearch}
         onSearchChange={setServiceSearch}

@@ -178,7 +178,7 @@ export function BookingHistoriesTab({ reservations, bookingId, onSelectBooking }
       <div>
         <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Booking Histories</h2>
         <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--text-muted)', maxWidth: '56ch' }}>
-          Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--text-muted)' }}>/api/Bookings/[id]/history</span>. Every mutating call writes a snapshot of the booking as it was <em>before</em> the change.
+          Every time a booking is changed, a copy of how it looked <em>before</em> the change is kept here.
         </p>
       </div>
 

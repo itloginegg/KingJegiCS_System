@@ -285,7 +285,7 @@ export function RentalsTab({
     <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
       <AdminTabHeader
         title="Rentals"
-        endpoints="Manage party rental equipment and sync changes with the C# backend."
+        subtitle="Party rental equipment, stock levels and deliveries."
         searchPlaceholder="Search name or category…"
         searchValue={rentalSearch}
         onSearchChange={setRentalSearch}
@@ -616,7 +616,7 @@ export function RentalsTab({
                       <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.15rem' }}>
                         {rentalFormItem.imageFile
                           ? `${(rentalFormItem.imageFile.size / 1024 / 1024).toFixed(2)} MB`
-                          : 'Stored on backend server'}
+                          : 'Already uploaded'}
                       </div>
                     </div>
                     <button

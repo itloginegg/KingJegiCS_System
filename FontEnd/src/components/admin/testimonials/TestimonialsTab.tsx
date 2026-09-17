@@ -172,7 +172,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
         <div>
           <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', lineHeight: 1.1, color: 'var(--band-text)' }}>Testimonial Moderation</h2>
           <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--band-muted)' }}>
-            Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--band-muted)' }}>/api/Testimonials</span> · approved reviews appear on the landing page
+            Customer reviews waiting for a decision · approved reviews appear on the landing page
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>

@@ -52,7 +52,7 @@ export function AuditLogTab() {
         <div>
           <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>Audit Log</h2>
           <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
-            Live from the backend — <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 500, lineHeight: 1, color: 'var(--text-muted)' }}>/api/Auditlogs</span> · Owner only
+            Every change made by staff, who made it and when · Owner only
           </p>
         </div>
         <span onClick={() => void loadAuditLogs(auditPage)} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>

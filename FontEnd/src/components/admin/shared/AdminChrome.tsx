@@ -56,7 +56,7 @@ export function AdmErrorCard({ title, message, onRetry, retryLabel = 'Try Again'
 
 export function AdminTabHeader({
   title,
-  endpoints,
+  subtitle,
   searchPlaceholder,
   searchValue,
   onSearchChange,
@@ -65,7 +65,8 @@ export function AdminTabHeader({
   refreshing,
 }: {
   title: string;
-  endpoints?: React.ReactNode;
+  /** One plain line under the title saying what the tab is for. Written for staff, not developers. */
+  subtitle?: React.ReactNode;
   searchPlaceholder?: string;
   searchValue?: string;
   onSearchChange?: (val: string) => void;
@@ -79,9 +80,9 @@ export function AdminTabHeader({
         <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: '24px', fontWeight: 600, lineHeight: 1.1, letterSpacing: '-0.028em', color: 'var(--text-primary)' }}>
           {title}
         </h2>
-        {endpoints && (
+        {subtitle && (
           <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.4, color: 'var(--text-muted)' }}>
-            Live from the backend — {endpoints}
+            {subtitle}
           </p>
         )}
       </div>

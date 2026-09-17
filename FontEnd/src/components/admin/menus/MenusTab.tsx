@@ -283,7 +283,7 @@ export function MenusTab() {
     <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
       <AdminTabHeader
         title="Menus & Dishes"
-        endpoints={<><code style={{ fontSize: '11px', fontFamily: 'var(--font-mono)' }}>/api/Menuitems</code> · <code style={{ fontSize: '11px', fontFamily: 'var(--font-mono)' }}>/api/Menutrays</code></>}
+        subtitle="The dishes and party trays customers can order."
         searchPlaceholder="Search dishes and trays…"
         searchValue={menuSearch}
         onSearchChange={setMenuSearch}
@@ -516,7 +516,7 @@ export function MenusTab() {
                 <h3>{menuFormAction === 'edit' ? 'Edit' : 'Add'} {menuFormMode === 'item' ? 'Dish' : 'Tray'}</h3>
                 <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 300, color: 'var(--text-dim)', margin: 0 }}>
                   {menuFormMode === 'item'
-                    ? 'Create or update a menu dish entry and sync it with the backend.'
+                    ? 'Add a dish to the menu or update its details.'
                     : 'Create or update a party tray with associated dishes.'}
                 </p>
               </div>
@@ -635,12 +635,12 @@ export function MenusTab() {
                         />
                         <div style={{ flex: 1 }}>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.78rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                            {menuFormItem.imageFile ? menuFormItem.imageFile.name : 'Current Server Image'}
+                            {menuFormItem.imageFile ? menuFormItem.imageFile.name : 'Current image'}
                           </div>
                           <div style={{ fontFamily: 'var(--font-body)', fontSize: '0.65rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>
                             {menuFormItem.imageFile
                               ? `${(menuFormItem.imageFile.size / 1024 / 1024).toFixed(2)} MB`
-                              : 'Stored on backend server'}
+                              : 'Already uploaded'}
                           </div>
                         </div>
                         <button
