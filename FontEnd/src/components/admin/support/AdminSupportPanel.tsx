@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HubConnectionBuilder } from '@microsoft/signalr';
 import { API_BASE_URL } from '../../../api/bookingApi';
+import { startLiveHub } from '../../../lib/liveHub';
 import {
   listSupportThreads,
   getSupportThread,
@@ -134,10 +135,9 @@ export function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' 
     });
     // A dead hub isn't fatal — the panel still works on manual refresh — but it
     // must not fail silently, or staff sit waiting for messages that never push.
-    conn.start().catch(() => {
+    return startLiveHub(conn, () => {
       notify('info', 'Live chat updates are unavailable. Reopen a thread to refresh it manually.');
     });
-    return () => { void conn.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

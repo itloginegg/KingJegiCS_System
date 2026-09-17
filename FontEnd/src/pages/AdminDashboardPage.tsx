@@ -29,6 +29,7 @@ import {
   type InvoiceResponseDto,
 } from '../api/bookingApi';
 import { API_BASE_URL } from '../api/bookingApi';
+import { startLiveHub } from '../lib/liveHub';
 import {
   getRecentPayments,
   fetchRefundRequests,
@@ -843,11 +844,9 @@ export function AdminDashboardPage() {
 
     conn.on('NotificationCreated', () => { void loadNotifications(); });
 
-    conn.start().catch(() => {
+    return startLiveHub(conn, () => {
       notify('info', 'Live notifications are unavailable. Open the bell to refresh manually.');
     });
-
-    return () => { void conn.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1235,7 +1234,7 @@ export function AdminDashboardPage() {
                 <div className="adm-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
                   <Circle size={28} strokeWidth={1.5} aria-hidden="true" style={{ color: 'var(--text-dim)', marginBottom: '0.8rem' }} />
                   <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.85rem', fontWeight: 300, color: 'var(--text-muted)' }}>
-                    {placeholderName} management arrives when the backend is wired up.
+                    {placeholderName} isn't available yet.
                   </p>
                 </div>
               </div>

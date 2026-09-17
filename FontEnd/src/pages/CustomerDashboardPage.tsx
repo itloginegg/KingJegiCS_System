@@ -21,6 +21,7 @@ import {
   type InvoiceResponseDto,
   type PaymentRecord,
 } from '../api/bookingApi';
+import { startLiveHub } from '../lib/liveHub';
 import { readSession } from '../lib/tokenStorage';
 import { ToastViewport, useToasts } from '../components/ui/Toasts';
 import {
@@ -249,13 +250,9 @@ export function CustomerDashboardPage() {
     // A dead hub isn't fatal — the dashboard still loads on refresh — but a
     // console-only failure left customers waiting on payment updates that would
     // never arrive, with nothing on screen to say so.
-    conn.start().catch(() => {
+    return startLiveHub(conn, () => {
       notify('info', 'Live payment updates are unavailable. Refresh the page to see the latest status.');
     });
-
-    return () => {
-      void conn.stop();
-    };
   }, [fetchDashboard, notify, loadNotifications]);
 
 
