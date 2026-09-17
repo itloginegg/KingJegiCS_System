@@ -25,6 +25,42 @@ namespace System_ApiTest.Seeding
     /// </summary>
     public static class DbSeeder
     {
+        /// <summary>Waits between attempts, in order; the last delay repeats until seeding succeeds.</summary>
+        private static readonly TimeSpan[] RetryDelays =
+        {
+            TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60),
+        };
+
+        /// <summary>
+        /// Runs <see cref="SeedAsync"/> until it succeeds or the app shuts down. Never throws:
+        /// a failure is logged and retried, so an unreachable or waking database can't crash
+        /// the process. Meant to be started after the app is listening (see Program.cs).
+        /// </summary>
+        public static async Task SeedWithRetryAsync(IServiceProvider services, CancellationToken stopping)
+        {
+            var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("DbSeeder");
+
+            for (var attempt = 1; !stopping.IsCancellationRequested; attempt++)
+            {
+                try
+                {
+                    await SeedAsync(services);
+                    if (attempt > 1)
+                        logger.LogInformation("Startup seeding succeeded on attempt {Attempt}.", attempt);
+                    return;
+                }
+                catch (Exception ex) when (!stopping.IsCancellationRequested)
+                {
+                    var delay = RetryDelays[Math.Min(attempt - 1, RetryDelays.Length - 1)];
+                    logger.LogWarning(ex,
+                        "Startup seeding failed on attempt {Attempt} (database unreachable or still waking up). " +
+                        "The API keeps running; retrying in {Delay}s.", attempt, (int)delay.TotalSeconds);
+                    try { await Task.Delay(delay, stopping); }
+                    catch (OperationCanceledException) { return; }
+                }
+            }
+        }
+
         public static async Task SeedAsync(IServiceProvider services)
         {
             using var scope = services.CreateScope();

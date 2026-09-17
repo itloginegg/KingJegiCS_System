@@ -103,9 +103,25 @@ builder.Services.AddControllers()
 // user-initiated transactions outright, so switching this on beforehand would have thrown
 // at runtime on every booking, payment, allocation and rental path — compiling cleanly and
 // failing only when the code ran.
+//
+// The connect timeout is raised to at least 60 seconds for the same reason. A serverless
+// database that is waking up can take longer than SqlClient's default 30 seconds to finish
+// the login, and that surfaces as a connection TIMEOUT (error -2), which EnableRetryOnFailure
+// does not retry: timeouts are deliberately not treated as transient, because retrying a
+// timed-out write could apply it twice. Giving the connection longer to open is the safe
+// fix. Raised only, never lowered, and applied in code so no App Service setting has to
+// change.
+var defaultConnection = builder.Configuration.GetConnectionString("DefaultConnection");
+if (!string.IsNullOrWhiteSpace(defaultConnection))
+{
+    var csb = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(defaultConnection);
+    if (csb.ConnectTimeout < 60) csb.ConnectTimeout = 60;
+    defaultConnection = csb.ConnectionString;
+}
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
+        defaultConnection,
         sql => sql.EnableRetryOnFailure(
             maxRetryCount: 6,
             maxRetryDelay: TimeSpan.FromSeconds(15),
@@ -397,6 +413,14 @@ using (var startupScope = app.Services.CreateScope())
             + "dotnet user-secrets set \"Speech:ApiKey\" \"<key>\"");
 }
 
-await DbSeeder.SeedAsync(app.Services);
+/* Seeding runs once the app is listening, in the background, retrying until the database
+   answers. It used to be awaited here, before app.Run(): a database slow to wake from
+   auto-pause blocked the app from binding its port, and a connection timeout escaped as an
+   unhandled exception that killed the process, so App Service answered 503 and restarted it
+   into the same failure. Seeding only creates rows that are missing (SystemSettings, the
+   Owner), which on a running system already exist, so nothing depends on it finishing
+   before the first request. */
+app.Lifetime.ApplicationStarted.Register(() =>
+    _ = DbSeeder.SeedWithRetryAsync(app.Services, app.Lifetime.ApplicationStopping));
 
 app.Run();
