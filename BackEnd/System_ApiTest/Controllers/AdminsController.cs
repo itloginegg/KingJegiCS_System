@@ -2,6 +2,7 @@ using System_ApiTest.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using System_ApiTest.Infrastructure.Persistence;
@@ -82,6 +83,7 @@ public class AdminsController : ControllerBase
     /// </summary>
     [AllowAnonymous]
     [HttpPost("login")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     public async Task<IActionResult> Login([FromBody] LoginDto dto)
     {
         if (!ModelState.IsValid)
@@ -134,6 +136,7 @@ public class AdminsController : ControllerBase
     /// <summary>Login step 2: confirms the emailed code and issues the JWT.</summary>
     [AllowAnonymous]
     [HttpPost("login/verify-otp")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     public async Task<IActionResult> VerifyLoginOtp([FromBody] VerifyCodeDto dto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);

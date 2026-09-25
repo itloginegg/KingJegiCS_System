@@ -2,6 +2,7 @@ using System_ApiTest.Application.Common.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using System.IdentityModel.Tokens.Jwt;
 using System_ApiTest.Infrastructure.Persistence;
@@ -33,6 +34,7 @@ namespace System_ApiTest.Controllers
         }
 
         [HttpPost("register")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
         public async Task<IActionResult> Register([FromBody] CustomerRegistrationDto dto)
         {
             // 1. Data-annotation validation (required, email format, phone format,
@@ -101,6 +103,7 @@ namespace System_ApiTest.Controllers
         /// <summary>Confirms the registration code -> the account becomes verified and can log in.</summary>
         [AllowAnonymous]
         [HttpPost("verify-email")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
         public async Task<IActionResult> VerifyEmail([FromBody] VerifyCodeDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -122,6 +125,7 @@ namespace System_ApiTest.Controllers
         /// <summary>Resends the registration verification code (60-second cooldown).</summary>
         [AllowAnonymous]
         [HttpPost("resend-verification")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
         public async Task<IActionResult> ResendVerification([FromBody] ResendCodeDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -147,6 +151,7 @@ namespace System_ApiTest.Controllers
         /// it was the email or the password that was wrong (prevents user enumeration).
         /// </summary>
         [HttpPost("login")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
             if (!ModelState.IsValid)
@@ -200,6 +205,7 @@ namespace System_ApiTest.Controllers
         /// <summary>Login step 2: confirms the emailed code and issues the JWT.</summary>
         [AllowAnonymous]
         [HttpPost("login/verify-otp")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
         public async Task<IActionResult> VerifyLoginOtp([FromBody] VerifyCodeDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);

@@ -25,6 +25,7 @@ import {
   useVoicePresence,
 } from '../../lib/assistantVoice';
 import { AvatarStage } from '../avatar/AvatarStage';
+import { plainChatText, renderChatText } from '../../lib/chatText';
 
 /*
  * Global floating assistant (item 3). Mounted on every page. Logged-in customers get
@@ -428,7 +429,7 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
     if (!ttsSupported) return;
     try {
       stopSpeaking();
-      const u = new SpeechSynthesisUtterance(text);
+      const u = new SpeechSynthesisUtterance(plainChatText(text));
       u.lang = 'en-PH';
       // These are what put the avatar into its talking loop and take it out again.
       // onerror matters as much as onend: a failed utterance that never reported would
@@ -693,7 +694,8 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
           <div className="cw-hint">Say hello 👋 — try “What can I get for 100 guests on a ₱80,000 budget?”</div>
         ) : messages.map((m) => (
           <div key={m.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', alignItems: m.role === 'me' ? 'flex-end' : 'flex-start' }}>
-            <div className={`cw-bubble ${m.role}`}>{m.text}</div>
+            {/* Assistant replies carry Gemini's light markdown; the customer's own text is shown as typed. */}
+            <div className={`cw-bubble ${m.role}`}>{m.role === 'assistant' ? renderChatText(m.text) : m.text}</div>
             {m.proposals && m.proposals.length > 0 && (
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
                 {m.proposals.map((p) => (

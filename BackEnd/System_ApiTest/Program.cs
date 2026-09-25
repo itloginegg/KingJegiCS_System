@@ -127,6 +127,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
             maxRetryDelay: TimeSpan.FromSeconds(15),
             errorNumbersToAdd: null)));
 builder.Services.AddMemoryCache();
+builder.Services.AddAppRateLimits();
 builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -245,7 +246,19 @@ else
     app.UseHttpsRedirection();
 }
 
+// Uploaded files (menu images, support attachments) are served from this origin; nosniff
+// stops a browser treating a mislabelled upload as something other than its declared type.
+// First, so every response carries it, including CORS and rate-limit refusals.
+app.Use((context, next) =>
+{
+    context.Response.Headers.XContentTypeOptions = "nosniff";
+    return next(context);
+});
+
 app.UseCors(FrontendCors);
+// After CORS, so a 429 still carries the CORS headers the browser needs to read it.
+app.UseRateLimiter();
+
 app.UseStaticFiles();
 
 // Uploads — gallery/menu/package/rental images and support attachments — are written under
@@ -404,7 +417,8 @@ using (var startupScope = app.Services.CreateScope())
 
     if (!assistant.IsConfigured)
         startupLog.LogWarning(
-            "No Ai:ApiKey — voice and text chat will both return 503. Set it with: "
+            "No Ai:ApiKey — text chat falls back to the rule-based FAQ bot, and voice chat is "
+            + "unavailable. Set it with: "
             + "dotnet user-secrets set \"Ai:ApiKey\" \"<key>\"");
     if (!speech.IsConfigured)
         startupLog.LogWarning(
