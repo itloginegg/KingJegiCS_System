@@ -68,7 +68,20 @@ namespace System_ApiTest.Domain.Entities
         /// <summary>Seeded an assistant conversation when the booking was confirmed.</summary>
         BookingConfirmedNudge,
         /// <summary>Seeded an assistant conversation when the booking was cancelled.</summary>
-        BookingCancelledNudge
+        BookingCancelledNudge,
+
+        // ---- Upcoming events (polling worker). Kind is a string column, so no migration. ----
+
+        /// <summary>
+        /// A confirmed booking's event, delivery or rental is coming up — reminder to the
+        /// customer. Period is the stage ("7d", "1d"), so each stage goes out once.
+        /// </summary>
+        EventReminder,
+        /// <summary>
+        /// One daily digest to the owner of the events in the next few days and what is
+        /// still open on each. Period is the date.
+        /// </summary>
+        UpcomingEventsDigest
     }
 
     /// <summary>

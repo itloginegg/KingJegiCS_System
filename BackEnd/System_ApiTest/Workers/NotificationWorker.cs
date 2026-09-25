@@ -37,11 +37,22 @@ namespace System_ApiTest.Workers
         /// default false. Falls back to a templated nudge if the assistant is unavailable.
         /// </summary>
         public bool ProactiveAssistant { get; set; } = false;
+
+        /// <summary>
+        /// Days before a confirmed booking's date that the customer is reminded, one
+        /// reminder per stage. Default 7 and 1: a week out to settle the guest count and
+        /// balance, and the day before.
+        /// </summary>
+        public int[] EventReminderDays { get; set; } = { 7, 1 };
+
+        /// <summary>How many days ahead the owner's daily upcoming-events digest looks. Default 3.</summary>
+        public int UpcomingDigestDays { get; set; } = 3;
     }
 
     /// <summary>
     /// Proactive email notifications for state the system already computes: upcoming and
-    /// overdue payment milestones, booking confirmations/cancellations, and low rental
+    /// overdue payment milestones, booking confirmations/cancellations, upcoming-event
+    /// reminders (to the customer, and a daily digest to the owner), and low rental
     /// stock. Structure mirrors DenylistCleanupWorker exactly — a PeriodicTimer, a fresh
     /// DI scope per run, and a try/catch around each run so a failure never crashes the
     /// app (only shutdown cancellation propagates).
@@ -123,6 +134,7 @@ namespace System_ApiTest.Workers
                 .FirstOrDefaultAsync(ct);
 
             await ProcessBookingsAsync(db, invoices, email, assistant, today, ownerEmail, ct);
+            await ProcessUpcomingEventsAsync(db, invoices, email, today, ownerEmail, ct);
             await ProcessLowStockAsync(db, rentals, email, today, ownerEmail, ct);
         }
 
@@ -256,6 +268,93 @@ namespace System_ApiTest.Workers
                     $"KingJegi — {overdueDigestLines.Count} overdue payment(s)",
                     $"Overdue payments as of {today:MMMM d, yyyy}:\n\n" + string.Join("\n", overdueDigestLines), ct);
             }
+        }
+
+        /// <summary>
+        /// Upcoming-event reminders: one per stage to the customer of each Confirmed booking
+        /// (see Eventreminders.StageFor), and one daily digest to the owner of everything in
+        /// the next UpcomingDigestDays days with what is still open on it. Only Confirmed
+        /// bookings: a Pending one isn't happening until it is paid, and reminding about it
+        /// would read as a promise.
+        /// </summary>
+        private async Task ProcessUpcomingEventsAsync(
+            AppDbContext db, Invoiceservice invoices, IEmailService email,
+            DateOnly today, string? ownerEmail, CancellationToken ct)
+        {
+            var stages = (_options.EventReminderDays ?? Array.Empty<int>()).Where(d => d >= 0).Distinct().ToList();
+            var digestDays = Math.Max(0, _options.UpcomingDigestDays);
+            var horizon = today.AddDays(Math.Max(stages.DefaultIfEmpty(0).Max(), digestDays));
+
+            var bookings = await db.Bookings
+                .AsNoTracking()
+                .Include(b => b.Customer)
+                .Include(b => b.ResourceAllocation)
+                .Where(b => b.Status == BookingStatus.Confirmed && b.EventDate >= today && b.EventDate <= horizon)
+                .OrderBy(b => b.EventDate).ThenBy(b => b.StartTime)
+                .ToListAsync(ct);
+
+            var digest = new List<string>();
+            foreach (var booking in bookings)
+            {
+                var daysAway = booking.EventDate.DayNumber - today.DayNumber;
+                var facts = await ReminderFactsAsync(db, invoices, booking, today, ct);
+
+                var stage = Eventreminders.StageFor(daysAway, stages);
+                if (stage is int s)
+                {
+                    var (subject, body) = Eventreminders.CustomerReminder(facts, daysAway, firstStage: s == stages.Max());
+                    await TrySendAsync(db, email, booking.Id, NotificationKind.EventReminder, $"{s}d",
+                        booking.Customer.Email, subject, body, ct);
+                }
+
+                if (daysAway <= digestDays)
+                    digest.Add(Eventreminders.DigestLine(facts, daysAway));
+            }
+
+            if (digest.Count > 0)
+            {
+                await TrySendAsync(db, email, null, NotificationKind.UpcomingEventsDigest,
+                    today.ToString("yyyy-MM-dd"), ownerEmail,
+                    $"KingJegi — {digest.Count} event(s) in the next {digestDays} day(s)",
+                    $"Coming up as of {today:MMMM d, yyyy}:\n\n" + string.Join("\n", digest), ct);
+            }
+        }
+
+        /// <summary>A booking's state as the reminders need it: balance, next payment, plan sign-off.</summary>
+        private static async Task<Eventreminders.Booking> ReminderFactsAsync(
+            AppDbContext db, Invoiceservice invoices, Booking booking, DateOnly today, CancellationToken ct)
+        {
+            decimal? balance = null;
+            PaymentMilestoneDto? next = null;
+            if (await db.Invoices.AnyAsync(i => i.BookingId == booking.Id, ct))
+            {
+                try
+                {
+                    var schedule = await invoices.GetPaymentScheduleAsync(booking.Id, today);
+                    balance = schedule.Balance;
+                    next = schedule.Milestones.FirstOrDefault(m => m.Status != "Paid");
+                }
+                catch (BookingRuleException)
+                {
+                    // No schedule: the reminder simply leaves the money out.
+                }
+            }
+
+            return new Eventreminders.Booking(
+                booking.BookingName,
+                booking.BookingType.ToString(),
+                booking.EventType?.ToString(),
+                booking.EventDate,
+                booking.StartTime,
+                booking.EndDate,
+                booking.EndTime,
+                booking.GuestCount,
+                booking.VenueAddress,
+                balance,
+                next?.Label,
+                next?.DueDate,
+                booking.ResourceAllocation?.IsApproved,
+                booking.CancellationRequested);
         }
 
         /// <summary>Alerts the owner about each active rental item at/below the low-stock threshold.</summary>

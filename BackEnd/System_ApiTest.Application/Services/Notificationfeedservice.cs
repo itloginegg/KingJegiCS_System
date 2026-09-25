@@ -33,6 +33,7 @@ namespace System_ApiTest.Application.Services
             NotificationKind.PaymentOverdue,
             NotificationKind.BookingConfirmed,
             NotificationKind.BookingCancelled,
+            NotificationKind.EventReminder,
             // Written inline at the moment they happen (Notificationwriteservice)
             NotificationKind.PaymentConfirmed,
             NotificationKind.RefundApproved,
@@ -47,6 +48,7 @@ namespace System_ApiTest.Application.Services
             // Written by the polling worker
             NotificationKind.PaymentOverdueDigest,
             NotificationKind.RentalLowStock,
+            NotificationKind.UpcomingEventsDigest,
             // Written inline at the moment they happen (Notificationwriteservice)
             NotificationKind.BookingCreated,
             NotificationKind.BookingCompleted,
@@ -358,6 +360,16 @@ namespace System_ApiTest.Application.Services
                     due is null
                         ? "One or more payment milestones are overdue. Review the Payments tab."
                         : $"Overdue payment summary for {due}. Review the Payments tab."),
+
+                NotificationKind.EventReminder => (
+                    "Coming up soon",
+                    $"{name} is on {when}. Check the booking for the time, venue and any balance due."),
+
+                NotificationKind.UpcomingEventsDigest => (
+                    "Upcoming events",
+                    due is null
+                        ? "Events are coming up in the next few days. Review the Bookings tab."
+                        : $"Events coming up from {due}. Review the Bookings tab for what is still open."),
 
                 NotificationKind.RentalLowStock => (
                     "Low rental stock",
