@@ -923,6 +923,35 @@ export interface SaveResourcesPayload {
   lines?: SaveAllocationLine[];
 }
 
+/** One clause of a contract's Terms section. Matches ContractClauseDto. */
+export interface ContractClause {
+  title: string;
+  text: string;
+}
+
+/** Matches ContractTermsDto. */
+export interface ContractTerms {
+  clauses: ContractClause[];
+  /** 'Gemini' (adapted by AI, checked against the booking) or 'Rules' (the standard clauses). */
+  source: 'Gemini' | 'Rules';
+  /** One line for staff on how the terms were made. */
+  note: string | null;
+  generatedAt: string;
+}
+
+/**
+ * Draft the Terms section of a booking's contract. Owner/Assistant only. Cached on the
+ * server per booking state; `regenerate` asks the AI for a fresh draft. Nothing is saved.
+ */
+export function draftContractTerms(
+  token: string,
+  bookingId: string,
+  regenerate = false,
+): Promise<ContractTerms> {
+  return request<ContractTerms>(
+    `/api/Bookings/${bookingId}/contract/terms${regenerate ? '?regenerate=true' : ''}`, 'POST', token);
+}
+
 /** Read a booking's resource plan and the suggestion for it. Owner/Assistant only. */
 export function getBookingResources(
   token: string,

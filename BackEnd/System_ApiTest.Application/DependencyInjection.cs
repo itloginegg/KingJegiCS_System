@@ -27,7 +27,7 @@ public static class DependencyInjection
 
         services.AddValidatorsFromAssembly(assembly);
 
-        // Typed HttpClient, not AddScoped — the ctor takes an HttpClient.
+        // Typed HttpClient, not AddScoped ï¿½ the ctor takes an HttpClient.
         services.AddHttpClient<Assistantservice>();
 
         services.AddScoped<Menutrayservice>();
@@ -48,6 +48,7 @@ public static class DependencyInjection
         services.AddScoped<Bestsellerservice>();
         services.AddScoped<OtpService>();
         services.AddScoped<Notificationwriteservice>();
+        services.AddScoped<Contractservice>();
 
         return services;
     }

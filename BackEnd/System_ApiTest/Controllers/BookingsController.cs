@@ -25,11 +25,14 @@ namespace System_ApiTest.Controllers
         private readonly Auditlogservice _audit;
         private readonly IWebHostEnvironment _env;
         private readonly Bookingresourceservice _resources;
+        private readonly Contractservice _contracts;
 
         public BookingsController(AppDbContext db, Bookingservice bookings, Rentalservice rentals,
                                   Packageservice packages, Invoiceservice invoices, Auditlogservice audit,
-                                  IWebHostEnvironment env, Bookingresourceservice resources)
+                                  IWebHostEnvironment env, Bookingresourceservice resources,
+                                  Contractservice contracts)
         {
+            _contracts = contracts;
             _db = db;
             _bookings = bookings;
             _rentals = rentals;
@@ -317,6 +320,23 @@ namespace System_ApiTest.Controllers
                     null, new { booking.AdminNote });
                 return Ok(ToDto(booking));
             }
+            catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
+        }
+
+        // ---------------- Contract ----------------
+
+        /// <summary>
+        /// Drafts the Terms section of the booking's contract: standard clauses filled
+        /// from the booking, adapted by AI when it is available and its draft passes the
+        /// figure check. POST because a fresh draft costs a model call; ?regenerate=true
+        /// skips the cached one. Nothing is saved.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpPost("{id:guid}/contract/terms")]
+        public async Task<IActionResult> DraftContractTerms(
+            Guid id, [FromQuery] bool regenerate = false, CancellationToken ct = default)
+        {
+            try { return Ok(await _contracts.DraftTermsAsync(id, regenerate, ct)); }
             catch (BookingRuleException ex) { return BadRequest(new { message = ex.Message }); }
         }
 

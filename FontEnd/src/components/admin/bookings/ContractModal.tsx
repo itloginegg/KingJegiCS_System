@@ -1,12 +1,26 @@
 /**
  * The printable service contract for a Confirmed booking, over any tab.
  *
- * Presentational: the page fetches the booking detail and invoice and hands them
- * in. `id="adm-contract"` and `adm-contract-noprint` are what the page's print
+ * The page fetches the booking detail and invoice and hands them in. The Terms
+ * section is the one part fetched here: the server drafts it for this booking
+ * (standard clauses filled from its facts, adapted by AI when available and checked
+ * against those facts). Staff can edit the clauses or ask for a new draft before
+ * printing; edits live only in this modal and are printed as shown.
+ *
+ * `id="adm-contract"` and `adm-contract-noprint` are what the page's print
  * stylesheet targets; they must survive any restyle.
  */
-import type { BookingDetailResponse, InvoiceResponseDto } from '../../../api/bookingApi';
+import { useEffect, useState } from 'react';
+import {
+  BookingApiError,
+  draftContractTerms,
+  type BookingDetailResponse,
+  type ContractClause,
+  type ContractTerms,
+  type InvoiceResponseDto,
+} from '../../../api/bookingApi';
 import { fmt, fmtDate } from '../../../lib/format';
+import { readSession } from '../../../lib/tokenStorage';
 import { FieldLabel } from '../shared/StatusBadge';
 
 export interface ContractModalProps {
@@ -23,6 +37,42 @@ export function ContractModal({ detail, invoice, onClose }: ContractModalProps) 
     detail.services.reduce((s, sv) => s + sv.totalCost, 0) +
     detail.menuItems.reduce((s, m) => s + m.lineTotal, 0) +
     detail.menuTrays.reduce((s, t) => s + t.lineTotal, 0);
+
+  const [terms, setTerms] = useState<ContractTerms | null>(null);
+  const [clauses, setClauses] = useState<ContractClause[]>([]);
+  const [termsLoading, setTermsLoading] = useState(true);
+  const [termsError, setTermsError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+
+  const loadTerms = async (regenerate: boolean) => {
+    const session = readSession();
+    if (!session?.token) {
+      setTermsError('You are not signed in.');
+      setTermsLoading(false);
+      return;
+    }
+    setTermsLoading(true);
+    setTermsError(null);
+    try {
+      const t = await draftContractTerms(session.token, b.id, regenerate);
+      setTerms(t);
+      setClauses(t.clauses);
+      setEditing(false);
+    } catch (err) {
+      setTermsError(err instanceof BookingApiError ? err.message : 'Could not draft the contract terms.');
+    } finally {
+      setTermsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTerms(false);
+    // Once per opened contract: the modal is remounted for each booking.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const editClause = (i: number, patch: Partial<ContractClause>) =>
+    setClauses((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
 
   return (
     <div
@@ -44,7 +94,7 @@ export function ContractModal({ detail, invoice, onClose }: ContractModalProps) 
         <div className="adm-contract-noprint" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.7rem', padding: '1rem 1.4rem', borderBottom: '1px solid var(--border)' }}>
           <FieldLabel text="Service Contract" />
           <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button type="button" className="adm-btn primary" onClick={() => window.print()}>Print / Save as PDF</button>
+            <button type="button" className="adm-btn primary" disabled={termsLoading || clauses.length === 0} onClick={() => window.print()}>Print / Save as PDF</button>
             <button type="button" className="adm-btn outline" onClick={onClose}>Close</button>
           </div>
         </div>
@@ -143,12 +193,60 @@ export function ContractModal({ detail, invoice, onClose }: ContractModalProps) 
 
           {/* ── terms ── */}
           <h4 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 600, margin: '1.4rem 0 0.5rem' }}>4. Terms</h4>
-          <ol style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, lineHeight: 1.75, color: 'var(--text-muted)', paddingLeft: '1.1rem', margin: 0 }}>
-            <li>The reservation fee secures the event date and is applied against the total contract price.</li>
-            <li>Payment follows the schedule on the issued invoice. The date is only secured once the reservation fee is verified.</li>
-            <li>Final guest count and menu changes must be confirmed with the Caterer before the event date; changes may adjust the price.</li>
-            <li>Cancellations are subject to the Caterer’s cancellation and refund policy in force at the time of the request.</li>
-            <li>Rental items remain the property of the Caterer and must be returned in the condition supplied.</li>
+          {/* Staff-only strip: how the terms were made, and the controls to change them. */}
+          <div className="adm-contract-noprint" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', margin: '0 0 0.7rem', padding: '0.55rem 0.75rem', borderRadius: '10px', background: 'var(--surface-muted, rgba(0,0,0,0.04))', fontFamily: 'var(--font-body)', fontSize: '0.7rem', lineHeight: 1.5, color: 'var(--text-muted)' }}>
+            <span style={{ flex: '1 1 220px' }}>
+              {termsLoading
+                ? 'Drafting terms for this booking…'
+                : termsError
+                  ? termsError
+                  : <><strong style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{terms?.source === 'Gemini' ? 'AI-drafted terms.' : 'Standard terms.'}</strong> {terms?.note}</>}
+            </span>
+            {!termsLoading && terms && (
+              <>
+                <button type="button" className="adm-btn outline" onClick={() => setEditing((v) => !v)}>
+                  {editing ? 'Done Editing' : 'Edit Terms'}
+                </button>
+                <button type="button" className="adm-btn outline" onClick={() => void loadTerms(true)}>
+                  {terms.source === 'Gemini' ? 'Redraft' : 'Try AI Again'}
+                </button>
+              </>
+            )}
+            {!termsLoading && termsError && (
+              <button type="button" className="adm-btn outline" onClick={() => void loadTerms(false)}>Retry</button>
+            )}
+          </div>
+
+          {editing ? (
+            <div className="adm-contract-noprint" style={{ display: 'grid', gap: '0.6rem' }}>
+              {clauses.map((c, i) => (
+                <div key={i} style={{ display: 'grid', gap: '0.3rem' }}>
+                  <input
+                    className="adm-input"
+                    aria-label={`Clause ${i + 1} title`}
+                    value={c.title}
+                    onChange={(e) => editClause(i, { title: e.target.value })}
+                  />
+                  <textarea
+                    className="adm-input"
+                    aria-label={`Clause ${i + 1} text`}
+                    rows={5}
+                    value={c.text}
+                    onChange={(e) => editClause(i, { text: e.target.value })}
+                    style={{ resize: 'vertical', fontFamily: 'var(--font-body)', borderRadius: '12px' }}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {/* The printed terms. Also a live preview while the editor above is open. */}
+          <ol style={{ fontFamily: 'var(--font-body)', fontSize: '0.74rem', fontWeight: 300, lineHeight: 1.75, color: 'var(--text-muted)', paddingLeft: '1.1rem', margin: editing ? '0.9rem 0 0' : 0 }}>
+            {clauses.map((c, i) => (
+              <li key={i}>
+                <strong style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{c.title}.</strong> {c.text}
+              </li>
+            ))}
           </ol>
 
           {/* ── signatures ── */}

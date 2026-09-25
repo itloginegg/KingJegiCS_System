@@ -1047,6 +1047,8 @@ export function AdminDashboardPage() {
       {/* ══════════ CONTRACT (item 2) — printable service agreement ══════════ */}
       {contractBooking && (
         <ContractModal
+          // Keyed so each booking's contract drafts its own terms on mount.
+          key={contractBooking.booking.id}
           detail={contractBooking}
           invoice={contractInvoice}
           onClose={() => { setContractBooking(null); setContractInvoice(null); }}
