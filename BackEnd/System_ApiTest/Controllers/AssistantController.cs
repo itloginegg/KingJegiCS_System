@@ -16,8 +16,9 @@ namespace System_ApiTest.Controllers
     /// Conversational virtual assistant for customers, backed by Gemini with server-side
     /// tool calling. Read/propose only — it can suggest budget configurations but never
     /// writes a booking or moves money; materializing a Draft is the explicit customer
-    /// action at /api/suggestions/materialize. Degrades to 503 when the assistant is
-    /// unavailable, pointing the customer at the budget form.
+    /// action at /api/suggestions/materialize. When Gemini can't answer (off, failing,
+    /// throttled, or the guest chat's daily allowance spent) the rule-based Faqbot answers
+    /// instead, with Source "Faq", so the chat keeps working on common questions.
     /// </summary>
     /// <para>
     /// Authorization sits on each ACTION rather than on the class. One action here is
@@ -36,6 +37,7 @@ namespace System_ApiTest.Controllers
         private readonly Speechservice _speech;
         private readonly IOptions<AiOptions> _ai;
         private readonly ILogger<AssistantController> _log;
+        private readonly Faqservice _faq;
 
         public AssistantController(
             Assistantservice assistant,
@@ -44,8 +46,10 @@ namespace System_ApiTest.Controllers
             Aidailyceiling publicDailyCeiling,
             Speechservice speech,
             IOptions<AiOptions> ai,
-            ILogger<AssistantController> log)
+            ILogger<AssistantController> log,
+            Faqservice faq)
         {
+            _faq = faq;
             _assistant = assistant;
             _rateLimiter = rateLimiter;
             _publicRateLimiter = publicRateLimiter;
@@ -110,8 +114,12 @@ namespace System_ApiTest.Controllers
             }
             catch (AssistantUnavailableException ex)
             {
-                // Soft dependency: 503 with a clear fallback to Slice A's budget form.
-                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = ex.Message });
+                // Soft dependency: the rule-based bot answers instead. Nothing is saved, so
+                // the thread (if any) is exactly as it was; see AssistantChatResponse.
+                _log.LogInformation(ex, "Assistant unavailable; answering customer chat with the FAQ bot.");
+                var faq = await _faq.AnswerAsync(req.Message, ct);
+                return Ok(new AssistantChatResponse(
+                    req.ConversationId ?? Guid.Empty, faq.Text, null, null, AssistantReplySource.Faq));
             }
             catch (KeyNotFoundException)
             {
@@ -159,7 +167,8 @@ namespace System_ApiTest.Controllers
         /// Two limits, because neither suffices alone. Per-IP stops casual repeat use but
         /// leans on X-Forwarded-For, which the platform sets and a caller can therefore
         /// present freshly each request; the daily ceiling is the one a spoofer still
-        /// meets. Both degrade to the same 503 fallback the signed-in path uses.
+        /// meets. The hourly limit answers 429; the daily ceiling, like an unavailable
+        /// Gemini, hands the turn to the FAQ bot.
         /// </para>
         /// </summary>
         [HttpPost("public-chat")]
@@ -181,16 +190,14 @@ namespace System_ApiTest.Controllers
                 });
             }
 
-            if (!_publicDailyCeiling.TryConsume(options.PublicMaxMessagesPerDay, out var dailyRetryAfter))
+            if (!_publicDailyCeiling.TryConsume(options.PublicMaxMessagesPerDay, out _))
             {
                 _log.LogWarning(
-                    "Public assistant chat hit its daily ceiling of {Ceiling}; refusing guest {GuestKey} until reset.",
+                    "Public assistant chat hit its daily ceiling of {Ceiling}; guest {GuestKey} gets the FAQ bot until reset.",
                     options.PublicMaxMessagesPerDay, ipKey);
-                Response.Headers.RetryAfter = dailyRetryAfter.ToString();
-                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-                {
-                    message = "The assistant is busy for today. Please use the budget form to get suggestions."
-                });
+                // The ceiling bounds Gemini spend; the FAQ bot costs nothing, so it still answers.
+                var faq = await _faq.AnswerAsync(req.Message, ct);
+                return Ok(new PublicChatResponse(faq.Text, null, null, AssistantReplySource.Faq));
             }
 
             try
@@ -203,7 +210,9 @@ namespace System_ApiTest.Controllers
             }
             catch (AssistantUnavailableException ex)
             {
-                return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = ex.Message });
+                _log.LogInformation(ex, "Assistant unavailable; answering guest {GuestKey} with the FAQ bot.", ipKey);
+                var faq = await _faq.AnswerAsync(req.Message, ct);
+                return Ok(new PublicChatResponse(faq.Text, null, null, AssistantReplySource.Faq));
             }
             catch (BookingRuleException ex)
             {

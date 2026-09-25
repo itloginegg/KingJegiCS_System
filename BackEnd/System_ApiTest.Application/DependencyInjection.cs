@@ -49,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<OtpService>();
         services.AddScoped<Notificationwriteservice>();
         services.AddScoped<Contractservice>();
+        services.AddScoped<Faqservice>();
 
         return services;
     }

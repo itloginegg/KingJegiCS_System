@@ -18,12 +18,25 @@ namespace System_ApiTest.Application.DTOs
     /// The assistant's reply. Proposals is populated when the model used the
     /// budget-suggestion tool during the turn — each is a Slice A proposal already
     /// re-priced and re-validated, ready to hand to /api/suggestions/materialize.
+    ///
+    /// Source is "Gemini", or "Faq" when Gemini couldn't answer and the rule-based
+    /// Faqbot did. A Faq reply belongs to no thread: nothing is saved, and
+    /// ConversationId is the one the caller sent (Guid.Empty for a new chat), so the
+    /// client keeps its thread as it was.
     /// </summary>
     public record AssistantChatResponse(
         Guid ConversationId,
         string Reply,
         IReadOnlyList<ProposalDto>? Proposals,
-        PlanContextDto? PlanContext);
+        PlanContextDto? PlanContext,
+        string Source = AssistantReplySource.Gemini);
+
+    /// <summary>What answered a chat turn. See AssistantChatResponse.</summary>
+    public static class AssistantReplySource
+    {
+        public const string Gemini = "Gemini";
+        public const string Faq = "Faq";
+    }
 
     /// <summary>
     /// What the budget tool was asked for, echoed back beside the proposals it produced.
@@ -78,12 +91,14 @@ namespace System_ApiTest.Application.DTOs
 
     /// <summary>
     /// The guest reply. Proposals come from the budget tool and can be added to the cart,
-    /// which is where a visitor signs in — at checkout, not before.
+    /// which is where a visitor signs in — at checkout, not before. Source as on
+    /// AssistantChatResponse.
     /// </summary>
     public record PublicChatResponse(
         string Reply,
         IReadOnlyList<ProposalDto>? Proposals,
-        PlanContextDto? PlanContext);
+        PlanContextDto? PlanContext,
+        string Source = AssistantReplySource.Gemini);
 
     /// <summary>A conversation in a list view (no messages). MessageCount counts visible turns.</summary>
     public record ConversationSummaryDto(

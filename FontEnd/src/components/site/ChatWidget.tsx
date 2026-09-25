@@ -588,7 +588,10 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
       const res = session
         ? await sendChat(session.token, { conversationId: conversationId ?? undefined, message: text })
         : await publicChat({ message: text, history });
-      if (session) setConversationId((res as ChatResponse).conversationId);
+      /* A FAQ-bot reply (Gemini was unavailable) belongs to no thread, so the thread id
+         stays as it was, and the budget form is offered as it was for the old 503. */
+      const fromFaq = res.source === 'Faq';
+      if (session && !fromFaq) setConversationId((res as ChatResponse).conversationId);
       setMessages((prev) => [...prev, {
         id: `a-${Date.now()}`,
         role: 'assistant',
@@ -596,6 +599,7 @@ function ChatPanel({ onClose, onSwitch }: { onClose: () => void; onSwitch: () =>
         proposals: res.proposals ?? undefined,
         planContext: res.planContext,
       }]);
+      if (fromFaq) setShowBudgetCta(true);
       if (speak) speakText(res.reply);
     } catch (err) {
       if (err instanceof AssistantApiError && err.status === 429) {

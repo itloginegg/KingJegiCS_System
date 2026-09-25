@@ -62,11 +62,19 @@ export interface PlanContext {
 }
 
 /** Matches AssistantChatResponse. `proposals` is populated when the model used the budget tool. */
+/**
+ * What answered a turn: 'Gemini', or 'Faq' when Gemini couldn't and the backend's
+ * rule-based FAQ bot did. A Faq reply is not saved to any thread.
+ */
+export type ReplySource = 'Gemini' | 'Faq';
+
 export interface ChatResponse {
+  /** For a 'Faq' reply, the id that was sent (all zeros for a new chat): no thread was made. */
   conversationId: string;
   reply: string;
   proposals: Proposal[] | null;
   planContext: PlanContext | null;
+  source: ReplySource;
 }
 
 /** One replayed turn of a guest thread. Guest chats are not stored server-side. */
@@ -86,6 +94,7 @@ export interface PublicChatResponse {
   reply: string;
   proposals: Proposal[] | null;
   planContext: PlanContext | null;
+  source: ReplySource;
 }
 
 /** Matches ConversationSummaryDto. */
