@@ -10,19 +10,23 @@
  * while this tab is not mounted. The dashboard keeps only that number.
  *
  * SENTIMENT: each review carries what its TEXT says (Positive / Neutral / Negative),
- * scored by Gemini or, when that was unavailable, by the rule-based lexicon. It is
- * advisory: nothing is approved or hidden because of it. What it adds is the summary
- * strip, a chip per review, and a "Needs a look" filter for reviews whose stars and
- * words disagree.
+ * scored by Gemini or, when that was unavailable, by the backend's Naive Bayes classifier
+ * (or, for text it has no words for, the rule-based lexicon). It is advisory: nothing is
+ * approved or hidden because of it. What it adds is the summary strip, a chip per
+ * review, and a "Needs a look" filter for reviews whose stars and words disagree. The
+ * strip also shows the Naive Bayes model's training size and cross-validated accuracy.
  */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, RotateCw, Sparkles, Star, X } from 'lucide-react';
 import {
   analyzeMissingSentiment,
+  getSentimentModel,
   getTestimonials,
   moderateTestimonial,
   reanalyzeSentiment,
   TestimonialApiError,
+  type SentimentModel,
+  type SentimentSource,
   type Testimonial,
   type TestimonialSentiment,
   type TestimonialStatus,
@@ -44,6 +48,16 @@ const SENTIMENT_STYLE: Record<TestimonialSentiment, { bg: string; fg: string }> 
   Negative: { bg: 'color-mix(in srgb, var(--danger-ink) 14%, transparent)', fg: 'var(--danger-ink)' },
 };
 
+/* How each scoring method is named on a review: the lead-in to its reason, and the
+   chip's tooltip. */
+const SOURCE_LABEL: Record<SentimentSource, { read: string; title: string }> = {
+  Gemini: { read: 'AI read:', title: 'Scored by AI (Gemini)' },
+  NaiveBayes: { read: 'Naive Bayes read:', title: 'Scored by the Naive Bayes classifier (Gemini was unavailable)' },
+  Lexicon: { read: 'Rule-based read:', title: 'Scored by the rule-based lexicon' },
+};
+
+const pct = (share: number) => `${Math.round(share * 100)}%`;
+
 type TestiFilter = 'all' | TestimonialStatus | 'mismatch';
 
 export interface TestimonialsTabProps {
@@ -60,6 +74,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
   const [testiFilter, setTestiFilter] = useState<TestiFilter>('Pending');
   const [analyzing, setAnalyzing] = useState(false);
   const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
+  const [sentimentModel, setSentimentModel] = useState<SentimentModel | null>(null);
   /* Gates the badge report below. Without it the first render reports 0 before
      the fetch lands, and the sidebar badge blinks to nothing on every visit. */
   const [loadedOnce, setLoadedOnce] = useState(false);
@@ -112,6 +127,18 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
     }
   };
 
+  /* Model stats are a footnote to the strip, so a failure just leaves the line out. Re-read
+     after any analysis: new Gemini labels become new training examples. */
+  const loadSentimentModel = async () => {
+    const session = readSession();
+    if (!session?.token) return;
+    try {
+      setSentimentModel(await getSentimentModel(session.token));
+    } catch {
+      setSentimentModel(null);
+    }
+  };
+
   /* Reviews from before sentiment existed have none. Batches of 20, so one click never
      queues more Gemini calls than the free tier comfortably takes; the button stays
      until none are left. */
@@ -122,6 +149,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
     try {
       const { analyzed, remaining } = await analyzeMissingSentiment(session.token, 20);
       await loadTestimonials();
+      void loadSentimentModel();
       notify('success', remaining > 0
         ? `Analyzed ${analyzed} review${analyzed === 1 ? '' : 's'}; ${remaining} left.`
         : `Analyzed ${analyzed} review${analyzed === 1 ? '' : 's'}. Every review now has a sentiment.`);
@@ -139,7 +167,11 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
     try {
       const r = await reanalyzeSentiment(session.token, id);
       setTestimonials((prev) => prev.map((t) => (t.id === id ? { ...t, ...r } : t)));
-      notify('success', `Re-analyzed: ${r.sentiment ?? 'no result'}${r.sentimentSource === 'Lexicon' ? ' (rule-based; AI was unavailable)' : ''}.`);
+      void loadSentimentModel();
+      const fallback = r.sentimentSource === 'NaiveBayes' ? ' (Naive Bayes; Gemini was unavailable)'
+        : r.sentimentSource === 'Lexicon' ? ' (rule-based; Gemini was unavailable)'
+        : '';
+      notify('success', `Re-analyzed: ${r.sentiment ?? 'no result'}${fallback}.`);
     } catch (err) {
       notify('error', err instanceof TestimonialApiError ? err.message : 'Could not re-analyze this review.');
     } finally {
@@ -149,6 +181,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
 
   useEffect(() => {
     void loadTestimonials();
+    void loadSentimentModel();
   }, []);
 
   const pendingTesti = testimonials.filter((t) => t.status === 'Pending').length;
@@ -220,6 +253,14 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
               {analyzing ? 'Analyzing…' : `Analyze ${unanalyzed} older review${unanalyzed === 1 ? '' : 's'}`}
             </button>
           )}
+          {sentimentModel && (
+            <span style={{ flexBasis: '100%', fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1.5, color: 'var(--band-muted)' }}>
+              Fallback model: Naive Bayes, trained on {sentimentModel.seedExamples} starter examples
+              {' + '}{sentimentModel.reviewExamples} Gemini-labelled review{sentimentModel.reviewExamples === 1 ? '' : 's'}
+              {sentimentModel.accuracy !== null && ` · ${pct(sentimentModel.accuracy)} accurate (${sentimentModel.folds}-fold cross-validation)`}
+              {sentimentModel.reviewAccuracy !== null && ` · agrees with Gemini on ${pct(sentimentModel.reviewAccuracy)} of real reviews`}
+            </span>
+          )}
         </div>
       )}
 
@@ -279,7 +320,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
                   {t.sentiment && t.sentimentReason && (
                     <p style={{ margin: '0 0 8px', fontFamily: 'var(--font-body)', fontSize: '12px', lineHeight: 1.5, color: 'var(--band-muted)' }}>
                       <strong style={{ fontWeight: 600, color: 'var(--band-text)' }}>
-                        {t.sentimentSource === 'Gemini' ? 'AI read:' : 'Rule-based read:'}
+                        {SOURCE_LABEL[t.sentimentSource ?? 'Lexicon'].read}
                       </strong>{' '}
                       {t.sentimentReason}
                     </p>
@@ -291,7 +332,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
                 {t.sentiment ? (
                   <span
-                    title={`${t.sentimentSource === 'Gemini' ? 'Scored by AI (Gemini)' : 'Scored by the rule-based lexicon'} · score ${t.sentimentScore ?? 0}`}
+                    title={`${SOURCE_LABEL[t.sentimentSource ?? 'Lexicon'].title} · score ${t.sentimentScore ?? 0}`}
                     style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: SENTIMENT_STYLE[t.sentiment].bg, color: SENTIMENT_STYLE[t.sentiment].fg }}
                   >
                     {t.sentiment}

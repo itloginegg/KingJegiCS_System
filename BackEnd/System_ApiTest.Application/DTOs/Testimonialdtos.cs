@@ -75,6 +75,18 @@ namespace System_ApiTest.Application.DTOs
 
     /// <summary>Result of analyzing the reviews that had no sentiment yet.</summary>
     public record SentimentBackfillDto(int Analyzed, int Remaining);
+
+    /// <summary>
+    /// The Naive Bayes sentiment model: what it trained on and its cross-validated accuracy
+    /// (0–1). ReviewAccuracy is agreement with Gemini on real reviews, null until any exist.
+    /// </summary>
+    public record SentimentModelDto(
+        int SeedExamples,
+        int ReviewExamples,
+        int VocabularySize,
+        int Folds,
+        decimal? Accuracy,
+        decimal? ReviewAccuracy);
 }
 
 

@@ -7,6 +7,7 @@
  *   POST /api/Testimonials/{id}/moderate    → approve/reject (Owner/Assistant)
  *   POST /api/Testimonials                  → submit a review (Customer)
  *   GET  /api/Testimonials/mine             → the caller's own submissions (Customer)
+ *   GET  /api/Testimonials/sentiment/model  → Naive Bayes model stats (Owner/Assistant)
  */
 
 import { notifyUnauthorized } from '../lib/authEvents';
@@ -62,13 +63,30 @@ export interface Testimonial {
   sentimentScore: number | null;
   /** One line on why, for the moderator. */
   sentimentReason: string | null;
-  /** 'Gemini' (AI) or 'Lexicon' (the rule-based fallback). */
-  sentimentSource: 'Gemini' | 'Lexicon' | null;
+  sentimentSource: SentimentSource | null;
   /** 4–5 stars with negative text, or 1–2 stars with positive text. */
   ratingMismatch: boolean;
 }
 
 export type TestimonialSentiment = 'Positive' | 'Neutral' | 'Negative';
+
+/**
+ * Which method scored a review: 'Gemini' (the default), 'NaiveBayes' (the classifier
+ * trained in the backend, used when Gemini is unavailable) or 'Lexicon' (the rule-based
+ * last resort, for text Naive Bayes has no words for).
+ */
+export type SentimentSource = 'Gemini' | 'NaiveBayes' | 'Lexicon';
+
+/** Matches SentimentModelDto. Accuracies are 0–1 from k-fold cross-validation. */
+export interface SentimentModel {
+  seedExamples: number;
+  reviewExamples: number;
+  vocabularySize: number;
+  folds: number;
+  accuracy: number | null;
+  /** Agreement with Gemini on real reviews only; null until there are any. */
+  reviewAccuracy: number | null;
+}
 
 async function readErrorMessage(res: Response): Promise<string | null> {
   try {
@@ -146,6 +164,11 @@ export function moderateTestimonial(
     status,
     note: note ?? null,
   });
+}
+
+/** Owner/Assistant: the Naive Bayes model's training size and cross-validated accuracy. */
+export function getSentimentModel(token: string): Promise<SentimentModel> {
+  return request(`/api/Testimonials/sentiment/model`, 'GET', token);
 }
 
 /** Owner/Assistant: analyze up to `max` reviews that have no sentiment yet. */

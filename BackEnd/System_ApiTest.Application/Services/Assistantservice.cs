@@ -715,8 +715,9 @@ namespace System_ApiTest.Application.Services
         /// above, so the reply is validated by Gemini rather than parsed out of prose.
         ///
         /// Unlike the triage this one THROWS on any failure, including output that doesn't
-        /// fit the schema: the caller has its own fallback (Sentimentlexicon) and needs to
-        /// know to use it, where a silent default would be recorded as if Gemini had said it.
+        /// fit the schema: the caller has its own fallbacks (Naive Bayes, then Sentimentlexicon)
+        /// and needs to know to use them, where a silent default would be recorded as if Gemini
+        /// had said it.
         /// </summary>
         /// <exception cref="AssistantUnavailableException">Disabled, unreachable, throttled, or unusable output.</exception>
         public async Task<(TestimonialSentiment Sentiment, decimal Score, string Reason)> ClassifySentimentAsync(

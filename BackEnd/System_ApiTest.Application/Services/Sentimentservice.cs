@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System_ApiTest.Application.Common.Interfaces;
+using System_ApiTest.Application.DTOs;
 using System_ApiTest.Domain.Entities;
 
 namespace System_ApiTest.Application.Services
@@ -9,14 +11,17 @@ namespace System_ApiTest.Application.Services
     /// Sentiment analysis for customer testimonials: reads what the review TEXT says, which
     /// the star rating alone does not capture.
     ///
-    /// Two methods, one result shape:
+    /// Three methods, tried in order, one result shape:
     ///  1. Gemini (Assistantservice.ClassifySentimentAsync) by default. It reads context,
-    ///     sarcasm and Taglish, which a word list cannot.
-    ///  2. Sentimentlexicon, a rule-based word scorer, whenever Gemini is disabled,
-    ///     unconfigured, throttled, failing or slower than <see cref="GeminiTimeout"/>.
+    ///     sarcasm and Taglish better than anything trained locally on a few hundred reviews.
+    ///  2. Sentimentnaivebayes, a Naive Bayes classifier trained in-process, whenever Gemini
+    ///     is disabled, unconfigured, throttled, failing or slower than
+    ///     <see cref="GeminiTimeout"/>. It learns from Sentimentseeds plus every review
+    ///     Gemini has already labelled, so it keeps improving while Gemini is up.
+    ///  3. Sentimentlexicon, the rule-based word scorer, only when the review shares no
+    ///     words at all with what Naive Bayes was trained on.
     /// Every review therefore always gets a sentiment, and SentimentSource records which
-    /// method produced it, so a moderator (or a panel) can tell a model's judgement from
-    /// the rule-based one.
+    /// method produced it, so a moderator (or a panel) can tell them apart.
     ///
     /// The result is advisory. Nothing here approves, rejects or hides a review: it labels
     /// it, and flags it when the text and the stars disagree, for a human to look at.
@@ -27,16 +32,26 @@ namespace System_ApiTest.Application.Services
         public static readonly TimeSpan GeminiTimeout = TimeSpan.FromSeconds(8);
 
         public const string SourceGemini = "Gemini";
+        public const string SourceNaiveBayes = "NaiveBayes";
         public const string SourceLexicon = "Lexicon";
+
+        /// <summary>Most recent Gemini-labelled reviews Naive Bayes trains on.</summary>
+        public const int MaxTrainingReviews = 5000;
+
+        /// <summary>Folds for the accuracy figure <see cref="DescribeModelAsync"/> reports.</summary>
+        public const int EvaluationFolds = 5;
 
         private readonly IApplicationDbContext _db;
         private readonly Assistantservice _assistant;
+        private readonly IMemoryCache _cache;
         private readonly ILogger<Sentimentservice> _logger;
 
-        public Sentimentservice(IApplicationDbContext db, Assistantservice assistant, ILogger<Sentimentservice> logger)
+        public Sentimentservice(
+            IApplicationDbContext db, Assistantservice assistant, IMemoryCache cache, ILogger<Sentimentservice> logger)
         {
             _db = db;
             _assistant = assistant;
+            _cache = cache;
             _logger = logger;
         }
 
@@ -51,7 +66,7 @@ namespace System_ApiTest.Application.Services
             (rating >= 4 && sentiment == TestimonialSentiment.Negative) ||
             (rating <= 2 && sentiment == TestimonialSentiment.Positive);
 
-        /// <summary>Never throws for a model problem: any failure answers with the lexicon.</summary>
+        /// <summary>Never throws for a Gemini problem: any failure answers with Naive Bayes, then the lexicon.</summary>
         public async Task<Analysis> AnalyzeAsync(string text, CancellationToken ct = default)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -63,15 +78,91 @@ namespace System_ApiTest.Application.Services
             }
             catch (AssistantUnavailableException ex)
             {
-                _logger.LogInformation(ex, "Sentiment: Gemini unavailable, using the lexicon.");
+                _logger.LogInformation(ex, "Sentiment: Gemini unavailable, using Naive Bayes.");
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                _logger.LogInformation("Sentiment: Gemini took longer than {Timeout}, using the lexicon.", GeminiTimeout);
+                _logger.LogInformation("Sentiment: Gemini took longer than {Timeout}, using Naive Bayes.", GeminiTimeout);
             }
+
+            // ct, not timeout.Token: the Gemini deadline has already fired by now.
+            var nb = (await ModelAsync(ct)).Classify(text);
+            if (nb is not null)
+                return new Analysis(nb.Sentiment, nb.Score, nb.Reason, SourceNaiveBayes);
 
             var lex = Sentimentlexicon.Score(text);
             return new Analysis(lex.Sentiment, lex.Score, lex.Reason, SourceLexicon);
+        }
+
+        /// <summary>
+        /// The seed set and the real reviews Naive Bayes learns from, kept apart so
+        /// <see cref="DescribeModelAsync"/> can report accuracy on real reviews alone.
+        ///
+        /// Only reviews GEMINI labelled are used. Training on labels Naive Bayes or the
+        /// lexicon produced would teach the model its own mistakes and never correct them.
+        /// </summary>
+        private async Task<(IReadOnlyList<Sentimentnaivebayes.Example> Seeds, IReadOnlyList<Sentimentnaivebayes.Example> Reviews)>
+            TrainingExamplesAsync(CancellationToken ct)
+        {
+            var reviews = await _db.Testimonials.AsNoTracking()
+                .Where(t => t.SentimentSource == SourceGemini && t.Sentiment != null)
+                .OrderByDescending(t => t.SubmittedAt)
+                .Take(MaxTrainingReviews)
+                .Select(t => new { t.Body, Sentiment = t.Sentiment!.Value })
+                .ToListAsync(ct);
+
+            return (Sentimentseeds.All,
+                reviews.Select(r => new Sentimentnaivebayes.Example(r.Body, r.Sentiment)).ToList());
+        }
+
+        /// <summary>
+        /// The trained model, cached under a fingerprint of the Gemini-labelled reviews (how
+        /// many, and the latest analysis time). A new or re-analyzed review changes the
+        /// fingerprint, so the next call retrains; otherwise training costs nothing.
+        /// </summary>
+        private async Task<Sentimentnaivebayes.Model> ModelAsync(CancellationToken ct)
+        {
+            var labelled = _db.Testimonials.AsNoTracking()
+                .Where(t => t.SentimentSource == SourceGemini && t.Sentiment != null);
+            var count = await labelled.CountAsync(ct);
+            var latest = await labelled.MaxAsync(t => t.SentimentAnalyzedAt, ct);
+
+            var key = $"sentiment-nb:{count}:{latest?.Ticks}";
+            if (_cache.TryGetValue<Sentimentnaivebayes.Model>(key, out var cached) && cached is not null)
+                return cached;
+
+            var (seeds, reviews) = await TrainingExamplesAsync(ct);
+            var model = Sentimentnaivebayes.Train(seeds.Concat(reviews));
+            _cache.Set(key, model, new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromHours(1) });
+            return model;
+        }
+
+        /// <summary>
+        /// What the Naive Bayes model was trained on and how accurate it is, measured by
+        /// <see cref="EvaluationFolds"/>-fold cross-validation (each example classified by a
+        /// model that never saw it). ReviewAccuracy is agreement with Gemini on real reviews
+        /// only, null until there are any; the seed-inclusive figure is flattered by the seed
+        /// lines being short and clear-cut, so ReviewAccuracy is the one to trust.
+        /// </summary>
+        public async Task<SentimentModelDto> DescribeModelAsync(CancellationToken ct = default)
+        {
+            var (seeds, reviews) = await TrainingExamplesAsync(ct);
+            var all = seeds.Concat(reviews).ToList();
+            var correct = Sentimentnaivebayes.CrossValidate(all, EvaluationFolds);
+
+            static decimal? Share(IEnumerable<bool> hits)
+            {
+                var list = hits.ToList();
+                return list.Count == 0 ? null : Math.Round((decimal)list.Count(h => h) / list.Count, 3);
+            }
+
+            return new SentimentModelDto(
+                seeds.Count,
+                reviews.Count,
+                Sentimentnaivebayes.Train(all).VocabularySize,
+                EvaluationFolds,
+                Share(correct),
+                Share(correct.Skip(seeds.Count)));
         }
 
         /// <summary>Analyzes one testimonial and stores the result. Does not save.</summary>

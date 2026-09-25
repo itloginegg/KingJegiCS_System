@@ -4,9 +4,10 @@ using System_ApiTest.Domain.Entities;
 namespace System_ApiTest.Application.Services
 {
     /// <summary>
-    /// Rule-based sentiment scoring: the fallback Sentimentservice uses whenever Gemini is
-    /// off, slow or failing, so every review still gets a sentiment. Also the method a
-    /// reviewer can inspect line by line, which a model call is not.
+    /// Rule-based sentiment scoring: Sentimentservice's last resort, used when Gemini is
+    /// off, slow or failing AND the review shares no words with what Sentimentnaivebayes
+    /// was trained on, so every review still gets a sentiment. Also the method a reviewer
+    /// can inspect line by line, which a model is not.
     ///
     /// How it scores:
     ///  - the text is lower-cased and split into words;
@@ -18,13 +19,13 @@ namespace System_ApiTest.Application.Services
     ///
     /// English plus common Tagalog and Taglish review words, since that is how customers in
     /// Laguna write. It is deliberately small: it misses sarcasm and anything subtle, which
-    /// is why it is the fallback and Gemini is the default.
+    /// is why it is the last resort, behind Gemini and Naive Bayes.
     /// </summary>
     public static class Sentimentlexicon
     {
         public const decimal NeutralBand = 0.2m;
 
-        private static readonly HashSet<string> Positive = new(StringComparer.Ordinal)
+        internal static readonly HashSet<string> Positive = new(StringComparer.Ordinal)
         {
             // English
             "good", "great", "excellent", "amazing", "awesome", "perfect", "delicious", "tasty", "love", "loved",
@@ -37,7 +38,7 @@ namespace System_ApiTest.Application.Services
             "bongga", "galante", "mahusay", "magalang", "maasikaso",
         };
 
-        private static readonly HashSet<string> Negative = new(StringComparer.Ordinal)
+        internal static readonly HashSet<string> Negative = new(StringComparer.Ordinal)
         {
             // English
             "bad", "poor", "terrible", "awful", "horrible", "worst", "late", "delayed", "cold", "bland", "rude",
@@ -51,13 +52,14 @@ namespace System_ApiTest.Application.Services
             "sayang", "reklamo", "hilaw", "sunog", "mabagal", "dugyot",
         };
 
-        private static readonly HashSet<string> Negators = new(StringComparer.Ordinal)
+        /// <summary>Shared with Sentimentnaivebayes, which marks the words a negator flips.</summary>
+        internal static readonly HashSet<string> Negators = new(StringComparer.Ordinal)
         {
             "not", "no", "never", "without", "isn't", "wasn't", "weren't", "don't", "didn't", "doesn't",
             "hindi", "di", "walang", "wala", "huwag", "hnd",
         };
 
-        private static readonly Regex Words = new(@"[\p{L}']+", RegexOptions.Compiled);
+        internal static readonly Regex Words =new(@"[\p{L}']+", RegexOptions.Compiled);
 
         public sealed record Result(TestimonialSentiment Sentiment, decimal Score, string Reason);
 

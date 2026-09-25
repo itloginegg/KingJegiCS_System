@@ -104,7 +104,13 @@ namespace System_ApiTest.Controllers
             return Ok(new SentimentBackfillDto(analyzed, remaining));
         }
 
-        /// <summary>Re-runs sentiment analysis for one review, e.g. one the lexicon scored while Gemini was down.</summary>
+        /// <summary>The Naive Bayes fallback model: its training set size and cross-validated accuracy.</summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("sentiment/model")]
+        public async Task<IActionResult> SentimentModel(CancellationToken ct = default)
+            => Ok(await _sentiment.DescribeModelAsync(ct));
+
+        /// <summary>Re-runs sentiment analysis for one review, e.g. one scored locally while Gemini was down.</summary>
         [Authorize(Roles = "Owner,Assistant")]
         [HttpPost("{id:guid}/sentiment")]
         public async Task<IActionResult> Reanalyze(Guid id, CancellationToken ct = default)

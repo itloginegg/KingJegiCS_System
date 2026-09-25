@@ -89,7 +89,7 @@ namespace System_ApiTest.Domain.Entities
         [MaxLength(300)]
         public string? SentimentReason { get; set; }
 
-        /// <summary>"Gemini" or "Lexicon": which method produced the result.</summary>
+        /// <summary>"Gemini", "NaiveBayes" or "Lexicon": which method produced the result.</summary>
         [MaxLength(20)]
         public string? SentimentSource { get; set; }
 

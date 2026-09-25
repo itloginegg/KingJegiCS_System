@@ -83,9 +83,10 @@ namespace System_ApiTest.Application.Services
             }
 
             /* Sentiment, after the review is safely stored: the customer's submission must not
-               depend on it. AnalyzeAsync already falls back to the lexicon for model problems;
-               this catch is for anything else (the save itself, say). A review left without a
-               sentiment is picked up by AnalyzeMissingAsync from the moderation queue. */
+               depend on it. AnalyzeAsync already falls back to Naive Bayes and the lexicon for
+               model problems; this catch is for anything else (the save itself, say). A review
+               left without a sentiment is picked up by AnalyzeMissingAsync from the moderation
+               queue. */
             try
             {
                 await _sentiment.ApplyAsync(testimonial);
