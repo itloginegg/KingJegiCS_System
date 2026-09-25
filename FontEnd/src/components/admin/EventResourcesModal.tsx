@@ -226,6 +226,18 @@ export default function EventResourcesModal({
   const pickedRental = resources?.rentalCatalog.find((i) => i.id === rentalPick);
   const pickedService = resources?.serviceCatalog.find((s) => s.id === servicePick);
 
+  /* Under a picker row: where the SUGGEST number came from, so a learned figure and
+     a fixed ratio aren't mistaken for each other. */
+  const suggestionNote = (item: AllocationCatalogItem | undefined) =>
+    item?.suggestedQuantity != null && item.suggestionReason ? (
+      <p style={{ margin: '0 0 0.5rem', fontFamily: 'var(--font-body)', fontSize: '0.68rem', fontWeight: 300, lineHeight: 1.5, color: 'var(--text-dim)' }}>
+        <strong style={{ fontWeight: 500, color: 'var(--text-muted)' }}>
+          {item.suggestionSource === 'History' ? 'Learned suggestion:' : 'Ratio suggestion:'}
+        </strong>{' '}
+        {item.suggestionReason}
+      </p>
+    ) : null;
+
   return createPortal(
     <div className="adm-modal-overlay" onClick={() => !saving && onClose()}>
       <div
@@ -476,15 +488,16 @@ export default function EventResourcesModal({
                         disabled={locked}
                         onChange={(e) => setRentalQty(e.target.value)}
                       />
-                      {/* Only shown once an item is picked AND a ratio applies to it —
-                          linens, lights and ambiguously named tables have none, and a
-                          button that filled in 0 would read as "bring none". */}
+                      {/* Only shown once an item is picked AND there is a suggestion for
+                          it — learned from similar events, or a ratio. Linens, lights and
+                          ambiguously named tables have no ratio, and a button that filled
+                          in 0 would read as "bring none". */}
                       {pickedRental?.suggestedQuantity != null && (
                         <button
                           type="button"
                           className="adm-btn success"
                           disabled={locked}
-                          title={`Suggest ${pickedRental.suggestedQuantity} for ${guestCount} pax`}
+                          title={pickedRental.suggestionReason ?? `Suggest ${pickedRental.suggestedQuantity} for ${guestCount} pax`}
                           style={{ fontSize: '0.6rem', padding: '0.3rem 0.7rem', letterSpacing: '0.1em' }}
                           onClick={() => setRentalQty(String(pickedRental.suggestedQuantity))}
                         >
@@ -505,6 +518,7 @@ export default function EventResourcesModal({
                         ADD
                       </button>
                     </div>
+                    {suggestionNote(pickedRental)}
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <select
@@ -534,15 +548,15 @@ export default function EventResourcesModal({
                         disabled={locked}
                         onChange={(e) => setServiceQty(e.target.value)}
                       />
-                      {/* Staffing ratios only recognise waiters and servers; anything
-                          else has no suggestion, exactly as the old "Others" box was
-                          always 0. */}
+                      {/* Staffing ratios only recognise waiters and servers; any other
+                          service gets a suggestion only once it has been planned for
+                          enough similar events. */}
                       {pickedService?.suggestedQuantity != null && (
                         <button
                           type="button"
                           className="adm-btn success"
                           disabled={locked}
-                          title={`Suggest ${pickedService.suggestedQuantity} for ${guestCount} pax`}
+                          title={pickedService.suggestionReason ?? `Suggest ${pickedService.suggestedQuantity} for ${guestCount} pax`}
                           style={{ fontSize: '0.6rem', padding: '0.3rem 0.7rem', letterSpacing: '0.1em' }}
                           onClick={() => setServiceQty(String(pickedService.suggestedQuantity))}
                         >
@@ -563,6 +577,7 @@ export default function EventResourcesModal({
                         ADD
                       </button>
                     </div>
+                    <div style={{ marginTop: '0.5rem' }}>{suggestionNote(pickedService)}</div>
                   </>
                 )}
               </div>

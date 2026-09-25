@@ -30,19 +30,38 @@ namespace System_ApiTest.Application.DTOs
     /// A pickable catalog row. Only active items are offered; an inactive item already
     /// on a plan still comes back as a line so the record stays readable.
     ///
-    /// <para><see cref="SuggestedQuantity"/> is what the guest-count ratios in
-    /// SystemSettings imply for THIS item — the replacement for the old per-section
-    /// SUGGEST buttons. It is computed server-side so the ceil() formulas stay in one
-    /// place, and is null whenever no ratio applies to the item (see
-    /// Bookingresourceservice.SuggestFor) or the booking has no guest count to scale
-    /// from.</para>
+    /// <para><see cref="SuggestedQuantity"/> is how many of THIS item the event likely
+    /// needs. Learned from similar past events (Resourceforecaster) once the item has
+    /// enough history, otherwise the guest-count ratios in SystemSettings — the
+    /// replacement for the old per-section SUGGEST buttons. Null when neither has an
+    /// answer (an item with no history and no ratio, or a booking with no guest
+    /// count). <see cref="SuggestionSource"/> says which ("History" or "Ratio"), and
+    /// <see cref="SuggestionReason"/> is one line on how it was reached.</para>
     /// </summary>
     public record AllocationCatalogItemDto(
         Guid Id,
         string Name,
         string? Category,
         int? Available,
-        int? SuggestedQuantity);
+        int? SuggestedQuantity,
+        string? SuggestionSource = null,
+        string? SuggestionReason = null);
+
+    /// <summary>
+    /// How well the learned suggestions match what was actually planned, by leave-one-out:
+    /// each past event's quantity predicted from the others. Errors are mean absolute
+    /// differences in units. RatioMeanError is the fixed ratios' error on the subset they
+    /// can answer, with LearnedOnRatioSubsetMeanError the learned error on that same
+    /// subset, so the two compare like for like. Null where there was nothing to measure.
+    /// </summary>
+    public record ResourceForecastAccuracyDto(
+        int EventsWithPlans,
+        int ItemsWithHistory,
+        int Predictions,
+        decimal? LearnedMeanError,
+        int RatioComparisons,
+        decimal? RatioMeanError,
+        decimal? LearnedOnRatioSubsetMeanError);
 
     /// <summary>
     /// What GET /api/bookings/{id}/resources returns.

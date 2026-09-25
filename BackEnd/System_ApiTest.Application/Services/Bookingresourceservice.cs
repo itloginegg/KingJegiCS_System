@@ -77,6 +77,8 @@ namespace System_ApiTest.Application.Services
 
             int AvailableFor(Rentalitem i) => i.TotalQuantity - outgoing.GetValueOrDefault(i.Id);
 
+            var (history, _) = await PlannedUsesAsync(booking.Id);
+
             var lines = (allocation?.Lines ?? new List<BookingResourceAllocationLine>())
                 .Select(l => l.RentalItemId is not null
                     ? new AllocationLineDto(
@@ -96,15 +98,15 @@ namespace System_ApiTest.Application.Services
             // assignments of something withdrawn from the catalog.
             var rentalCatalog = rentalItems
                 .Where(i => i.IsActive)
-                .Select(i => new AllocationCatalogItemDto(
-                    i.Id, i.ItemName, i.Category.ToString(), AvailableFor(i),
+                .Select(i => CatalogItem(
+                    i.Id, i.ItemName, i.Category.ToString(), AvailableFor(i), booking, history,
                     SuggestForRental(i, booking.GuestCount, settings)))
                 .ToList();
 
             var serviceCatalog = serviceItems
                 .Where(s => s.IsActive)
-                .Select(s => new AllocationCatalogItemDto(
-                    s.Id, s.ServiceName, null, null,
+                .Select(s => CatalogItem(
+                    s.Id, s.ServiceName, null, null, booking, history,
                     SuggestForService(s, booking.GuestCount, settings)))
                 .ToList();
 
@@ -118,6 +120,112 @@ namespace System_ApiTest.Application.Services
                 lines,
                 rentalCatalog,
                 serviceCatalog);
+        }
+
+        public const string SuggestionFromHistory = "History";
+        public const string SuggestionFromRatio = "Ratio";
+
+        /// <summary>
+        /// One catalog row with its suggestion: learned from other events' plans when the
+        /// item has enough of them, otherwise the fixed ratio, otherwise none.
+        /// </summary>
+        private static AllocationCatalogItemDto CatalogItem(
+            Guid id, string name, string? category, int? available, Booking booking,
+            IReadOnlyDictionary<Guid, List<Resourceforecaster.PastUse>> history, int? ratio)
+        {
+            if (booking.GuestCount is int guests
+                && history.TryGetValue(id, out var uses)
+                && Resourceforecaster.Predict(uses, booking.EventType, guests) is { } learned)
+            {
+                return new AllocationCatalogItemDto(
+                    id, name, category, available, learned.Quantity, SuggestionFromHistory, learned.Reason);
+            }
+
+            return ratio is null
+                ? new AllocationCatalogItemDto(id, name, category, available, null)
+                : new AllocationCatalogItemDto(
+                    id, name, category, available, ratio, SuggestionFromRatio,
+                    $"Fixed ratio from System Settings for {booking.GuestCount} guests. " +
+                    $"Learning starts once {Resourceforecaster.MinHistory} other events have planned this item.");
+        }
+
+        /// <summary>
+        /// What other events planned, per catalog item (rental and service ids share one
+        /// map; Guids don't collide), for Resourceforecaster to learn from. Also returns how
+        /// many events that covers.
+        ///
+        /// Only Confirmed and Completed events with a guest count: a Draft or Pending plan
+        /// isn't a commitment yet, a Cancelled event never happened, and without a guest
+        /// count there is no rate to learn. <paramref name="excludeBookingId"/> keeps a
+        /// booking from learning from its own plan (Guid.Empty excludes nothing).
+        /// </summary>
+        private async Task<(Dictionary<Guid, List<Resourceforecaster.PastUse>> Uses, int Events)> PlannedUsesAsync(
+            Guid excludeBookingId)
+        {
+            var rows = await _db.BookingResourceAllocationLines.AsNoTracking()
+                .Where(l => l.Allocation.BookingId != excludeBookingId
+                            && (l.Allocation.Booking.Status == BookingStatus.Confirmed ||
+                                l.Allocation.Booking.Status == BookingStatus.Completed)
+                            && l.Allocation.Booking.GuestCount > 0
+                            && l.Quantity > 0)
+                .Select(l => new
+                {
+                    l.Allocation.BookingId,
+                    ItemId = l.RentalItemId ?? l.ServiceItemId,
+                    l.Quantity,
+                    l.Allocation.Booking.EventType,
+                    Guests = l.Allocation.Booking.GuestCount!.Value,
+                })
+                .ToListAsync();
+
+            // One use per event and item, even if a plan split an item over two lines.
+            var uses = rows
+                .Where(r => r.ItemId is not null)
+                .GroupBy(r => (r.BookingId, ItemId: r.ItemId!.Value))
+                .Select(g => (g.Key.ItemId, Use: new Resourceforecaster.PastUse(
+                    g.First().EventType, g.First().Guests, g.Sum(r => r.Quantity))))
+                .GroupBy(x => x.ItemId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Use).ToList());
+
+            return (uses, rows.Select(r => r.BookingId).Distinct().Count());
+        }
+
+        /// <summary>
+        /// How close the learned suggestions come to what staff actually planned, next to
+        /// the fixed ratios on the same events. See ResourceForecastAccuracyDto.
+        /// </summary>
+        public async Task<ResourceForecastAccuracyDto> GetForecastAccuracyAsync()
+        {
+            var settings = await _db.SystemSettings.AsNoTracking().FirstOrDefaultAsync();
+            var (history, events) = await PlannedUsesAsync(Guid.Empty);
+            var rentals = await _db.RentalItems.AsNoTracking().ToDictionaryAsync(i => i.Id);
+            var services = await _db.ServiceItems.AsNoTracking().ToDictionaryAsync(s => s.Id);
+
+            var errors = new List<(int Learned, int? Ratio)>();
+            foreach (var (itemId, uses) in history)
+            {
+                Func<int, int?> ratio =
+                    rentals.TryGetValue(itemId, out var r) ? g => SuggestForRental(r, g, settings)
+                    : services.TryGetValue(itemId, out var s) ? g => SuggestForService(s, g, settings)
+                    : _ => null;
+                errors.AddRange(Resourceforecaster.LeaveOneOut(uses, ratio));
+            }
+
+            static decimal? Mean(IEnumerable<int> xs)
+            {
+                var list = xs.ToList();
+                return list.Count == 0 ? null : Math.Round((decimal)list.Average(), 2);
+            }
+
+            var compared = errors.Where(e => e.Ratio is not null).ToList();
+            return new ResourceForecastAccuracyDto(
+                events,
+                history.Count(h => h.Value.Count >= Resourceforecaster.MinHistory),
+                errors.Count,
+                Mean(errors.Select(e => e.Learned)),
+                compared.Count,
+                Mean(compared.Select(e => e.Ratio!.Value)),
+                Mean(compared.Select(e => e.Learned)));
         }
 
         /// <summary>
@@ -393,8 +501,12 @@ namespace System_ApiTest.Application.Services
         /// guess here is a wrong furniture order.
         ///
         /// Null means "no ratio applies" — Linens, Lights, Others, an ambiguous table, or
-        /// a booking with no guest count (a delivery). The button is then simply absent,
-        /// which is honest; suggesting 0 would read as a recommendation to bring none.
+        /// a booking with no guest count (a delivery). Unless the item has learned history
+        /// (see CatalogItem), the button is then simply absent, which is honest;
+        /// suggesting 0 would read as a recommendation to bring none.
+        ///
+        /// This is the fallback now: Resourceforecaster's learned suggestion wins
+        /// whenever the item has been planned for enough other events.
         /// </summary>
         private static int? SuggestForRental(Rentalitem item, int? guestCount, Systemsettings? s)
         {

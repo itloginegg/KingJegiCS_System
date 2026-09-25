@@ -892,13 +892,17 @@ export interface AllocationCatalogItem {
   category: string | null;
   available: number | null;
   /**
-   * What the SystemSettings guest-count ratios imply for this item — the replacement
-   * for the old per-section SUGGEST buttons. null when no ratio applies to the item
-   * (linens, lights, an ambiguously named table, an unrecognised service) or the
-   * booking has no guest count; the SUGGEST control is hidden in that case rather than
-   * offering a meaningless 0.
+   * How many of this item the event likely needs: learned from similar events' plans
+   * once the item has enough history, otherwise what the SystemSettings guest-count
+   * ratios imply. null when neither has an answer (an item with no history and no
+   * ratio, or a booking with no guest count); the SUGGEST control is hidden in that
+   * case rather than offering a meaningless 0.
    */
   suggestedQuantity: number | null;
+  /** 'History' (learned from similar events) or 'Ratio' (System Settings); null with no suggestion. */
+  suggestionSource: 'History' | 'Ratio' | null;
+  /** One line on how the suggestion was reached, for the admin. */
+  suggestionReason: string | null;
 }
 
 /** One requested assignment. Exactly one id is set. Matches SaveAllocationLineDto. */

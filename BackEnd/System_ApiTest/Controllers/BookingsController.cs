@@ -335,6 +335,15 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>
+        /// How close the learned resource suggestions come to what was actually planned,
+        /// next to the fixed ratios, by leave-one-out over past plans.
+        /// </summary>
+        [Authorize(Roles = "Owner,Assistant")]
+        [HttpGet("resource-forecast/accuracy")]
+        public async Task<IActionResult> ResourceForecastAccuracy()
+            => Ok(await _resources.GetForecastAccuracyAsync());
+
+        /// <summary>
         /// Creates or replaces the resource plan.
         ///
         /// Works on Confirmed bookings by design — see Bookingresourceservice for why
