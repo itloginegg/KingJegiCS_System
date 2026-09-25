@@ -65,7 +65,9 @@ namespace System_ApiTest.Application.Services
                     p.PaymentDateTime,
                     p.AmountPaid,
                     p.RefundedAmount,
-                    p.Invoice.BookingId
+                    p.Invoice.BookingId,
+                    PackageName = p.Invoice.Booking.MenuPackage == null ? null : p.Invoice.Booking.MenuPackage.PackageName,
+                    p.Invoice.Booking.BookingType
                 })
                 .ToListAsync(ct);
 
@@ -101,6 +103,30 @@ namespace System_ApiTest.Application.Services
             var last = points[^1];
             decimal? change = first.Net == 0m ? null : (last.Net - first.Net) / first.Net;
 
+            // Popular packages: what earned the window's money, ranked. Bookings without a
+            // package are grouped by what they were instead, so the lines still add up to
+            // the window's net.
+            var totalNet = points.Sum(p => p.Net);
+            var topPackages = rows
+                .GroupBy(r => r.PackageName ?? r.BookingType switch
+                {
+                    BookingType.FoodDelivery => "Food delivery",
+                    BookingType.RentalService => "Equipment rental",
+                    _ => "Custom event (no package)",
+                })
+                .Select(g =>
+                {
+                    var net = g.Sum(r => r.AmountPaid - r.RefundedAmount);
+                    return new PackageSalesDto(
+                        g.Key,
+                        g.First().PackageName is not null,
+                        g.Select(r => r.BookingId).Distinct().Count(),
+                        net,
+                        totalNet > 0m ? Math.Round(net / totalNet, 3) : null);
+                })
+                .OrderByDescending(p => p.Net).ThenByDescending(p => p.Bookings).ThenBy(p => p.Name)
+                .ToList();
+
             return new MonthlySalesReportDto(
                 DateOnly.FromDateTime(firstMonthStart),
                 DateOnly.FromDateTime(exclusiveEnd.AddDays(-1)),
@@ -111,7 +137,8 @@ namespace System_ApiTest.Application.Services
                 best.Net,
                 best.Net > 0m ? best.Label : null,
                 change,
-                points);
+                points,
+                topPackages);
         }
 
         /// <summary>
@@ -278,6 +305,17 @@ namespace System_ApiTest.Application.Services
                 sb.AppendLine(CultureInfo.InvariantCulture,
                     $"- {m.Label}: net PHP {m.Net:N2} (gross {m.Gross:N2}, refunds {m.Refunds:N2}), " +
                     $"{m.PaymentCount} payment(s), {m.BookingCount} booking(s).");
+
+            if (report.TopPackages.Count > 0)
+            {
+                sb.AppendLine("What earned it, by package (net collected, bookings paid, share of net):");
+                foreach (var p in report.TopPackages)
+                {
+                    var share = p.Share is decimal s ? string.Create(CultureInfo.InvariantCulture, $", {s * 100:0}% of net") : "";
+                    sb.AppendLine(CultureInfo.InvariantCulture,
+                        $"- {p.Name}: net PHP {p.Net:N2}, {p.Bookings} booking(s){share}.");
+                }
+            }
 
             return sb.ToString();
         }

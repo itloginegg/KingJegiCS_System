@@ -55,6 +55,21 @@ export interface MonthlySalesReport {
   /** First→last month change as a fraction (0.12 = +12%); null when the first month is zero. */
   netChangeRatio: number | null;
   months: MonthlySalesPoint[];
+  /** What earned the window's money, highest net first. Lines add up to totalNet. */
+  topPackages: PackageSales[];
+}
+
+/**
+ * Matches PackageSalesDto. `isPackage` is false for the groups of bookings made without a
+ * package ("Custom event (no package)", "Food delivery", "Equipment rental").
+ */
+export interface PackageSales {
+  name: string;
+  isPackage: boolean;
+  bookings: number;
+  net: number;
+  /** Fraction of the window's net, 0–1; null when nothing was collected. */
+  share: number | null;
 }
 
 /** Matches MonthlySalesSummaryDto. `generated` is false when the assistant was unavailable. */

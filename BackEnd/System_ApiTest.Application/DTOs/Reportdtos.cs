@@ -37,7 +37,22 @@ namespace System_ApiTest.Application.DTOs
         decimal BestMonthNet,
         string? BestMonthLabel,
         decimal? NetChangeRatio,
-        IReadOnlyList<MonthlySalesPointDto> Months);
+        IReadOnlyList<MonthlySalesPointDto> Months,
+        IReadOnlyList<PackageSalesDto> TopPackages);
+
+    /// <summary>
+    /// One line of the report's popular-packages ranking: a package, or for bookings with
+    /// none, what was booked instead ("Custom event", "Food delivery", "Equipment rental").
+    /// Net is what its bookings' payments collected in the window, net of refunds, from the
+    /// same payments as the monthly totals, so the lines add up to TotalNet. Share is Net as
+    /// a fraction of TotalNet (null when nothing was collected).
+    /// </summary>
+    public record PackageSalesDto(
+        string Name,
+        bool IsPackage,
+        int Bookings,
+        decimal Net,
+        decimal? Share);
 
     /// <summary>
     /// A short AI-written read of the sales report. Generated is false when the assistant

@@ -375,6 +375,23 @@ export function OverviewTab({
                 </div>
               </div>
 
+              {/* popular packages — what earned the window's money, from the same payments */}
+              {salesReport.topPackages.length > 0 && (
+                <div className="adm-ov-pkgs">
+                  <span className="cap">Popular Packages</span>
+                  <ol>
+                    {salesReport.topPackages.slice(0, 5).map((p) => (
+                      <li key={p.name} title={`${p.bookings} booking(s) paid in this window`}>
+                        <span className="name" style={p.isPackage ? undefined : { color: 'var(--ov-muted)' }}>{p.name}</span>
+                        <span className="meta">{p.bookings} booking{p.bookings === 1 ? '' : 's'}</span>
+                        <span className="amt">{fmt(Math.round(p.net))}</span>
+                        <span className="share" aria-hidden="true"><i style={{ width: `${Math.max(2, Math.round((p.share ?? 0) * 100))}%` }} /></span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
               {/* AI summary — on demand, because each fresh window costs a Gemini call */}
               <div className="adm-ov-ai">
                 {salesSummary ? (
