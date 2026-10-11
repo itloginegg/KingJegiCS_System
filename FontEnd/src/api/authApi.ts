@@ -209,6 +209,54 @@ export async function resendVerificationCode(email: string): Promise<string> {
   );
 }
 
+/** Customer tab -> customers controller; admin tab -> admins controller. */
+function accountBase(role: UserRole): string {
+  return role === 'admin' ? '/api/Admins' : '/api/Customers';
+}
+
+/**
+ * Forgot password step 1. The backend answers identically whether or not the
+ * account exists (and hides its resend cooldown for the same reason), so the
+ * resolved message is always safe to display.
+ */
+export async function requestPasswordReset(role: UserRole, email: string): Promise<string> {
+  const res = await postJson(`${accountBase(role)}/forgot-password`, { email });
+
+  if (!res.ok) {
+    const message = await readMessage(res);
+    throw new AuthError(message ?? 'Could not send the email. Try again shortly.');
+  }
+
+  return (
+    (await readMessage(res)) ??
+    'If an account exists for that email, a reset code has been sent.'
+  );
+}
+
+/** Forgot password step 2: the emailed code plus the new password, in one call. */
+export async function resetPassword(
+  role: UserRole,
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<string> {
+  const res = await postJson(`${accountBase(role)}/reset-password`, { email, code, newPassword });
+
+  if (!res.ok) {
+    // A 400 from model validation has no `message`, only `errors` — surface the first one.
+    let message: string | null = null;
+    try {
+      const body = (await res.json()) as { message?: string; errors?: Record<string, string[]> };
+      message = body.message ?? Object.values(body.errors ?? {})[0]?.[0] ?? null;
+    } catch {
+      // Non-JSON body — fall through to the generic message.
+    }
+    throw new AuthError(message ?? 'Invalid or expired code.');
+  }
+
+  return (await readMessage(res)) ?? 'Your password has been reset. You can now sign in.';
+}
+
 export async function logout(
   token: string | null,
   role: UserRole = 'customer',

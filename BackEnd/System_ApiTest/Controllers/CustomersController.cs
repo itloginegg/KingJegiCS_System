@@ -222,6 +222,58 @@ namespace System_ApiTest.Controllers
         }
 
         /// <summary>
+        /// Forgot password step 1: emails a reset code. Answers the same way whether or
+        /// not the account exists, so it can't be used to discover registered emails.
+        /// </summary>
+        [AllowAnonymous]
+        [HttpPost("forgot-password")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
+        public async Task<IActionResult> ForgotPassword([FromBody] ResendCodeDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            const string sent = "If an account exists for that email, a reset code has been sent.";
+
+            var email = dto.Email.Trim().ToLowerInvariant();
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer is null || !customer.IsActive)
+                return Ok(new { message = sent });
+
+            try
+            {
+                await _otp.IssueAsync("Customer", customer.Id, customer.Email, OtpPurpose.PasswordReset);
+            }
+            // The cooldown is swallowed: a "wait 60 seconds" reply would only ever come
+            // back for a real account. The earlier code is still valid in the meantime.
+            catch (BookingRuleException) { }
+            catch (EmailSendException) { return StatusCode(502, new { message = "Could not send the email. Try again shortly." }); }
+
+            return Ok(new { message = sent });
+        }
+
+        /// <summary>Forgot password step 2: confirms the emailed code and sets the new password.</summary>
+        [AllowAnonymous]
+        [HttpPost("reset-password")]
+        [EnableRateLimiting(RateLimitPolicies.Auth)]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var email = dto.Email.Trim().ToLowerInvariant();
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer is null || !customer.IsActive)
+                return BadRequest(new { message = "Invalid or expired code." });
+
+            if (!await _otp.VerifyAsync("Customer", customer.Id, OtpPurpose.PasswordReset, dto.Code))
+                return BadRequest(new { message = "Invalid or expired code." });
+
+            customer.PasswordHash = _passwordHasher.HashPassword(customer, dto.NewPassword);
+            // The code reached their inbox, which is everything email verification proves,
+            // so an account that never finished sign-up isn't left locked out after a reset.
+            customer.IsEmailVerified = true;
+            await _db.SaveChangesAsync();
+            return Ok(new { message = "Your password has been reset. You can now sign in." });
+        }
+
+        /// <summary>
         /// Logs out by revoking the CURRENT token (adds its jti to the denylist until
         /// it would have expired). Requires a valid token, since you can only revoke
         /// the one you present. The client should also discard its copy.

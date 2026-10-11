@@ -159,6 +159,55 @@ public class AdminsController : ControllerBase
         return Ok(new AuthResponseDto(token, expiresAt, admin.Id, admin.Email, role));
     }
 
+    /// <summary>
+    /// Forgot password step 1: emails a reset code. Same reply whether or not the
+    /// account exists, and nothing is sent to a deactivated admin.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<IActionResult> ForgotPassword([FromBody] ResendCodeDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        const string sent = "If an account exists for that email, a reset code has been sent.";
+
+        var email = dto.Email.Trim().ToLowerInvariant();
+        var admin = await _db.Admins.FirstOrDefaultAsync(a => a.Email == email);
+        if (admin is null || !admin.IsActive)
+            return Ok(new { message = sent });
+
+        try
+        {
+            await _otp.IssueAsync("Admin", admin.Id, admin.Email, OtpPurpose.PasswordReset);
+        }
+        // Swallowed for the same reason as on the customer side: the cooldown reply
+        // would otherwise only appear for real accounts.
+        catch (BookingRuleException) { }
+        catch (EmailSendException) { return StatusCode(502, new { message = "Could not send the email. Try again shortly." }); }
+
+        return Ok(new { message = sent });
+    }
+
+    /// <summary>Forgot password step 2: confirms the emailed code and sets the new password.</summary>
+    [AllowAnonymous]
+    [HttpPost("reset-password")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var email = dto.Email.Trim().ToLowerInvariant();
+        var admin = await _db.Admins.FirstOrDefaultAsync(a => a.Email == email);
+        if (admin is null || !admin.IsActive)
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        if (!await _otp.VerifyAsync("Admin", admin.Id, OtpPurpose.PasswordReset, dto.Code))
+            return BadRequest(new { message = "Invalid or expired code." });
+
+        admin.PasswordHash = _passwordHasher.HashPassword(admin, dto.NewPassword);
+        await _db.SaveChangesAsync();
+        return Ok(new { message = "Your password has been reset. You can now sign in." });
+    }
+
     /// <summary>Revokes the current token (denylist) until it would expire.</summary>
     [Authorize]
     [HttpPost("logout")]

@@ -78,9 +78,12 @@ namespace System_ApiTest.Application.Services
             });
             await _db.SaveChangesAsync();
 
-            var subject = purpose == OtpPurpose.EmailVerify
-                ? "Verify your KingJegi account"
-                : "Your KingJegi login code";
+            var subject = purpose switch
+            {
+                OtpPurpose.EmailVerify => "Verify your KingJegi account",
+                OtpPurpose.PasswordReset => "Reset your KingJegi password",
+                _ => "Your KingJegi login code",
+            };
             await _email.SendAsync(email, subject,
                 $"Your code is: {code}\n\n" +
                 $"It expires in {_options.ExpiryMinutes} minutes. " +

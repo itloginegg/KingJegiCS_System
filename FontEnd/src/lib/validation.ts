@@ -35,6 +35,14 @@ export function validateCredentials(
   return errors;
 }
 
+/** Just the email check, for forms that ask for nothing else (forgot password). */
+export function validateEmail(value: string): string | null {
+  const email = value.trim();
+  if (!email) return 'Email is required.';
+  if (!EMAIL_RE.test(email)) return 'Enter a valid email address.';
+  return null;
+}
+
 export function hasErrors(
   errors: FieldErrors | RegistrationFieldErrors,
 ): boolean {
@@ -77,6 +85,19 @@ export function validateRegistration(
     errors.phoneNumber =
       'Use international format with a country code, e.g. +639171234567.';
   }
+
+  return { ...errors, ...validateNewPassword(values) };
+}
+
+/**
+ * Password + confirmation, shared by registration and the password reset so
+ * both enforce the same rule the backend's DTOs do.
+ */
+export function validateNewPassword(values: {
+  password: string;
+  confirmPassword: string;
+}): Pick<RegistrationFieldErrors, 'password' | 'confirmPassword'> {
+  const errors: Pick<RegistrationFieldErrors, 'password' | 'confirmPassword'> = {};
 
   if (!values.password) {
     errors.password = 'Password is required.';

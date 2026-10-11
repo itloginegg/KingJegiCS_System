@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import type { AuthCredentials, FieldErrors, UserRole } from '../../types/auth';
 import { hasErrors, validateCredentials } from '../../lib/validation';
@@ -88,7 +89,13 @@ export function LoginForm({ role, submitting, formError, onSubmit }: LoginFormPr
       <div className="ui-field">
         <div className="ui-label-row">
           <label htmlFor={passwordId} className="ui-label">Password</label>
-          <a href="/forgot-password" className="au-inline-link">Forgot password?</a>
+          {/* Carries the current tab so an admin lands on the Admin reset form. */}
+          <Link
+            to={role === 'admin' ? '/forgot-password?role=admin' : '/forgot-password'}
+            className="au-inline-link"
+          >
+            Forgot password?
+          </Link>
         </div>
         <div className="au-input-wrap">
           <input

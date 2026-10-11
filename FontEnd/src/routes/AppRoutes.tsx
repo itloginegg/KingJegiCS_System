@@ -35,6 +35,7 @@ const CheckoutPage = lazy(() => import('../pages/CheckoutPage').then((m) => ({ d
 const BookingPage = lazy(() => import('../pages/BookingPage').then((m) => ({ default: m.BookingPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('../pages/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+const ForgotPasswordPage = lazy(() => import('../pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
 const CustomerDashboardPage = lazy(() => import('../pages/CustomerDashboardPage').then((m) => ({ default: m.CustomerDashboardPage })));
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((m) => ({ default: m.AdminDashboardPage })));
 const PaymentReturnPage = lazy(() => import('../pages/PaymentReturnPage').then((m) => ({ default: m.PaymentReturnPage })));
@@ -87,12 +88,12 @@ const WIDGET_ROUTES = new Set(['/', '/packages', '/menus', '/rentals', '/book', 
  * widget above: a route added later should get music because somebody decided it
  * should, not because nobody remembered to exclude it.
  *
- * /register rides along with /login. They are one flow with two URLs, and having
- * the loop stop the instant someone clicks "Create account" would read as a fault
- * rather than as a decision.
+ * /register and /forgot-password ride along with /login. They are one flow with
+ * several URLs, and having the loop stop the instant someone clicks "Create
+ * account" would read as a fault rather than as a decision.
  */
 const AUDIO_ROUTES = new Set([
-  '/', '/packages', '/menus', '/rentals', '/cart', '/login', '/register', '/book',
+  '/', '/packages', '/menus', '/rentals', '/cart', '/login', '/register', '/forgot-password', '/book',
 ]);
 
 function SiteAmbientAudio() {
@@ -143,6 +144,7 @@ export function AppRoutes() {
           <Route path="/book" element={<BookingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
           {/* Dev-only avatar harness. The real avatar sits behind a customer login inside
               a floating widget driven by paid TTS, which makes it impractical to tune

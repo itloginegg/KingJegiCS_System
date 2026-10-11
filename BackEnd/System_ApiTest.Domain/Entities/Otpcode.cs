@@ -5,7 +5,8 @@ namespace System_ApiTest.Domain.Entities
     public enum OtpPurpose
     {
         EmailVerify,
-        Login
+        Login,
+        PasswordReset
     }
 
     /// <summary>

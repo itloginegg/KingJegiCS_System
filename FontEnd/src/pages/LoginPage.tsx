@@ -32,6 +32,8 @@ interface RedirectState {
   from?: { pathname: string; search?: string };
   /** Set by RegisterPage after a successful sign-up. */
   registeredEmail?: string;
+  /** Set by ForgotPasswordPage after a successful reset. */
+  passwordResetEmail?: string;
 }
 
 const PROOF = [
@@ -41,14 +43,17 @@ const PROOF = [
 
 export function LoginPage() {
   const { login, status, error, isAuthenticated, user, verifyLoginOtp } = useAuth();
-  const [role, setRole] = useState<UserRole>('customer');
+  const location = useLocation();
+  // ForgotPasswordPage sends admins back with ?role=admin so the right tab is open.
+  const [role, setRole] = useState<UserRole>(
+    new URLSearchParams(location.search).get('role') === 'admin' ? 'admin' : 'customer',
+  );
   const [otpStep, setOtpStep] = useState(false);
   const [pendingCredentials, setPendingCredentials] = useState<AuthCredentials | null>(null);
   const [otpCode, setOtpCode] = useState('');
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpSubmitting, setOtpSubmitting] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
 
   // Already signed in? Skip the form entirely.
   if (isAuthenticated && user) {
@@ -123,6 +128,7 @@ export function LoginPage() {
 
   const verifying = otpSubmitting || status === 'authenticating';
   const registeredEmail = (location.state as RedirectState | null)?.registeredEmail;
+  const passwordResetEmail = (location.state as RedirectState | null)?.passwordResetEmail;
 
   return (
     <AuthLayout
@@ -147,6 +153,15 @@ export function LoginPage() {
           <CheckCircle2 size={18} strokeWidth={1.75} aria-hidden="true" />
           <span>
             Account created for <strong>{registeredEmail}</strong>. Sign in below to get started.
+          </span>
+        </div>
+      )}
+
+      {!otpStep && passwordResetEmail && (
+        <div role="status" className="ui-alert ui-alert--success" style={{ marginBottom: 18 }}>
+          <CheckCircle2 size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span>
+            Password updated for <strong>{passwordResetEmail}</strong>. Sign in with your new password.
           </span>
         </div>
       )}
