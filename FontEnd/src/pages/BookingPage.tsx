@@ -14,8 +14,9 @@ import { snapFromQuote } from '../context/CartContext';
 import { holdPlanImages } from '../lib/planImages';
 import { readSession } from '../lib/tokenStorage';
 import { fetchPackages, packageSuitsEventType, type AdminPackage } from '../api/packageAdminApi';
-import { fetchMenuItems, fetchMenuTrays, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
-import { fetchRentalItems, type AdminRentalItem } from '../api/rentalAdminApi';
+import { fetchMenuItems, fetchMenuTrays, getFullImageUrl as getMenuImageUrl, type AdminMenuItem, type AdminMenuTray } from '../api/menuAdminApi';
+import { fetchRentalItems, getFullImageUrl as getRentalImageUrl, type AdminRentalItem } from '../api/rentalAdminApi';
+import { CatalogThumb } from '../components/booking/CatalogThumb';
 import { PhoneNumberInput } from '../components/forms/PhoneNumberInput';
 import { VenueAddressFields } from '../components/forms/VenueAddressFields';
 import { composeVenueAddress, emptyVenueAddress, type VenueAddress } from '../lib/venue';
@@ -218,6 +219,8 @@ export function BookingPage() {
   const [menuTrayQty, setMenuTrayQty] = useState<Record<string, number>>({});
   const [rentalQty, setRentalQty] = useState<Record<string, number>>({});
   const [serviceQty, setServiceQty] = useState<Record<string, number>>({});
+  /** Which tray cards have their dish list expanded, by tray id. */
+  const [openTrays, setOpenTrays] = useState<Record<string, boolean>>({});
   const [alacarteTab, setAlacarteTab] = useState<AlacarteTab>(
     /* A rentals booking has no Dishes tab to click, and the tab CONTENT is not
        gated on the flow — so defaulting to 'dishes' there rendered the whole dish
@@ -921,6 +924,13 @@ export function BookingPage() {
         .bk-catalog-name{font-family:var(--font-display);font-size:.95rem;font-weight:600;color:var(--text-primary);margin-bottom:.3rem}
         .bk-catalog-meta{font-family:var(--font-body);font-size:.72rem;color:var(--text-muted)}
         .bk-catalog-price{font-family:var(--font-display);font-size:1rem;font-weight:600;color:var(--primary);margin-top:.4rem}
+        .bk-catalog-card.stack{display:flex;flex-direction:column}
+        .bk-catalog-foot{margin-top:auto;padding-top:.5rem}
+        .bk-tray-toggle{border:none;background:none;padding:0;cursor:pointer;font-family:var(--font-body);font-size:.72rem;color:var(--primary);font-weight:500}
+        .bk-tray-toggle:hover{text-decoration:underline}
+        .bk-tray-dishes{list-style:none;margin:.5rem 0 0;padding:.5rem 0 0;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:.25rem}
+        .bk-tray-dishes li{font-family:var(--font-body);font-size:.72rem;color:var(--text-primary);display:flex;justify-content:space-between;gap:.5rem}
+        .bk-tray-dishes li span{color:var(--text-muted);white-space:nowrap}
 
         /* ── tabs ── */
         .bk-tabs{display:flex;gap:.5rem;margin-bottom:1.2rem;flex-wrap:wrap}
@@ -1649,11 +1659,13 @@ export function BookingPage() {
                             {menuItems.filter(m => m.isActive && (dishFilter === 'all' || m.itemCategory === dishFilter)).map(item => {
                               const baseQty = serviceFlow === 'event' ? Math.max(1, Math.ceil(guests / (item.servesPerTray || 25))) : 1;
                               return (
-                                <div key={item.id} className="bk-catalog-card" style={{ cursor: 'default' }}>
+                                <div key={item.id} className="bk-catalog-card stack" style={{ cursor: 'default' }}>
+                                  <CatalogThumb src={getMenuImageUrl(item.imageUrl)} name={item.itemName} />
                                   <div className="bk-catalog-name">{item.itemName}</div>
                                   <div className="bk-catalog-meta">{item.itemCategory} · {item.courseCategory}</div>
                                   <div className="bk-catalog-price">{fmtPHP(item.pricePerTray ?? 0)}</div>
-                                  {serviceFlow === 'event' && menuItemQty[item.id] === baseQty && <div className="bk-catalog-meta" style={{ marginTop: '-.3rem', marginBottom: '.5rem', color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
+                                  <div className="bk-catalog-foot">
+                                  {serviceFlow === 'event' && menuItemQty[item.id] === baseQty && <div className="bk-catalog-meta" style={{ color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
                                   <div className="bk-qty">
                                     <button className="bk-qty-btn" onClick={() => setQty(setMenuItemQty, item.id, -1, baseQty)}>−</button>
                                     <input
@@ -1667,6 +1679,7 @@ export function BookingPage() {
                                     />
                                     <button className="bk-qty-btn" onClick={() => setQty(setMenuItemQty, item.id, 1, baseQty)}>+</button>
                                   </div>
+                                  </div>
                                 </div>
                               );
                             })}
@@ -1679,12 +1692,34 @@ export function BookingPage() {
                         <div className="bk-catalog-grid">
                           {menuTrays.filter(t => t.isActive).map(tray => {
                             const baseQty = serviceFlow === 'event' ? Math.max(1, Math.ceil(guests / (tray.servesMin || 25))) : 1;
+                            const dishCount = tray.dishes?.length ?? 0;
+                            const trayOpen = !!openTrays[tray.id];
                             return (
-                              <div key={tray.id} className="bk-catalog-card" style={{ cursor: 'default' }}>
+                              <div key={tray.id} className="bk-catalog-card stack" style={{ cursor: 'default' }}>
                                 <div className="bk-catalog-name">{tray.trayName}</div>
-                                <div className="bk-catalog-meta">{tray.dishes?.length ?? 0} dishes</div>
+                                <div className="bk-catalog-meta">
+                                  {dishCount === 0 ? 'No dishes listed' : (
+                                    <button
+                                      type="button"
+                                      className="bk-tray-toggle"
+                                      aria-expanded={trayOpen}
+                                      aria-controls={`tray-dishes-${tray.id}`}
+                                      onClick={() => setOpenTrays((prev) => ({ ...prev, [tray.id]: !prev[tray.id] }))}
+                                    >
+                                      {trayOpen ? 'Hide dishes ▴' : `${dishCount} ${dishCount === 1 ? 'dish' : 'dishes'} ▾`}
+                                    </button>
+                                  )}
+                                </div>
                                 <div className="bk-catalog-price">{fmtPHP(tray.pricePerTray)}</div>
-                                {serviceFlow === 'event' && menuTrayQty[tray.id] === baseQty && <div className="bk-catalog-meta" style={{ marginTop: '-.3rem', marginBottom: '.5rem', color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
+                                {trayOpen && dishCount > 0 && (
+                                  <ul id={`tray-dishes-${tray.id}`} className="bk-tray-dishes">
+                                    {tray.dishes.map((d) => (
+                                      <li key={d.id}>{d.itemName}<span>{d.courseCategory || d.itemCategory}</span></li>
+                                    ))}
+                                  </ul>
+                                )}
+                                <div className="bk-catalog-foot">
+                                {serviceFlow === 'event' && menuTrayQty[tray.id] === baseQty && <div className="bk-catalog-meta" style={{ color: 'var(--primary)', fontWeight: 500 }}>Recommends {baseQty} trays for {guests} guests</div>}
                                 <div className="bk-qty">
                                   <button className="bk-qty-btn" onClick={() => setQty(setMenuTrayQty, tray.id, -1, baseQty)}>−</button>
                                   <input
@@ -1698,6 +1733,7 @@ export function BookingPage() {
                                   />
                                   <button className="bk-qty-btn" onClick={() => setQty(setMenuTrayQty, tray.id, 1, baseQty)}>+</button>
                                 </div>
+                                </div>
                               </div>
                             );
                           })}
@@ -1708,10 +1744,12 @@ export function BookingPage() {
                       {alacarteTab === 'rentals' && (
                         <div className="bk-catalog-grid">
                           {rentalItems.filter(r => r.isActive).map(item => (
-                            <div key={item.id} className="bk-catalog-card" style={{ cursor: 'default' }}>
+                            <div key={item.id} className="bk-catalog-card stack" style={{ cursor: 'default' }}>
+                              <CatalogThumb src={getRentalImageUrl(item.imageUrl)} name={item.itemName} />
                               <div className="bk-catalog-name">{item.itemName}</div>
                               <div className="bk-catalog-meta">{item.category}</div>
                               <div className="bk-catalog-price">{fmtPHP(item.unitPrice)}</div>
+                              <div className="bk-catalog-foot">
                               <div className="bk-qty">
                                 <button className="bk-qty-btn" onClick={() => setQty(setRentalQty, item.id, -1)}>−</button>
                                 <input
@@ -1724,6 +1762,7 @@ export function BookingPage() {
                                   aria-label={`Quantity for ${item.itemName}`}
                                 />
                                 <button className="bk-qty-btn" onClick={() => setQty(setRentalQty, item.id, 1)}>+</button>
+                              </div>
                               </div>
                             </div>
                           ))}
