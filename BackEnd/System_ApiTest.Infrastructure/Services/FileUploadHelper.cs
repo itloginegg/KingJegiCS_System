@@ -96,6 +96,28 @@ namespace System_ApiTest.Infrastructure.Services
             return $"/uploads/{subFolder}/{uniqueFileName}";
         }
 
+        /// <summary>
+        /// Maps a stored relative URL ("/uploads/support/…") back to the file on disk, or
+        /// null when it doesn't exist. Attachments are no longer served as static files —
+        /// SupportController streams them after an ownership check — so this is the only
+        /// way back from a message row to its file. The result is confined to the uploads
+        /// folder, so even a tampered row can't name a path outside it.
+        /// </summary>
+        public static string? ResolveAttachmentPath(IWebHostEnvironment env, string? relativeUrl)
+        {
+            if (string.IsNullOrWhiteSpace(relativeUrl)) return null;
+
+            var webRoot = RootPathOverride
+                          ?? env.WebRootPath
+                          ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+            var uploadsRoot = Path.GetFullPath(Path.Combine(webRoot, "uploads"));
+            var fullPath = Path.GetFullPath(Path.Combine(webRoot, relativeUrl.TrimStart('/', '\\')));
+
+            if (!fullPath.StartsWith(uploadsRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                return null;
+            return File.Exists(fullPath) ? fullPath : null;
+        }
+
         /// <summary>True when the attachment should render inline as an image.</summary>
         public static bool IsImage(string? fileNameOrUrl)
         {

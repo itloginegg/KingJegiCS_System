@@ -8,7 +8,8 @@ import {
   sendChat, publicChat, listConversations, getConversation, getVoiceCapabilities, AssistantApiError,
 } from '../../api/assistantApi';
 import type { ChatResponse, PlanContext, VoiceCapabilities } from '../../api/assistantApi';
-import { getMyThread, sendSupportMessage, attachmentUrl, SupportApiError } from '../../api/supportApi';
+import { getMyThread, sendSupportMessage, SupportApiError } from '../../api/supportApi';
+import { useAttachmentHref } from '../../hooks/useAttachmentHref';
 import type { Proposal } from '../../api/suggestionsApi';
 import { ProposalCard, ProposalCardStyles } from '../suggestions/ProposalCard';
 import { PlanReview } from '../suggestions/PlanReview';
@@ -806,14 +807,21 @@ function SupportAttachment({ url, fileName, isImage, hasText }: {
   isImage?: boolean;
   hasText: boolean;
 }) {
+  const { href, status } = useAttachmentHref(url);
   if (!fileName && !url) return null;
 
-  const href = attachmentUrl(url);
   const spacing = hasText ? { marginTop: '0.45rem' } : undefined;
 
-  // No href yet = the optimistic echo of a message still uploading.
-  if (!href) {
+  // No url yet = the optimistic echo of a message still uploading.
+  if (!url) {
     return <div className="cw-attach-pending" style={spacing}><Paperclip size={12} strokeWidth={1.75} aria-hidden="true" /> {fileName} — sending…</div>;
+  }
+  if (!href) {
+    return (
+      <div className="cw-attach-pending" style={spacing}>
+        <Paperclip size={12} strokeWidth={1.75} aria-hidden="true" /> {fileName ?? 'Attachment'}{status === 'failed' ? ' — couldn’t load' : ' — loading…'}
+      </div>
+    );
   }
 
   if (isImage) {

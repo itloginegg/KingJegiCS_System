@@ -21,17 +21,60 @@ import {
   replySupport,
   discardDraft,
   setSupportStatus,
-  attachmentUrl,
   SupportApiError,
   type SupportThread,
   type SupportThreadSummary,
 } from '../../../api/supportApi';
 import { readSession } from '../../../lib/tokenStorage';
+import { useAttachmentHref } from '../../../hooks/useAttachmentHref';
 
 const URGENCY_RANK: Record<string, number> = { Urgent: 0, Attention: 1, Routine: 2 };
 const urgencyRank = (u?: string | null) => (u ? URGENCY_RANK[u] ?? 3 : 3);
 
 /** Small caps label used for the topic and urgency chips in the thread list. */
+/** A message's attachment, fetched with the staff token (the endpoint isn't public). */
+function MessageAttachment({ url, fileName, isImage, hasText }: {
+  url: string;
+  fileName: string | null;
+  isImage: boolean;
+  hasText: boolean;
+}) {
+  const { href, status } = useAttachmentHref(url);
+  const marginTop = hasText ? '0.45rem' : 0;
+
+  if (!href) {
+    return (
+      <div style={{ marginTop, fontSize: '0.75rem', opacity: 0.75 }}>
+        📎 {fileName ?? 'Attachment'}{status === 'failed' ? ' — couldn’t load' : ' — loading…'}
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop }}>
+        <img
+          src={href}
+          alt={fileName ?? 'Attachment'}
+          style={{ display: 'block', maxWidth: '100%', maxHeight: 200, borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}
+        />
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={fileName ?? undefined}
+      style={{ display: 'inline-block', marginTop, color: 'inherit', textDecoration: 'underline', fontSize: '0.75rem', wordBreak: 'break-all' }}
+    >
+      📎 {fileName ?? 'Download attachment'}
+    </a>
+  );
+}
+
 function InboxChip({ label, tone }: { label: string; tone: 'urgent' | 'attention' | 'neutral' }) {
   const palette = {
     urgent: { bg: 'var(--accent)', fg: 'var(--accent-text)' },
@@ -278,25 +321,12 @@ export function AdminSupportPanel({ notify }: { notify: (t: 'success' | 'error' 
                     }}>
                       {m.text}
                       {m.attachmentUrl && (
-                        m.attachmentIsImage ? (
-                          <a href={attachmentUrl(m.attachmentUrl)!} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: m.text ? '0.45rem' : 0 }}>
-                            <img
-                              src={attachmentUrl(m.attachmentUrl)!}
-                              alt={m.attachmentFileName ?? 'Attachment'}
-                              style={{ display: 'block', maxWidth: '100%', maxHeight: 200, borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}
-                            />
-                          </a>
-                        ) : (
-                          <a
-                            href={attachmentUrl(m.attachmentUrl)!}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            download={m.attachmentFileName ?? undefined}
-                            style={{ display: 'inline-block', marginTop: m.text ? '0.45rem' : 0, color: 'inherit', textDecoration: 'underline', fontSize: '0.75rem', wordBreak: 'break-all' }}
-                          >
-                            📎 {m.attachmentFileName ?? 'Download attachment'}
-                          </a>
-                        )
+                        <MessageAttachment
+                          url={m.attachmentUrl}
+                          fileName={m.attachmentFileName}
+                          isImage={m.attachmentIsImage}
+                          hasText={!!m.text}
+                        />
                       )}
                       <div style={{ fontSize: '0.55rem', opacity: 0.65, marginTop: '0.25rem' }}>{when(m.createdAt)}</div>
                     </div>

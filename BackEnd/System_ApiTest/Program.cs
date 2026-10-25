@@ -169,6 +169,23 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 // above — IApplicationDbContext is just the Application layer's narrow view of it.
 builder.Services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
+// The signing key is the whole of token security: anyone who knows it can mint an Owner
+// token. appsettings.json ships a placeholder, and the app used to start happily with it
+// if App Service's JwtSettings__Key was ever missing — signing every token with a string
+// that is in the repository. Refuse to start instead. Development keeps working with the
+// placeholder so a fresh clone still runs without user-secrets.
+var jwtKey = builder.Configuration["JwtSettings:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey))
+    throw new InvalidOperationException(
+        "JwtSettings:Key is not configured. Set it with user-secrets locally, or "
+        + "JwtSettings__Key in App Service configuration.");
+if (!builder.Environment.IsDevelopment()
+    && (jwtKey.StartsWith("REPLACE", StringComparison.OrdinalIgnoreCase)
+        || Encoding.UTF8.GetByteCount(jwtKey) < 32))
+    throw new InvalidOperationException(
+        "JwtSettings:Key is still the placeholder or shorter than 32 bytes. Set "
+        + "JwtSettings__Key in App Service configuration to a long random secret.");
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -258,6 +275,20 @@ app.Use((context, next) =>
 app.UseCors(FrontendCors);
 // After CORS, so a 429 still carries the CORS headers the browser needs to read it.
 app.UseRateLimiter();
+
+// Support attachments live under /uploads and can carry customer documents, so they are
+// never served as static files — SupportController streams them after checking the caller
+// owns the thread. This sits ahead of BOTH UseStaticFiles calls (wwwroot and the persistent
+// upload share) so neither can hand one out to an anonymous request.
+app.Use((context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/uploads"))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return Task.CompletedTask;
+    }
+    return next(context);
+});
 
 app.UseStaticFiles();
 

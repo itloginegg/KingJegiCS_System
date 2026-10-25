@@ -32,7 +32,10 @@ export interface SupportMessage {
   sender: string;
   text: string;
   createdAt: string;
-  /** Server-relative, e.g. "/uploads/support/support_a1b2….pdf". Run through attachmentUrl(). */
+  /**
+   * Server-relative authorized endpoint, e.g. "/api/support/messages/{id}/attachment".
+   * It needs the bearer token, so render it through useAttachmentHref(), not directly.
+   */
   attachmentUrl: string | null;
   attachmentFileName: string | null;
   attachmentContentType: string | null;
@@ -40,7 +43,7 @@ export interface SupportMessage {
   attachmentIsImage: boolean;
 }
 
-/** Absolute URL for an attachment served from the API's wwwroot. */
+/** Absolute URL for an attachment path returned by the API. */
 export function attachmentUrl(urlPath?: string | null): string | null {
   if (!urlPath) return null;
   if (/^(https?:|blob:|data:)/.test(urlPath)) return urlPath;

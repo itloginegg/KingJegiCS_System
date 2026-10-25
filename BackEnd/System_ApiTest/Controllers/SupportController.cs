@@ -291,6 +291,37 @@ namespace System_ApiTest.Controllers
             return NoContent();
         }
 
+        // ---------------- Attachments ----------------
+
+        /// <summary>
+        /// Streams a message's attachment. Customers may only fetch files on their own
+        /// thread; staff may fetch any. Anything else is a 404 rather than a 403, so the
+        /// endpoint doesn't confirm which message ids exist.
+        /// </summary>
+        [HttpGet("messages/{id:guid}/attachment")]
+        public async Task<IActionResult> Attachment(Guid id)
+        {
+            var msg = await _db.SupportMessages
+                .Where(m => m.Id == id)
+                .Select(m => new { m.AttachmentUrl, m.AttachmentFileName, m.AttachmentContentType, m.Thread.CustomerId })
+                .FirstOrDefaultAsync();
+            if (msg?.AttachmentUrl is null) return NotFound();
+
+            var isStaff = User.IsInRole("Owner") || User.IsInRole("Assistant");
+            if (!isStaff && CurrentUserId() != msg.CustomerId) return NotFound();
+
+            var path = FileUploadHelper.ResolveAttachmentPath(_env, msg.AttachmentUrl);
+            if (path is null) return NotFound();
+
+            // Without this the browser caches the file (PhysicalFile sends ETag and
+            // Last-Modified), and a later request with no token at all is answered from
+            // that cache — so the file outlives the sign-out on a shared computer.
+            Response.Headers.CacheControl = "private, no-store";
+
+            return PhysicalFile(path, msg.AttachmentContentType ?? "application/octet-stream",
+                                msg.AttachmentFileName ?? Path.GetFileName(path));
+        }
+
         // ---------------- Helpers ----------------
 
         private async Task<Supportthread> GetOrCreateThreadAsync(Guid customerId)
@@ -339,9 +370,12 @@ namespace System_ApiTest.Controllers
                 d.Id, d.Text, d.Topic.ToString(), d.Urgency.ToString(),
                 d.ToolsUsed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
+        // The stored path is never handed out: the client gets the authorized endpoint
+        // above, because /uploads is no longer reachable as a static file.
         private static SupportMessageDto ToMsgDto(Supportmessage m) =>
             new(m.Id, m.Sender.ToString(), m.Text, m.CreatedAt,
-                m.AttachmentUrl, m.AttachmentFileName, m.AttachmentContentType,
+                m.AttachmentUrl is null ? null : $"/api/support/messages/{m.Id}/attachment",
+                m.AttachmentFileName, m.AttachmentContentType,
                 FileUploadHelper.IsImage(m.AttachmentFileName ?? m.AttachmentUrl));
 
         /// <summary>
