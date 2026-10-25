@@ -289,6 +289,7 @@ export function NewBookingModal({ onClose, onCreated, notify }: {
           onChange={setVenue}
           fieldClassName="form-row"
           inputClassName="adm-input"
+          showName={isFull}
           labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
         />
 

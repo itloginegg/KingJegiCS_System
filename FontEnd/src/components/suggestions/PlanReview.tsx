@@ -640,6 +640,7 @@ export function PlanReview({ source, trayDishes, onClose, onDone }: PlanReviewPr
             labelClassName="pbg-label"
             inputClassName="pbg-input"
             required
+            showName={isFull}
             labels={{ street: isFull ? 'Venue street' : 'Delivery street' }}
           />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.9rem' }}>

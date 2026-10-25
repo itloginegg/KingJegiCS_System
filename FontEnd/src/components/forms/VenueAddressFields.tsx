@@ -20,10 +20,12 @@ export interface VenueAddressFieldsProps {
   style?: CSSProperties;
   /** Zip is part of the baseline format; hide it where it would be noise. */
   showZip?: boolean;
+  /** Venue name is for events; hide it for a delivery drop-off. */
+  showName?: boolean;
   disabled?: boolean;
   required?: boolean;
-  /** Defaults to "Street"/"City"/"Zip Code". */
-  labels?: { street?: string; city?: string; zip?: string };
+  /** Defaults to "Venue Name"/"Street"/"City"/"Zip Code". */
+  labels?: { name?: string; street?: string; city?: string; zip?: string };
   /** Caption under the city select. Pass null to drop it. */
   note?: string | null;
 }
@@ -35,8 +37,8 @@ const gridStyle: CSSProperties = {
 };
 
 /**
- * Street + city + zip, with the city restricted to the four Laguna cities the
- * business actually serves.
+ * Venue name + street + city + zip, with the city restricted to the Laguna cities and
+ * municipalities the business serves (San Pedro to Santa Cruz).
  *
  * Extracted from BookingPage step 1, which was the only form enforcing the
  * format. Styling is passed in rather than owned here because the host forms
@@ -52,6 +54,7 @@ export function VenueAddressFields({
   className,
   style,
   showZip = true,
+  showName = true,
   disabled,
   required,
   labels,
@@ -63,6 +66,25 @@ export function VenueAddressFields({
 
   return (
     <div className={className} style={{ ...gridStyle, ...style }}>
+      {showName && (
+        <div className={fieldClassName} style={{ gridColumn: '1 / -1' }}>
+          <label className={labelClassName} htmlFor={`${uid}-name`}>
+            {labels?.name ?? 'Venue Name'}
+            <span style={{ textTransform: 'none', letterSpacing: 'normal', opacity: 0.7 }}> (optional)</span>
+          </label>
+          <input
+            id={`${uid}-name`}
+            className={inputClassName}
+            placeholder="e.g. Villa Rosa Events Place"
+            autoComplete="organization"
+            maxLength={150}
+            value={value.name}
+            disabled={disabled}
+            onChange={(e) => set('name')(e.target.value)}
+          />
+        </div>
+      )}
+
       <div className={fieldClassName}>
         <label className={labelClassName} htmlFor={`${uid}-street`}>
           {labels?.street ?? 'Street'}
@@ -92,9 +114,16 @@ export function VenueAddressFields({
           onChange={(e) => set('city')(e.target.value)}
         >
           <option value="" disabled>Select a city</option>
-          {SERVICE_AREA_CITIES.map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
+          <optgroup label="Cities">
+            {SERVICE_AREA_CITIES.filter((c) => c.kind === 'city').map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Municipalities">
+            {SERVICE_AREA_CITIES.filter((c) => c.kind === 'municipality').map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </optgroup>
         </select>
         {note && (
           <div style={{ fontSize: '.65rem', color: 'var(--text-muted)', marginTop: '.25rem', textTransform: 'none', letterSpacing: 'normal' }}>

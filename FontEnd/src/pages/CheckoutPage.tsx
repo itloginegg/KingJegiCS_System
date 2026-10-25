@@ -541,6 +541,7 @@ export function CheckoutPage() {
                 onChange={setVenue}
                 inputClassName={inputCls}
                 labelClassName="mb-1.5 block text-[0.72rem] text-text-muted"
+                showName={false}
                 required
               />
             </div>
