@@ -42,9 +42,9 @@ namespace System_ApiTest.Domain.Entities
         /// <summary>
         /// Required gap, in hours, between two confirmed events on overlapping windows
         /// (setup/teardown). A new event is rejected if it falls within this buffer of
-        /// an existing confirmed event. Default 3 (owner may set 2–5).
+        /// an existing confirmed event. Default 4 (owner may set 4–5).
         /// </summary>
-        public decimal EventBufferHours { get; set; } = 3m;
+        public decimal EventBufferHours { get; set; } = 4m;
 
         /// <summary>
         /// Minimum days of notice to book a full-service event. Default 7.
