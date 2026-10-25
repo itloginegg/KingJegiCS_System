@@ -9,7 +9,8 @@ import { SectionHeading } from './SectionHeading';
  *
  * The section renders approved reviews from /api/Testimonials/approved; these stand
  * in while they load and if the business has not approved any of its own yet, so
- * the section is never visibly empty.
+ * the section is never visibly empty. They also top up a short list — see
+ * MIN_DISTINCT.
  */
 const FALLBACK = [
   {
@@ -49,6 +50,13 @@ const SPEED = 45;
 const EASE_TAU = 0.32;
 /** Cards a run needs before it is wider than any viewport it has to fill. */
 const MIN_RUN = 6;
+/**
+ * Different quotes the marquee shows before it starts repeating. With one approved
+ * review the padding below would fill every slot with the same card, which reads as
+ * fake; topping up with the fallback copy keeps the real reviews first and the strip
+ * varied until enough real ones exist.
+ */
+const MIN_DISTINCT = 3;
 
 const initialsOf = (name: string) =>
   name.split(' ').map((w) => w.charAt(0)).join('').slice(0, 2).toUpperCase();
@@ -79,15 +87,16 @@ export function TestimonialsSection() {
     return () => { cancelled = true; };
   }, []);
 
-  const cards = reviews.length > 0
-    ? reviews.map((r) => ({
-        id: r.id,
-        quote: r.body,
-        name: r.authorName,
-        caption: new Date(r.submittedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long' }),
-        initials: initialsOf(r.authorName),
-      }))
-    : FALLBACK;
+  const cards = useMemo(() => {
+    const real = reviews.map((r) => ({
+      id: r.id,
+      quote: r.body,
+      name: r.authorName,
+      caption: new Date(r.submittedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long' }),
+      initials: initialsOf(r.authorName),
+    }));
+    return [...real, ...FALLBACK.slice(0, Math.max(0, MIN_DISTINCT - real.length))];
+  }, [reviews]);
 
   /**
    * The marquee's repeating unit.

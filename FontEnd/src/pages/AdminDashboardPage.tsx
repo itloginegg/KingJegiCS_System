@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fmtDate } from '../lib/format';
 import type { ResStatus } from '../components/admin/shared/statusMeta';
 
@@ -48,6 +48,7 @@ import {
   notificationTarget,
   type AppNotification,
 } from '../api/notificationsApi';
+import { getTestimonials } from '../api/testimonialsApi';
 import { AdminSidebar } from '../components/admin/shell/AdminSidebar';
 import { AdminTopbar } from '../components/admin/shell/AdminTopbar';
 import type { AdminTab as Tab, AdminNavItem } from '../components/admin/shell/types';
@@ -163,9 +164,16 @@ export function AdminDashboardPage() {
     }
   };
 
-  /* Pending-review count for the nav badge. The Testimonials tab owns the list and
-     reports the count up; this stays 0 until the tab has loaded once, as before. */
+  /* Pending-review count for the nav badge. Fetched once on load so new reviews are
+     visible before anyone opens the tab; after that the Testimonials tab owns the list
+     and reports the count up. The ref stops a slow initial fetch from overwriting a
+     count the tab has already reported (say, right after an approval). */
   const [pendingTesti, setPendingTesti] = useState(0);
+  const testiReported = useRef(false);
+  const reportPendingTesti = useCallback((count: number) => {
+    testiReported.current = true;
+    setPendingTesti(count);
+  }, []);
 
   /* notifications — the in-app feed over the worker's send ledger */
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -831,6 +839,15 @@ export function AdminDashboardPage() {
     void loadNotifications();
   }, []);
 
+  /* The badge is a nudge, so a failed fetch just leaves it at 0. */
+  useEffect(() => {
+    const session = readSession();
+    if (!session?.token) return;
+    getTestimonials(session.token, 'Pending')
+      .then((rows) => { if (!testiReported.current) setPendingTesti(rows.length); })
+      .catch(() => {});
+  }, []);
+
   /* Live badge: the backend broadcasts "NotificationCreated" on /hubs/payment the
      moment any notification is written. The signal carries no payload on purpose —
      we refetch, so the server re-applies its own role scoping and we can never
@@ -1174,7 +1191,7 @@ export function AdminDashboardPage() {
 
             {/* ══════════ TESTIMONIALS ══════════ */}
             {tab === 'testimonials' && (
-              <TestimonialsTab notify={notify} onPendingCountChange={setPendingTesti} />
+              <TestimonialsTab notify={notify} onPendingCountChange={reportPendingTesti} />
             )}
 
             {/* ══════════ BOOKING HISTORIES (live backend data) ══════════ */}

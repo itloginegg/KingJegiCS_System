@@ -40,6 +40,12 @@ const TESTI_STATUS: Record<TestimonialStatus, { label: string; color: string }> 
   Rejected: { label: 'Rejected', color: 'var(--danger-ink)' },
 };
 
+/* Status chip text. The ramp colours clear 4.5:1 on --surface, but this card sits on a
+   tinted band and the chip adds its own tint, which left Approved at 3.9:1. Pulling the
+   ink 30% toward --text-primary darkens it in the light theme and lightens it in the
+   dark one, so contrast rises in both without a new token. */
+const chipInk = (color: string) => `color-mix(in srgb, ${color} 70%, var(--text-primary))`;
+
 /* Theme status tokens rather than fixed colours, so the chips keep their contrast in
    both the light and the dark admin theme. Tinted grounds at 14%, like StatusBadge. */
 const SENTIMENT_STYLE: Record<TestimonialSentiment, { bg: string; fg: string }> = {
@@ -210,7 +216,7 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <span style={{ fontFamily: 'var(--font-body)', fontSize: '11px', fontWeight: 400, lineHeight: 1, color: 'var(--band-muted)' }}>
-            {pendingTesti} pending review
+            {pendingTesti} pending review{pendingTesti === 1 ? '' : 's'}
           </span>
           <span onClick={() => void loadTestimonials()} style={{ width: '34px', height: '34px', borderRadius: '999px', background: 'rgba(238, 243, 234,.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
             {testiLoading ? <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)', animation: 'spin 1s linear infinite' }} /> : <RotateCw size={15} strokeWidth={1.9} aria-hidden="true" style={{ color: 'var(--band-text)' }} />}
@@ -340,8 +346,8 @@ export function TestimonialsTab({ notify, onPendingCountChange }: TestimonialsTa
                 ) : (
                   <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 500, lineHeight: 1, color: 'var(--band-muted)' }}>Not analyzed</span>
                 )}
-                <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: t.status === 'Pending' ? 'rgba(186, 181, 105,.18)' : t.status === 'Approved' ? 'rgba(31,122,51,.18)' : 'rgba(220,38,38,.18)', color: t.status === 'Pending' ? '#BAB569' : t.status === 'Approved' ? '#4ade80' : '#f87171' }}>
-                  {t.status}
+                <span style={{ fontFamily: 'var(--font-body)', fontSize: '10px', fontWeight: 600, lineHeight: 1, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '6px 11px', borderRadius: '999px', background: `color-mix(in srgb, ${TESTI_STATUS[t.status].color} 14%, transparent)`, color: chipInk(TESTI_STATUS[t.status].color) }}>
+                  {TESTI_STATUS[t.status].label}
                 </span>
                 </div>
               </div>

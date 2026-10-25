@@ -707,6 +707,10 @@ export function CustomerDashboardPage() {
         .cds-btn.soft:hover { color: var(--primary); border-color: var(--border-accent); }
         .cds-btn.dangerghost { background: transparent; color: var(--text-muted); border-color: var(--border); }
         .cds-btn.dangerghost:hover { background: var(--danger-muted); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+        /* Disabled has to look it: a full-strength button that ignores the click reads as broken. */
+        .cds-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+        .cds-btn.primary:disabled:hover { background: var(--primary); transform: none; }
+        .cds-btn.outline:disabled:hover { background: transparent; border-color: var(--border-accent); }
 
         /* inputs */
         .cds-input {
