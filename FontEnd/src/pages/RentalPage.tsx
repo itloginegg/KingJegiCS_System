@@ -209,6 +209,13 @@ export function RentalPage() {
       return { ...prev, [item.id]: next };
     });
 
+  /** A typed quantity. Same 1…max(stock, 1) clamp as stepQuantity. */
+  const setQuantity = (item: RentalItem, qty: number) =>
+    setQuantities((prev) => ({
+      ...prev,
+      [item.id]: Math.min(Math.max(Math.trunc(qty), 1), Math.max(item.stock, 1)),
+    }));
+
   /* Capped at stock: the catalog says how many exist, and queueing more than
      that only defers the rejection to confirm time, where the backend
      re-validates availability anyway. */
@@ -357,6 +364,7 @@ export function RentalPage() {
                     item={item}
                     quantity={quantityFor(item)}
                     onStep={(delta) => stepQuantity(item, delta)}
+                    onSet={(qty) => setQuantity(item, qty)}
                     onAdd={() => addToCart(item)}
                   />
                 ))}
@@ -369,6 +377,7 @@ export function RentalPage() {
                     item={item}
                     quantity={quantityFor(item)}
                     onStep={(delta) => stepQuantity(item, delta)}
+                    onSet={(qty) => setQuantity(item, qty)}
                     onAdd={() => addToCart(item)}
                   />
                 ))}

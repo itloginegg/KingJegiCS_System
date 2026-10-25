@@ -75,14 +75,19 @@ export function RentalPrice({ item }: { item: RentalItem }) {
 }
 
 /**
- * Quantity stepper. The value is a read-only display rather than an input: a
- * free-text number field would need its own parse, clamp and empty-string states
- * for a control whose only legal values are 1…stock, reachable in one click each.
+ * Quantity stepper. − / + step by one; the value itself is a small text field so
+ * a customer after 40 chairs can type 40 instead of clicking 39 times.
+ *
+ * While focused the field edits a local draft string, so it can be empty or
+ * half-typed without fighting the parent's number. On blur or Enter the draft is
+ * parsed and clamped to 1…max(stock, 1) and sent up with `onSet`; anything that
+ * isn't a number reverts to the current value.
  */
 export function QuantityStepper({
   value,
   stock,
   onStep,
+  onSet,
   itemName,
 }: {
   value: number;
@@ -96,10 +101,26 @@ export function QuantityStepper({
    * whatever the batching does.
    */
   onStep: (delta: number) => void;
+  /** A typed quantity, already clamped to 1…max(stock, 1). */
+  onSet: (qty: number) => void;
   /** Names the item in the button labels, so a screen reader hears which
       stepper it is landing on rather than a page full of bare "Decrease". */
   itemName: string;
 }) {
+  // null while not editing, so the field shows the live value from the parent.
+  const [draft, setDraft] = useState<string | null>(null);
+  const soldOut = stock === 0;
+
+  const commit = () => {
+    if (draft === null) return;
+    const parsed = Number.parseInt(draft, 10);
+    if (Number.isFinite(parsed)) {
+      const clamped = Math.min(Math.max(parsed, 1), Math.max(stock, 1));
+      if (clamped !== value) onSet(clamped);
+    }
+    setDraft(null);
+  };
+
   const btnBase =
     'flex h-[26px] w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-45 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none';
   const btnMinus = `${btnBase} bg-surface text-text-primary hover:bg-bg-card`;
@@ -116,12 +137,29 @@ export function QuantityStepper({
       >
         <Minus size={14} aria-hidden="true" />
       </button>
-      <span
-        className="min-w-5 text-center text-[0.8125rem] font-medium text-text-primary tabular-nums"
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        aria-label={`${itemName} quantity`}
+        value={draft ?? String(value)}
+        disabled={soldOut}
+        onFocus={(e) => {
+          setDraft(String(value));
+          e.target.select();
+        }}
+        onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 4))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          else if (e.key === 'Escape') {
+            setDraft(null);
+            e.currentTarget.blur();
+          }
+        }}
+        className="w-6 rounded-sm border-none bg-transparent p-0 text-center text-[0.8125rem] font-medium text-text-primary tabular-nums outline-none focus-visible:bg-surface focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45"
         style={{ fontFamily: 'var(--font-numeric)' }}
-      >
-        {value}
-      </span>
+      />
       <button
         type="button"
         onClick={() => onStep(1)}
@@ -169,11 +207,13 @@ export function RentalCard({
   item,
   quantity,
   onStep,
+  onSet,
   onAdd,
 }: {
   item: RentalItem;
   quantity: number;
   onStep: (delta: number) => void;
+  onSet: (qty: number) => void;
   onAdd: () => void;
 }) {
   return (
@@ -216,6 +256,7 @@ export function RentalCard({
           value={quantity}
           stock={item.stock}
           onStep={onStep}
+          onSet={onSet}
           itemName={item.name}
         />
         <AddButton item={item} onAdd={onAdd} />

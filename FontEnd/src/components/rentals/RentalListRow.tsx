@@ -23,11 +23,13 @@ export function RentalListRow({
   item,
   quantity,
   onStep,
+  onSet,
   onAdd,
 }: {
   item: RentalItem;
   quantity: number;
   onStep: (delta: number) => void;
+  onSet: (qty: number) => void;
   onAdd: () => void;
 }) {
   return (
@@ -73,6 +75,7 @@ export function RentalListRow({
               value={quantity}
               stock={item.stock}
               onStep={onStep}
+              onSet={onSet}
               itemName={item.name}
             />
             <AddButton item={item} onAdd={onAdd} />
