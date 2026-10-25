@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Calendar, ChevronDown, Search, SlidersHorizontal } from 'lucide-react';
+import { Calendar, ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { BOOKING_TYPE_LABELS, type BookingResponse, type BookingTypeName } from '../../../api/bookingApi';
 import { DatePickerPopover } from './DatePickerPopover';
 import { METHOD_COLORS, methodColor, methodLabel } from './types';
@@ -23,9 +23,9 @@ export interface PaymentsToolbarProps {
   filterOpen: boolean;
   onToggleFilter: () => void;
 
-  /** "YYYY-MM-DD" — the day the table is showing. Defaults to today, never a fixed date. */
-  date: string;
-  onDateChange: (next: string) => void;
+  /** "YYYY-MM-DD" to narrow the table to one day, or null for all dates (the default). */
+  date: string | null;
+  onDateChange: (next: string | null) => void;
 
   /** Bookings with an outstanding balance — the only ones worth logging cash against. */
   cashCandidates: BookingResponse[];
@@ -70,6 +70,7 @@ export function PaymentsToolbar({
   }, [cashOpen]);
 
   const prettyDate = (() => {
+    if (!date) return 'All dates';
     const [y, m, d] = date.split('-').map(Number);
     return new Date(y, (m ?? 1) - 1, d ?? 1).toLocaleDateString('en-PH', {
       day: 'numeric', month: 'short', year: 'numeric',
@@ -103,7 +104,7 @@ export function PaymentsToolbar({
           />
         </div>
 
-        <div className="relative">
+        <div className="relative flex items-center gap-1">
           <button
             type="button"
             onClick={() => setDateOpen((o) => !o)}
@@ -115,6 +116,18 @@ export function PaymentsToolbar({
             {prettyDate}
             <ChevronDown size={14} strokeWidth={2} className="text-[var(--text-muted)]" />
           </button>
+
+          {date && (
+            <button
+              type="button"
+              onClick={() => { setDateOpen(false); onDateChange(null); }}
+              aria-label="Clear date, show all dates"
+              title="Show all dates"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            >
+              <X size={14} strokeWidth={2} />
+            </button>
+          )}
 
           {dateOpen && (
             <DatePickerPopover value={date} onChange={onDateChange} onClose={() => setDateOpen(false)} />

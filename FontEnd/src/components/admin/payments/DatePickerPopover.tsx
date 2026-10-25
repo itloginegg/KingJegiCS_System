@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 export interface DatePickerPopoverProps {
-  /** Selected day as "YYYY-MM-DD". */
-  value: string;
+  /** Selected day as "YYYY-MM-DD", or null for none (the grid then opens on today). */
+  value: string | null;
   onChange: (next: string) => void;
   onClose: () => void;
 }
@@ -27,9 +27,9 @@ const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
  * without touching the month chevrons.
  */
 export function DatePickerPopover({ value, onChange, onClose }: DatePickerPopoverProps) {
-  const selected = parseIso(value);
+  const selected = value ? parseIso(value) : new Date();
   const [viewMonth, setViewMonth] = useState(() => new Date(selected.getFullYear(), selected.getMonth(), 1));
-  const [focusDate, setFocusDate] = useState(() => parseIso(value));
+  const [focusDate, setFocusDate] = useState(() => new Date(selected.getFullYear(), selected.getMonth(), selected.getDate()));
   const cardRef = useRef<HTMLDivElement | null>(null);
   const focusedCellRef = useRef<HTMLButtonElement | null>(null);
   /* Focus follows the arrow keys only — never on the first render, which would rip

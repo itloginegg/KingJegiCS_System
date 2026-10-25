@@ -1,13 +1,14 @@
 /**
- * The Payments tab: one day's transactions, the refund queue above them, and the
- * confirm / reject / refund / deny actions.
+ * The Payments tab: every payment (newest 200), optionally narrowed to one day,
+ * the refund queue above them, and the confirm / reject / refund / deny actions.
  *
  * FIRST OF THE TABS TO COME OUT OF AdminDashboardPage, and the split follows
  * where the data divides rather than where the JSX does.
  *
- * OWNED HERE: everything scoped to this tab - the four filters, the day being
- * viewed, that day's rows, and the modals' targets. `datedPayments` is narrowed
- * to one date server-side and nothing outside this file reads it.
+ * OWNED HERE: everything scoped to this tab - the four filters, the optional day
+ * being viewed, the loaded rows, and the modals' targets. `datedPayments` is
+ * narrowed server-side (to one date when one is picked) and nothing outside this
+ * file reads it.
  *
  * PASSED IN: `refundQueue` and the payments loading flags, because the same
  * fetch feeds the Overview's revenue tiles; `reservations`, because the Bookings
@@ -46,7 +47,8 @@ const PAYMENT_STATUS: Record<PaymentStatusKey, { label: string; color: string }>
 export const paymentStatusMeta = (status: string) =>
   PAYMENT_STATUS[status as PaymentStatusKey] ?? { label: status, color: 'var(--text-secondary)' };
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
+/** The backend's `take` ceiling on /api/Payments/recent. */
+const PAYMENTS_TAKE = 200;
 
 export interface PaymentsTabProps {
   /** True while this is the visible tab; drives the refetch on entry. */
@@ -59,7 +61,7 @@ export interface PaymentsTabProps {
   paymentsAuthError: boolean;
   /** Payment id currently mid-action, or null. */
   actionBusyId: string | null;
-  /** Changes after any payment action; reloads the day currently shown. */
+  /** Changes after any payment action; reloads the list currently shown. */
   refreshToken: number;
   /** Set by a notification hand-off to point this tab at something specific. */
   focus: { search: string; date: string } | null;
@@ -92,14 +94,12 @@ export function PaymentsTab({
   const [paymentSearch, setPaymentSearch] = useState('');
   const [paymentFilterOpen, setPaymentFilterOpen] = useState(false);
 
-  /* Scoped to one day, server-side. It gets its own state and loader rather than
+  /* null = all dates (the newest PAYMENTS_TAKE payments); a "YYYY-MM-DD" narrows
+     to that day, server-side. It gets its own state and loader rather than
      sharing the page's `payments`: that array also feeds the Overview revenue
      tiles and the refund queue, and narrowing it to a single day would quietly
-     wrong those numbers. Defaults to today - never a hardcoded date. */
-  const [paymentDate, setPaymentDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  });
+     wrong those numbers. */
+  const [paymentDate, setPaymentDate] = useState<string | null>(null);
   const [datedPayments, setDatedPayments] = useState<AdminPaymentRecord[]>([]);
   const [datedLoading, setDatedLoading] = useState(false);
   const [datedError, setDatedError] = useState<string | null>(null);
@@ -110,7 +110,7 @@ export function PaymentsTab({
   const [denyTargetId, setDenyTargetId] = useState<string | null>(null);
   const [denyReason, setDenyReason] = useState('');
 
-  const loadDatedPayments = async (date: string) => {
+  const loadDatedPayments = async (date: string | null) => {
     const session = readSession();
     if (!session) {
       setDatedError('You are not signed in. Sign in with an Owner or Assistant account to load payments.');
@@ -121,7 +121,7 @@ export function PaymentsTab({
     setDatedError(null);
     setDatedAuthError(false);
     try {
-      setDatedPayments(await getRecentPayments(session.token, 200, date));
+      setDatedPayments(await getRecentPayments(session.token, PAYMENTS_TAKE, date));
     } catch (err) {
       if (err instanceof PaymentApiError) {
         setDatedError(err.message);
@@ -134,8 +134,9 @@ export function PaymentsTab({
     }
   };
 
-  /* Refetch on entry and whenever the day changes. Gated on `active` so the tab
-     does not poll while another one is showing. */
+  /* Refetch on entry and whenever the day changes or is cleared. Gated on
+     `active` so the tab does not poll while another one is showing. This is the
+     only place a date change triggers a load. */
   useEffect(() => {
     if (active) void loadDatedPayments(paymentDate);
   }, [active, paymentDate, refreshToken]);
@@ -152,10 +153,10 @@ export function PaymentsTab({
     setPaymentDate(focus.date);
   }, [focus]);
 
-  /* Status / method / booking-type / free-text, over the day the server already
-     narrowed to. The date itself is NOT filtered here - doing that over a
-     `take`-capped page would report an empty day for any date older than the
-     newest 50 payments. */
+  /* Status / method / booking-type / free-text, over whatever the server returned
+     (all dates, or the one day picked). The date itself is NOT filtered here -
+     doing that over a `take`-capped page would report an empty day for any date
+     older than the newest PAYMENTS_TAKE payments. */
   const filteredPayments = useMemo(() => {
     const q = paymentSearch.trim().toLowerCase();
     return datedPayments
@@ -219,10 +220,18 @@ export function PaymentsTab({
                   filterOpen={paymentFilterOpen}
                   onToggleFilter={() => setPaymentFilterOpen((o) => !o)}
                   date={paymentDate}
-                  onDateChange={(d) => { setPaymentDate(d); void loadDatedPayments(d); }}
+                  onDateChange={setPaymentDate}
                   cashCandidates={cashCandidates}
                   onLogCash={onLogCash}
                 />
+
+                {/* The undated list is capped, so say so when it's full rather than
+                    letting the oldest rows look like the start of history. */}
+                {paymentDate === null && !datedLoading && !datedError && datedPayments.length >= PAYMENTS_TAKE && (
+                  <p style={{ fontFamily: 'var(--font-body)', fontSize: '0.7rem', fontWeight: 300, color: 'var(--text-dim)', margin: '-0.4rem 0 0 0.25rem' }}>
+                    Showing the {PAYMENTS_TAKE} most recent payments. Pick a date to see older ones.
+                  </p>
+                )}
 
                 {/* Failure of the UNDATED load — the refund queue and the Overview
                     totals ride on it. The table reports its own dated load separately,
